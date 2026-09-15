@@ -1,7 +1,7 @@
 -- ============================================================================
 -- B7-1 SQLite 대화 이력(chat_logs) 데이터 영속성 및 응답속도 검증 쿼리
--- 파일명: scripts/check_logs.sql (신규 표준 파일명: scripts/check_db_chats.sql)
--- 실행법: sqlite3 data/chatbot.db < scripts/check_logs.sql
+-- 파일명: scripts/check_db_chats.sql
+-- 실행법: sqlite3 data/chatbot.db < scripts/check_db_chats.sql
 -- ============================================================================
 
 .headers on
