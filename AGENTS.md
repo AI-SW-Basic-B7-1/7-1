@@ -27,7 +27,7 @@
 ## 3. 4일 프로토타입 완성 마일스톤
 
 - **Day 1 (독립 모듈 세팅 & AI PoC)**:
-  - 브랜치 생성 (eat/auth-ko, eat/backend-park, eat/ui-lee, eat/ai-cha)
+  - 브랜치 생성 (feat/auth-ko, feat/backend-park, feat/ui-lee, feat/ai-cha)
   - [차종민] 코디세이 AI API 단독 호출 PoC 스크립트 작성 및 8초 타임아웃 검증
   - [고준석] bcrypt 암호화 및 JWT 토큰 생성 유틸 함수 작성
   - [박범규] FastAPI 기본 서버 세팅 및 SQLite 스키마(users, chat_logs) 생성
@@ -55,7 +55,7 @@
    - 코드 docstring 및 모든 주석은 **100% 한국어**로 작성합니다. (영문 docstring 금지)
    - 변수명, 함수명, 클래스명은 명확한 표준 영어(snake_case, PascalCase)를 사용합니다.
 2. **경로 표기 최우선 규칙**:
-   - 문서, 코드, 산출물 내 경로 표기 시 절대 경로(ile:///...)를 엄격히 금지하며, 항상 **상대 경로(예: B7-1/7-1/app/...)**로만 작성합니다.
+   - 문서, 코드, 산출물 내 경로 표기 시 절대 경로(file:///...)를 엄격히 금지하며, 항상 **상대 경로(예: B7-1/7-1/app/...)**로만 작성합니다.
 3. **간결성 원칙 (Simplicity First)**:
    - 불필요하게 무거운 외부 프레임워크(LangChain 등)를 배제하고, FastAPI + httpx + SQLite + 바닐라 JS 기반의 직관적인 코드를 유지합니다.
 
@@ -108,10 +108,10 @@ ERROR db_save_failed user_id={user_id} error={error_detail}
 1. **브랜치 전략**:
    - main: 배포용 프로덕션 브랜치 (직접 푸시 금지, PR 필수)
    - develop: 개발 통합 브랜치
-   - eat/{기능명}-{이름}: 개인 작업 브랜치 (예: eat/auth-ko, eat/backend-park, eat/ui-lee, eat/ai-cha)
+   - feat/{기능명}-{이름}: 개인 작업 브랜치 (예: feat/auth-ko, feat/backend-park, feat/ui-lee, feat/ai-cha)
 2. **커밋 메시지 형식**:
-   - eat: 새로운 기능 구현
-   - ix: 버그 수정
+   - feat: 새로운 기능 구현
+   - fix: 버그 수정
    - docs: 문서 작성 및 수정
    - style: 코드 포맷팅 및 주석 정리
    - 
