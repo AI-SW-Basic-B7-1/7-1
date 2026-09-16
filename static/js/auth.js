@@ -59,6 +59,8 @@ function setToken(token) {
 
 export function clearSession() {
   localStorage.removeItem(TOKEN_KEY);
+  clearAuthFormState();
+  elements.modal.hidden = true;
   renderSession(null);
   announceAuthChange(false);
 }
@@ -70,6 +72,18 @@ function clearFeedback() {
   elements.registerError.textContent = "";
   elements.authNotice.hidden = true;
   elements.authNotice.textContent = "";
+}
+
+function clearAuthFormState() {
+  activeLoginController?.abort();
+  activeRegisterController?.abort();
+  activeLoginController = null;
+  activeRegisterController = null;
+  elements.loginForm.reset();
+  elements.registerForm.reset();
+  elements.loginSubmitButton.disabled = false;
+  elements.registerSubmitButton.disabled = false;
+  clearFeedback();
 }
 
 function cancelRegisterAttempt() {
@@ -160,7 +174,9 @@ async function handleLoginSubmit(event) {
       return;
     }
     setToken(result.accessToken);
-    elements.loginPassword.value = "";
+    elements.loginForm.reset();
+    elements.registerForm.reset();
+    clearFeedback();
     hideAuthModal({ restoreFocus: false });
     elements.logoutButton.focus();
   } catch (error) {
@@ -244,16 +260,37 @@ async function checkHealth() {
   }
 }
 
+function handleTokenStorageChange(event) {
+  if (event.storageArea !== localStorage) {
+    return;
+  }
+  if (event.key !== TOKEN_KEY && event.key !== null) {
+    return;
+  }
+
+  const token = getAccessToken();
+  clearAuthFormState();
+  elements.modal.hidden = true;
+  renderSession(token);
+  announceAuthChange(Boolean(token));
+}
+
+function handleLogout() {
+  clearSession();
+  elements.openLoginButton.focus();
+}
+
 function initializeAuth() {
   const token = getAccessToken();
   renderSession(token);
   elements.openLoginButton.addEventListener("click", () => openLoginModal());
   elements.closeAuthButton.addEventListener("click", cancelLoginAttempt);
-  elements.logoutButton.addEventListener("click", clearSession);
+  elements.logoutButton.addEventListener("click", handleLogout);
   elements.loginForm.addEventListener("submit", handleLoginSubmit);
   elements.registerForm.addEventListener("submit", handleRegisterSubmit);
   elements.showRegisterButton.addEventListener("click", showRegisterView);
   elements.showLoginButton.addEventListener("click", () => showLoginView());
+  window.addEventListener("storage", handleTokenStorageChange);
   checkHealth();
   announceAuthChange(Boolean(token));
 }

@@ -261,6 +261,9 @@ function handleAuthChange(event) {
   sending = false;
   loadingHistory = false;
   authenticated = Boolean(event.detail?.authenticated && getAccessToken());
+  elements.questionInput.value = "";
+  elements.toastRegion.replaceChildren();
+  updateCounter();
   resetConversation();
   renderComposerState();
   if (authenticated) {
