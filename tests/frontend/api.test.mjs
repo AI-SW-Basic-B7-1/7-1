@@ -40,6 +40,12 @@ test("health는 인증 없이 정확한 GET 계약을 사용한다", async () =>
     api.health(),
     (error) => error instanceof api.ApiError && error.code === "INVALID_CONTRACT",
   );
+
+  globalThis.fetch = async () => jsonResponse(201, { status: "ok" });
+  await assert.rejects(
+    api.health(),
+    (error) => error instanceof api.ApiError && error.code === "INVALID_CONTRACT",
+  );
 });
 
 test("회원가입은 JSON 두 필드와 201 응답만 허용한다", async () => {
@@ -274,6 +280,15 @@ test("기록은 wrapper가 아닌 배열과 response 필드를 요구한다", as
 });
 
 test("성공 상태라도 필수 응답 필드 타입이 다르면 계약 오류로 거부한다", async () => {
+  globalThis.fetch = async () => jsonResponse(201, {
+    access_token: "token",
+    token_type: "bearer",
+  });
+  await assert.rejects(
+    api.login({ username: "tester", password: "local-only" }),
+    (error) => error instanceof api.ApiError && error.code === "INVALID_CONTRACT",
+  );
+
   globalThis.fetch = async () => jsonResponse(200, {
     access_token: "token",
     token_type: "Bearer",

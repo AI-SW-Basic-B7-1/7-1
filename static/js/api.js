@@ -100,7 +100,7 @@ export async function request(
 
 export async function health(signal) {
   const result = await request("/health", { signal });
-  if (result.data?.status !== "ok") {
+  if (result.status !== 200 || result.data?.status !== "ok") {
     throw new ApiError("서버 상태 응답이 올바르지 않습니다.", { code: "INVALID_CONTRACT" });
   }
   return result;
@@ -116,7 +116,12 @@ export async function login(credentials, signal) {
     signal,
   });
   const { access_token: accessToken, token_type: tokenType } = result.data || {};
-  if (typeof accessToken !== "string" || !accessToken || tokenType !== "bearer") {
+  if (
+    result.status !== 200
+    || typeof accessToken !== "string"
+    || !accessToken
+    || tokenType !== "bearer"
+  ) {
     throw new ApiError("로그인 응답 형식이 올바르지 않습니다.", {
       code: "INVALID_CONTRACT",
     });
