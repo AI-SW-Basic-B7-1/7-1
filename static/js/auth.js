@@ -72,6 +72,10 @@ function clearFeedback() {
   elements.registerError.textContent = "";
   elements.authNotice.hidden = true;
   elements.authNotice.textContent = "";
+  elements.loginUsername.setAttribute("aria-invalid", "false");
+  elements.loginPassword.setAttribute("aria-invalid", "false");
+  elements.registerUsername.setAttribute("aria-invalid", "false");
+  elements.registerPassword.setAttribute("aria-invalid", "false");
 }
 
 function clearAuthFormState() {
@@ -147,11 +151,46 @@ function cancelLoginAttempt() {
 function showLoginError(message) {
   elements.loginError.textContent = message;
   elements.loginError.hidden = false;
+  elements.loginUsername.setAttribute("aria-invalid", "true");
+  elements.loginPassword.setAttribute("aria-invalid", "true");
 }
 
 function showRegisterError(message) {
   elements.registerError.textContent = message;
   elements.registerError.hidden = false;
+  elements.registerUsername.setAttribute("aria-invalid", "true");
+  elements.registerPassword.setAttribute("aria-invalid", "true");
+}
+
+function visibleModalControls() {
+  return [...elements.modal.querySelectorAll("button, input")].filter(
+    (control) => !control.disabled && !control.hidden && !control.closest("[hidden]"),
+  );
+}
+
+function handleModalKeydown(event) {
+  if (event.key === "Escape") {
+    event.preventDefault();
+    cancelLoginAttempt();
+    return;
+  }
+  if (event.key !== "Tab") {
+    return;
+  }
+
+  const controls = visibleModalControls();
+  const first = controls[0];
+  const last = controls.at(-1);
+  if (!first || !last) {
+    return;
+  }
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
 }
 
 async function handleLoginSubmit(event) {
@@ -269,10 +308,14 @@ function handleTokenStorageChange(event) {
   }
 
   const token = getAccessToken();
+  const focusWasInModal = elements.modal.contains(document.activeElement);
   clearAuthFormState();
   elements.modal.hidden = true;
   renderSession(token);
   announceAuthChange(Boolean(token));
+  if (focusWasInModal) {
+    (token ? elements.logoutButton : elements.openLoginButton).focus();
+  }
 }
 
 function handleLogout() {
@@ -288,6 +331,7 @@ function initializeAuth() {
   elements.logoutButton.addEventListener("click", handleLogout);
   elements.loginForm.addEventListener("submit", handleLoginSubmit);
   elements.registerForm.addEventListener("submit", handleRegisterSubmit);
+  elements.modal.addEventListener("keydown", handleModalKeydown);
   elements.showRegisterButton.addEventListener("click", showRegisterView);
   elements.showLoginButton.addEventListener("click", () => showLoginView());
   window.addEventListener("storage", handleTokenStorageChange);

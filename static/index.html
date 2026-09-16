@@ -64,6 +64,8 @@
             name="question"
             rows="3"
             placeholder="로그인 후 질문을 입력해 주세요."
+            aria-describedby="question-counter"
+            aria-invalid="false"
             disabled
           ></textarea>
           <div class="composer-footer">
@@ -99,6 +101,7 @@
               name="username"
               type="text"
               autocomplete="username"
+              aria-describedby="login-error"
               required
             >
             <label for="login-password">비밀번호</label>
@@ -107,6 +110,7 @@
               name="password"
               type="password"
               autocomplete="current-password"
+              aria-describedby="login-error"
               required
             >
             <p id="login-error" class="form-error" aria-live="polite" hidden></p>
@@ -125,6 +129,7 @@
               name="username"
               type="text"
               autocomplete="username"
+              aria-describedby="register-error"
               required
             >
             <label for="register-password">비밀번호</label>
@@ -133,6 +138,7 @@
               name="password"
               type="password"
               autocomplete="new-password"
+              aria-describedby="register-error"
               required
             >
             <p id="register-error" class="form-error" aria-live="polite" hidden></p>

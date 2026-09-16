@@ -1,5 +1,6 @@
 import { ApiError, getChatHistory, sendChat } from "./api.js";
 import { clearSession, getAccessToken, openLoginModal } from "./auth.js";
+import { shouldSubmitQuestion } from "./keyboard.js";
 
 const MAX_QUESTION_LENGTH = 500;
 let activeChatController = null;
@@ -27,8 +28,10 @@ function questionLength(value) {
 
 function updateCounter() {
   const length = questionLength(elements.questionInput.value);
+  const overLimit = length > MAX_QUESTION_LENGTH;
   elements.questionCounter.textContent = `${length} / ${MAX_QUESTION_LENGTH}`;
-  elements.questionCounter.classList.toggle("is-over-limit", length > MAX_QUESTION_LENGTH);
+  elements.questionCounter.classList.toggle("is-over-limit", overLimit);
+  elements.questionInput.setAttribute("aria-invalid", String(overLimit));
 }
 
 function renderComposerState() {
@@ -192,7 +195,19 @@ async function handleChatSubmit(event) {
     if (activeChatController === controller) {
       activeChatController = null;
       setSending(false);
+      elements.questionInput.focus();
     }
+  }
+}
+
+function handleQuestionKeydown(event) {
+  if (!shouldSubmitQuestion(event)) {
+    return;
+  }
+
+  event.preventDefault();
+  if (!sending && !loadingHistory) {
+    elements.chatForm.requestSubmit();
   }
 }
 
@@ -275,6 +290,7 @@ function initializeApp() {
   authenticated = Boolean(getAccessToken());
   elements.chatForm.addEventListener("submit", handleChatSubmit);
   elements.questionInput.addEventListener("input", updateCounter);
+  elements.questionInput.addEventListener("keydown", handleQuestionKeydown);
   window.addEventListener("auth:changed", handleAuthChange);
   resetConversation();
   updateCounter();
