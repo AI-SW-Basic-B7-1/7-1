@@ -12,9 +12,9 @@
 | 팀원 | 담당 역할 | 세부 업무 내용 및 기여 영역 |
 | :--- | :--- | :--- |
 | **고준석** (팀장) | **로그인 & 인증 (Auth) / PM** | • 회원가입(`POST /api/auth/register`) 및 로그인(`POST /api/auth/login`) API<br>• 비밀번호 `bcrypt` 단방향 해싱 및 JWT 액세스 토큰 발급/검증 로직<br>• 미인증 사용자 접근 차단용 FastAPI Dependency (`get_current_user`) 구현<br>• 프로젝트 전체 일정 조율 및 마일스톤 관리 |
-| **박범규** | **백엔드 코어 & DB** | • FastAPI 메인 애플리케이션 진입점 및 라우터 통합 (`app/main.py`)<br>• SQLite DB 연결 및 테이블 스키마 (`users`, `chat_logs`) 설계/구축<br>• 대화 로그 저장 함수 및 내 대화 이력 조회 API (`GET /api/me/chats`)<br>• 과제 필수 표준 4대 이벤트 로깅 모듈 및 검증용 `scripts/check_logs.sql` 작성 |
-| **이준혁** | **프론트엔드 UI/UX** | • 단일 페이지 반응형 웹 챗봇 인터페이스 (`static/index.html`, `style.css`)<br>• 로그인 및 회원가입 모달 UI, JWT 로컬 스토리지 보관 및 헤더 전송 (`auth.js`)<br>• 실시간 메시지 버블 렌더링, 로딩 인디케이터, 비동기 API 통신 (`app.js`)<br>• 에러 토스트 피드백 및 모바일/데스크탑 반응형 웹 최적화 |
-| **차종민** | **AI 파이프라인** | • 코디세이 AI API 비동기 연동 모듈 (`app/ai_service.py`) 구축<br>• 최근 대화 3~5쌍을 조합하는 슬라이딩 윈도우 문맥(Context) 유지 전략 구현<br>• 8.0초 타임아웃 예외 핸들링 및 서버 프로세스 다운 방지 로직 (504 반환)<br>• 외부 키 미설정 시에도 시연 및 평가가 가능한 내장 Mock AI 엔진 구현 |
+| **박범규** | **백엔드 코어 & DB (Chat Owner)** | • FastAPI 메인 애플리케이션 진입점 및 라우터 통합 (`app/main.py`)<br>• **`POST /api/chat` 엔드포인트 전체 흐름 최종 소유**: 요청 검증(공백/500자 제한), 인증 확인, AI 서비스 호출, 응답시간(`latency_ms`) 측정, DB 저장 및 에러 핸들링<br>• SQLite DB 연결 및 테이블 스키마 (`users`, `chat_logs`) 설계/구축, 내 대화 이력 조회 API (`GET /api/me/chats`)<br>• 표준 4대 이벤트 로깅 모듈, DB 검증용 `scripts/check_db_chats.sql` 및 서버 로그 검증 스크립트 작성 |
+| **이준혁** | **프론트엔드 UI/UX** | • 단일 페이지 반응형 웹 챗봇 인터페이스 (`static/index.html`, `style.css`)<br>• 로그인 및 회원가입 모달 UI, JWT 로컬 스토리지 보관 및 헤더 전송 (`auth.js`)<br>• 실시간 메시지 버블 렌더링, 로딩 인디케이터, 비동기 API 통신 (`app.js`)<br>• Day 1~2 Mock API 기반 조기 E2E 연동 및 에러 토스트 피드백 |
+| **차종민** | **AI 파이프라인 (Service Provider)** | • **웹/DB 의존성이 배제된 순수 비동기 함수 모듈**(`app/ai_service.py`: `generate_chat_response`) 제공<br>• 최근 대화 3~5쌍을 조합하는 슬라이딩 윈도우 문맥(Context) 유지 전략 구현<br>• 8.0초 타임아웃 예외 핸들링 및 서버 프로세스 다운 방지 로직 (504 반환 규격 준수)<br>• 외부 키 미설정 시에도 시연 및 평가가 가능한 내장 Mock AI 엔진 구현 |
 
 ---
 
@@ -38,13 +38,13 @@
 ## 3. 4일 프로토타입 개발 일정 (마일스톤 요약)
 
 ```text
-[Day 1] 독립 모듈 구축 ──> [Day 2] 코어 기능/API 완성 ──> [Day 3] 전체 E2E 결합 ──> [Day 4] 안정성 & 시연 점검
+[Day 1] 독립 모듈 & Mock API 세팅 ──> [Day 2] 코어 로직 & 조기 Mock E2E ──> [Day 3] 실제 AI/DB 결합 ──> [Day 4] 안정성 & 시연 점검
 ```
 
-- **Day 1**: 독립 컴포넌트 뼈대 세팅 & 단독 PoC 검증 (인증, DB, UI, AI API)
-- **Day 2**: 각자 담당 코어 API 및 비즈니스 로직 완성
-- **Day 3**: 백엔드-프론트엔드-AI 전체 파이프라인 E2E 1차 결합 (Alpha Release)
-- **Day 4**: 안정성 강화, 입력 검증, EC2 배포 및 프로토타입 시연 점검
+- **Day 1**: 독립 컴포넌트 뼈대 세팅, 단독 PoC 검증, **조기 연동용 Mock 응답 엔드포인트 선행 배포**
+- **Day 2**: 각자 코어 로직 완성 및 **프론트↔백엔드 간 조기 Mock E2E 연동(Walking Skeleton) 완료** (통합 리스크 조기 제거)
+- **Day 3**: 백엔드-프론트엔드-AI 전체 파이프라인에 **실제 AI API 및 SQLite DB 영속 저장 교체 결합** (Alpha Release)
+- **Day 4**: 안정성 강화, 입력 검증, SQLite DB 무결성/서버 로그 검증, EC2 배포 및 프로토타입 시연 점검
 
 👉 **일자별 상세 태스크 및 체크리스트**: [docs/project_plan.md](docs/project_plan.md) 참고
 
@@ -77,12 +77,14 @@ SQLite 데이터베이스 파일 경로: `data/chatbot.db`
 ## 5. API 명세 (핵심 엔드포인트)
 
 | 메서드 | 엔드포인트 | 인증 필요 | 설명 | 요청 예시 | 응답 예시 |
-| :--- | :--- | :---: | :--- | :--- | :--- |
+| :--- | :--- | :--- | :--- | :--- | :--- |
 | `POST` | `/api/auth/register` | X | 신규 회원가입 | `{"username": "testuser", "password": "pass1234"}` | `201 Created` |
 | `POST` | `/api/auth/login` | X | 로그인 및 JWT 토큰 발급 | `{"username": "testuser", "password": "pass1234"}` | `{"access_token": "eyJ...", "token_type": "bearer"}` |
 | `POST` | `/api/chat` | **O (필수)** | AI 질문 전송 및 답변 수신 | `{"question": "안녕? 너는 누구야?"}` | `{"answer": "안녕하세요! AI 어시스턴트입니다.", "latency_ms": 450}` |
 | `GET` | `/api/me/chats` | **O (필수)** | 본인 대화 이력 조회 | - | `[{"id": 1, "question": "...", "response": "...", "created_at": "..."}]` |
 | `GET` | `/api/health` | X | 서버 헬스체크 | - | `{"status": "ok"}` |
+
+👉 **엔드포인트별 상세 Request/Response JSON, Pydantic 스키마 및 상태 코드 규격**: [docs/api_spec.md](docs/api_spec.md) 참고
 
 ---
 
@@ -182,15 +184,30 @@ WantedBy=multi-user.target
 
 ## 8. 운영 안정성 및 표준 로깅 체계
 
-1. **표준 4대 이벤트 로깅**:
-   ```text
-   INFO request_received user_id=1 path=/api/chat
-   INFO ai_call_start user_id=1 request_id=req-98234
-   INFO ai_call_success request_id=req-98234 latency_ms=480
-   INFO db_save_success user_id=1 chat_id=102
-   ```
-2. **AI 타임아웃 및 장애 복원력**:
-   * 코디세이 API 호출 시 `timeout=8.0초` 강제. 지연 발생 시 서버가 죽지 않고 504 Gateway Timeout 반환.
-   * `CODESSEY_API_KEY` 미입력 시 내장 Mock AI가 친절한 모의 답변을 생성하여 평가자 환경에서도 100% 정상 구동 지원.
-3. **대화 로그 확인 SQL 스크립트**:
-   `scripts/check_logs.sql`을 실행하여 누적된 질문, 답변, 응답 지연시간(`latency_ms`)을 즉시 조회할 수 있습니다.
+### 8.1 표준 4대 이벤트 서버 로깅 (Python logging)
+서버 콘솔(stdout) 및 파일(`logs/server.log`)에 실시간으로 구조화된 4대 핵심 이벤트를 기록합니다:
+```text
+INFO request_received user_id=1 path=/api/chat
+INFO ai_call_start user_id=1 request_id=req-98234
+INFO ai_call_success request_id=req-98234 latency_ms=480
+INFO db_save_success user_id=1 chat_id=102
+```
+
+- **서버 로그 검증 스크립트**: `scripts/check_server_logs.sh`
+  ```bash
+  # 4대 표준 로그 이벤트 실시간 필터링 확인
+  bash scripts/check_server_logs.sh
+  # 또는 직접 grep 실행
+  grep -E "(request_received|ai_call_start|ai_call_success|db_save_success)" logs/server.log
+  ```
+
+### 8.2 SQLite DB 대화 이력 영속성 검증 (SQL)
+RDBMS(`chat_logs` 테이블)에 누적 저장된 사용자 질문, AI 응답, 지연시간(`latency_ms`)을 검증합니다:
+- **DB 검증 쿼리 스크립트**: `scripts/check_db_chats.sql`
+  ```bash
+  sqlite3 data/chatbot.db < scripts/check_db_chats.sql
+  ```
+
+### 8.3 AI 타임아웃 및 장애 복원력
+- **8.0초 타임아웃 격리**: 코디세이 API 호출 지연 시 서버 프로세스가 다운되지 않고 즉시 504 Gateway Timeout 안내 응답을 반환합니다.
+- **내장 Mock AI 엔진**: `CODESSEY_API_KEY` 미입력 환경에서도 서비스 정상 동작을 100% 시연할 수 있도록 모의 응답 폴백을 지원합니다.
