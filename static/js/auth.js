@@ -25,8 +25,8 @@ const elements = {
   loginSwitch: document.querySelector("#login-switch"),
   showRegisterButton: document.querySelector("#show-register-button"),
   showLoginButton: document.querySelector("#show-login-button"),
-  sessionStatus: document.querySelector("#session-status"),
   connectionStatus: document.querySelector("#connection-status"),
+  connectionStatusLabel: document.querySelector("#connection-status-label"),
   aiModeBadge: document.querySelector("#ai-mode-badge"),
 };
 
@@ -44,9 +44,6 @@ function announceAuthChange(authenticated) {
 
 function renderSession(token) {
   const authenticated = Boolean(token);
-  elements.sessionStatus.textContent = authenticated
-    ? "로그인 상태입니다."
-    : "로그인이 필요합니다.";
   elements.openLoginButton.hidden = authenticated;
   elements.logoutButton.hidden = !authenticated;
 }
@@ -288,13 +285,27 @@ function renderAiMode(aiMode) {
   elements.aiModeBadge.hidden = false;
 }
 
+function renderConnectionState(state) {
+  const labels = {
+    checking: "서버 연결 확인 중",
+    connected: "서버 연결됨",
+    disconnected: "서버 연결 실패",
+  };
+  const label = labels[state] || labels.disconnected;
+
+  elements.connectionStatus.dataset.state = state;
+  elements.connectionStatusLabel.textContent = label;
+  elements.connectionStatus.title = label;
+}
+
 async function checkHealth() {
+  renderConnectionState("checking");
   try {
     const result = await health();
-    elements.connectionStatus.textContent = "서버에 연결되었습니다.";
+    renderConnectionState("connected");
     renderAiMode(result.aiMode);
   } catch (_error) {
-    elements.connectionStatus.textContent = "서버 연결을 확인해 주세요.";
+    renderConnectionState("disconnected");
     renderAiMode(null);
   }
 }

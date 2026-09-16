@@ -16,7 +16,6 @@
         </div>
         <div class="session-actions">
           <span id="ai-mode-badge" class="mode-badge" hidden></span>
-          <p id="session-status" class="session-status">로그인이 필요합니다.</p>
           <button id="open-login-button" class="button button-secondary" type="button">
             로그인
           </button>
@@ -32,9 +31,18 @@
             <p class="eyebrow">CURRENT CONVERSATION</p>
             <h2 id="chat-title">무엇이든 물어보세요</h2>
           </div>
-          <p id="connection-status" class="connection-status" aria-live="polite">
-            서버 연결을 확인하는 중입니다.
-          </p>
+          <span
+            id="connection-status"
+            class="connection-status"
+            data-state="checking"
+            role="status"
+            aria-live="polite"
+            aria-atomic="true"
+            title="서버 연결 확인 중"
+          >
+            <span class="connection-dot" aria-hidden="true"></span>
+            <span id="connection-status-label" class="visually-hidden">서버 연결 확인 중</span>
+          </span>
         </section>
 
         <section

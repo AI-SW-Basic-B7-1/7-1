@@ -37,6 +37,26 @@ test("HTML 정적 자원은 동일 출처의 /static 경로만 사용한다", as
   assert.doesNotMatch(html, /(?:file|https?):\/\//i);
 });
 
+test("헤더 중복 안내 없이 서버 연결 상태를 도형과 접근성 문구로 제공한다", async () => {
+  const [html, authSource, styleSource] = await Promise.all([
+    readRepositoryFile("static/index.html"),
+    readRepositoryFile("static/js/auth.js"),
+    readRepositoryFile("static/css/style.css"),
+  ]);
+
+  assert.doesNotMatch(html, /id="session-status"/);
+  assert.doesNotMatch(`${html}\n${authSource}`, /로그인이 필요합니다\./);
+  assert.match(html, /id="connection-status"[\s\S]*?data-state="checking"/);
+  assert.match(html, /role="status"[\s\S]*?aria-live="polite"[\s\S]*?aria-atomic="true"/);
+  assert.match(html, /class="connection-dot" aria-hidden="true"/);
+  assert.match(html, /id="connection-status-label" class="visually-hidden"/);
+  assert.match(authSource, /connectionStatusLabel\.textContent = label/);
+  assert.match(authSource, /renderConnectionState\("connected"\)/);
+  assert.match(authSource, /renderConnectionState\("disconnected"\)/);
+  assert.match(styleSource, /\.connection-status\[data-state="connected"\]/);
+  assert.match(styleSource, /\.connection-status\[data-state="disconnected"\]/);
+});
+
 test("fetch와 팀 API 경로는 api.js 한 곳에만 모여 있다", async () => {
   const [apiSource, authSource, appSource, historySource, keyboardSource] = await Promise.all([
     readRepositoryFile("static/js/api.js"),
