@@ -22,11 +22,62 @@ function jsonResponse(status, body, headers = {}) {
   });
 }
 
+test("health는 인증 없이 정확한 GET 계약을 사용한다", async () => {
+  globalThis.fetch = async (url, options) => {
+    assert.equal(url, "/api/health");
+    assert.equal(options.method, "GET");
+    assert.equal(options.headers.Accept, "application/json");
+    assert.equal(options.headers.Authorization, undefined);
+    assert.equal(options.headers["Content-Type"], undefined);
+    assert.equal(options.body, undefined);
+    return jsonResponse(200, { status: "ok" });
+  };
+
+  assert.deepEqual((await api.health()).data, { status: "ok" });
+
+  globalThis.fetch = async () => jsonResponse(200, { status: "degraded" });
+  await assert.rejects(
+    api.health(),
+    (error) => error instanceof api.ApiError && error.code === "INVALID_CONTRACT",
+  );
+});
+
+test("회원가입은 JSON 두 필드와 201 응답만 허용한다", async () => {
+  globalThis.fetch = async (url, options) => {
+    assert.equal(url, "/api/auth/register");
+    assert.equal(options.method, "POST");
+    assert.equal(options.headers["Content-Type"], "application/json; charset=utf-8");
+    assert.equal(options.headers.Authorization, undefined);
+    assert.deepEqual(JSON.parse(options.body), {
+      username: "new-user",
+      password: "local-only",
+    });
+    return jsonResponse(201, { message: "회원가입이 완료되었습니다.", username: "new-user" });
+  };
+
+  assert.deepEqual(
+    await api.register({ username: "new-user", password: "local-only" }),
+    { message: "회원가입이 완료되었습니다.", username: "new-user" },
+  );
+
+  globalThis.fetch = async () => jsonResponse(
+    200,
+    { message: "회원가입이 완료되었습니다.", username: "new-user" },
+  );
+  await assert.rejects(
+    api.register({ username: "new-user", password: "local-only" }),
+    (error) => error instanceof api.ApiError && error.code === "INVALID_CONTRACT",
+  );
+});
+
 test("선택 AI 헤더 없이 로그인 계약을 처리한다", async () => {
   let calls = 0;
   globalThis.fetch = async (url, options) => {
     calls += 1;
     assert.equal(url, "/api/auth/login");
+    assert.equal(options.method, "POST");
+    assert.equal(options.headers["Content-Type"], "application/json; charset=utf-8");
+    assert.equal(options.headers["X-AI-Mode"], undefined);
     assert.deepEqual(JSON.parse(options.body), {
       username: "tester",
       password: "local-only",
@@ -185,7 +236,9 @@ test("채팅 POST 실패는 네트워크와 서버 오류 모두 자동 재시�
 test("채팅은 bearer와 원문 question을 보내고 빈 문자열 answer도 허용한다", async () => {
   globalThis.fetch = async (url, options) => {
     assert.equal(url, "/api/chat");
+    assert.equal(options.method, "POST");
     assert.equal(options.headers.Authorization, "Bearer current-token");
+    assert.equal(options.headers["X-AI-Mode"], undefined);
     assert.deepEqual(JSON.parse(options.body), { question: "  원문 질문  " });
     return jsonResponse(200, { answer: "", latency_ms: 0 });
   };
@@ -203,12 +256,48 @@ test("기록은 wrapper가 아닌 배열과 response 필드를 요구한다", as
     latency_ms: 7,
     created_at: "2026-09-16T00:00:00",
   };
-  globalThis.fetch = async () => jsonResponse(200, [item]);
+  globalThis.fetch = async (url, options) => {
+    assert.equal(url, "/api/me/chats");
+    assert.equal(options.method, "GET");
+    assert.equal(options.headers.Authorization, "Bearer current-token");
+    assert.equal(options.headers["Content-Type"], undefined);
+    assert.equal(options.body, undefined);
+    return jsonResponse(200, [item]);
+  };
   assert.deepEqual((await api.getChatHistory("current-token")).chats, [item]);
 
   globalThis.fetch = async () => jsonResponse(200, { chats: [item] });
   await assert.rejects(
     api.getChatHistory("current-token"),
+    (error) => error instanceof api.ApiError && error.code === "INVALID_CONTRACT",
+  );
+});
+
+test("성공 상태라도 필수 응답 필드 타입이 다르면 계약 오류로 거부한다", async () => {
+  globalThis.fetch = async () => jsonResponse(200, {
+    access_token: "token",
+    token_type: "Bearer",
+  });
+  await assert.rejects(
+    api.login({ username: "tester", password: "local-only" }),
+    (error) => error instanceof api.ApiError && error.code === "INVALID_CONTRACT",
+  );
+
+  globalThis.fetch = async () => jsonResponse(200, { answer: "답변", latency_ms: -1 });
+  await assert.rejects(
+    api.sendChat("질문", "token"),
+    (error) => error instanceof api.ApiError && error.code === "INVALID_CONTRACT",
+  );
+
+  globalThis.fetch = async () => jsonResponse(200, [{
+    id: 1,
+    question: "질문",
+    response: "답변",
+    latency_ms: 1.5,
+    created_at: "2026-09-16T00:00:00",
+  }]);
+  await assert.rejects(
+    api.getChatHistory("token"),
     (error) => error instanceof api.ApiError && error.code === "INVALID_CONTRACT",
   );
 });
