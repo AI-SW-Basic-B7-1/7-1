@@ -90,6 +90,7 @@
         <p class="eyebrow">SECURE ACCESS</p>
         <h2 id="auth-title">로그인</h2>
         <div id="auth-content" class="auth-content">
+          <p id="auth-notice" class="form-notice" aria-live="polite" hidden></p>
           <form id="login-form" class="auth-form" method="post">
             <label for="login-username">아이디</label>
             <input
@@ -112,7 +113,40 @@
               로그인
             </button>
           </form>
-          <p class="auth-switch-hint">처음 방문하셨나요? 회원가입 기능이 곧 연결됩니다.</p>
+          <p id="register-switch" class="auth-switch-hint">
+            처음 방문하셨나요?
+            <button id="show-register-button" class="text-button" type="button">회원가입</button>
+          </p>
+          <form id="register-form" class="auth-form" method="post" hidden>
+            <label for="register-username">아이디</label>
+            <input
+              id="register-username"
+              name="username"
+              type="text"
+              autocomplete="username"
+              required
+            >
+            <label for="register-password">비밀번호</label>
+            <input
+              id="register-password"
+              name="password"
+              type="password"
+              autocomplete="new-password"
+              required
+            >
+            <p id="register-error" class="form-error" aria-live="polite" hidden></p>
+            <button
+              id="register-submit-button"
+              class="button button-primary button-block"
+              type="submit"
+            >
+              회원가입
+            </button>
+          </form>
+          <p id="login-switch" class="auth-switch-hint" hidden>
+            이미 계정이 있나요?
+            <button id="show-login-button" class="text-button" type="button">로그인</button>
+          </p>
         </div>
       </div>
     </section>

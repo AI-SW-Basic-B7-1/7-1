@@ -74,6 +74,7 @@ export async function request(
 
   return {
     data,
+    status: response.status,
     aiMode: response.headers.get("X-AI-Mode") || null,
   };
 }
@@ -102,4 +103,28 @@ export async function login(credentials, signal) {
     });
   }
   return { accessToken, tokenType, aiMode: result.aiMode };
+}
+
+export async function register(credentials, signal) {
+  const result = await request("/auth/register", {
+    method: "POST",
+    body: {
+      username: credentials.username,
+      password: credentials.password,
+    },
+    signal,
+  });
+  const { message, username } = result.data || {};
+  if (
+    result.status !== 201
+    || typeof message !== "string"
+    || !message
+    || typeof username !== "string"
+    || !username
+  ) {
+    throw new ApiError("회원가입 응답 형식이 올바르지 않습니다.", {
+      code: "INVALID_CONTRACT",
+    });
+  }
+  return { message, username };
 }

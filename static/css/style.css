@@ -306,10 +306,38 @@ h2 {
   font-weight: 650;
 }
 
+.form-notice {
+  margin: 0 0 14px;
+  border: 1px solid rgba(49, 87, 213, 0.28);
+  border-radius: 10px;
+  padding: 10px 12px;
+  color: var(--color-primary);
+  background: rgba(49, 87, 213, 0.08);
+  font-size: 0.82rem;
+  font-weight: 650;
+}
+
 .auth-switch-hint {
   margin: 16px 0 0;
   font-size: 0.82rem;
   text-align: center;
+}
+
+.text-button {
+  border: 0;
+  padding: 3px;
+  color: var(--color-primary);
+  background: transparent;
+  font: inherit;
+  font-weight: 750;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.text-button:focus-visible {
+  outline: 3px solid rgba(49, 87, 213, 0.22);
+  outline-offset: 2px;
 }
 
 .toast-region {

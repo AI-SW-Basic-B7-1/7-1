@@ -1,7 +1,8 @@
-import { ApiError, health, login } from "./api.js";
+import { ApiError, health, login, register } from "./api.js";
 
 const TOKEN_KEY = "access_token";
 let activeLoginController = null;
+let activeRegisterController = null;
 
 const elements = {
   modal: document.querySelector("#auth-modal"),
@@ -14,6 +15,16 @@ const elements = {
   loginPassword: document.querySelector("#login-password"),
   loginError: document.querySelector("#login-error"),
   loginSubmitButton: document.querySelector("#login-submit-button"),
+  authNotice: document.querySelector("#auth-notice"),
+  registerForm: document.querySelector("#register-form"),
+  registerUsername: document.querySelector("#register-username"),
+  registerPassword: document.querySelector("#register-password"),
+  registerError: document.querySelector("#register-error"),
+  registerSubmitButton: document.querySelector("#register-submit-button"),
+  registerSwitch: document.querySelector("#register-switch"),
+  loginSwitch: document.querySelector("#login-switch"),
+  showRegisterButton: document.querySelector("#show-register-button"),
+  showLoginButton: document.querySelector("#show-login-button"),
   sessionStatus: document.querySelector("#session-status"),
   connectionStatus: document.querySelector("#connection-status"),
   aiModeBadge: document.querySelector("#ai-mode-badge"),
@@ -52,10 +63,54 @@ export function clearSession() {
   announceAuthChange(false);
 }
 
-function showLoginModal() {
+function clearFeedback() {
   elements.loginError.hidden = true;
   elements.loginError.textContent = "";
+  elements.registerError.hidden = true;
+  elements.registerError.textContent = "";
+  elements.authNotice.hidden = true;
+  elements.authNotice.textContent = "";
+}
+
+function cancelRegisterAttempt() {
+  activeRegisterController?.abort();
+  activeRegisterController = null;
+  elements.registerPassword.value = "";
+  elements.registerSubmitButton.disabled = false;
+}
+
+function showLoginView({ notice = "" } = {}) {
+  cancelRegisterAttempt();
+  elements.authTitle.textContent = "로그인";
+  elements.loginForm.hidden = false;
+  elements.registerSwitch.hidden = false;
+  elements.registerForm.hidden = true;
+  elements.loginSwitch.hidden = true;
+  clearFeedback();
+  if (notice) {
+    elements.authNotice.textContent = notice;
+    elements.authNotice.hidden = false;
+  }
+  elements.loginUsername.focus();
+}
+
+function showRegisterView() {
+  activeLoginController?.abort();
+  activeLoginController = null;
+  elements.loginPassword.value = "";
+  elements.loginSubmitButton.disabled = false;
+  elements.authTitle.textContent = "회원가입";
+  elements.loginForm.hidden = true;
+  elements.registerSwitch.hidden = true;
+  elements.registerForm.hidden = false;
+  elements.loginSwitch.hidden = false;
+  clearFeedback();
+  elements.registerUsername.focus();
+}
+
+function showLoginModal() {
   elements.modal.hidden = false;
+  showLoginView();
   elements.loginUsername.focus();
 }
 
@@ -69,6 +124,7 @@ function hideAuthModal({ restoreFocus = true } = {}) {
 function cancelLoginAttempt() {
   activeLoginController?.abort();
   activeLoginController = null;
+  cancelRegisterAttempt();
   elements.loginPassword.value = "";
   elements.loginSubmitButton.disabled = false;
   hideAuthModal();
@@ -77,6 +133,11 @@ function cancelLoginAttempt() {
 function showLoginError(message) {
   elements.loginError.textContent = message;
   elements.loginError.hidden = false;
+}
+
+function showRegisterError(message) {
+  elements.registerError.textContent = message;
+  elements.registerError.hidden = false;
 }
 
 async function handleLoginSubmit(event) {
@@ -101,7 +162,11 @@ async function handleLoginSubmit(event) {
     hideAuthModal({ restoreFocus: false });
     elements.logoutButton.focus();
   } catch (error) {
-    if (error?.name === "AbortError") {
+    if (
+      activeLoginController !== controller
+      || controller.signal.aborted
+      || error?.name === "AbortError"
+    ) {
       return;
     }
     const message = error instanceof ApiError ? error.message : "로그인에 실패했습니다.";
@@ -110,6 +175,48 @@ async function handleLoginSubmit(event) {
     if (activeLoginController === controller) {
       activeLoginController = null;
       elements.loginSubmitButton.disabled = false;
+    }
+  }
+}
+
+async function handleRegisterSubmit(event) {
+  event.preventDefault();
+  activeRegisterController?.abort();
+  const controller = new AbortController();
+  activeRegisterController = controller;
+  elements.registerError.hidden = true;
+  elements.registerSubmitButton.disabled = true;
+
+  const credentials = {
+    username: elements.registerUsername.value,
+    password: elements.registerPassword.value,
+  };
+  try {
+    const result = await register(credentials, controller.signal);
+    if (activeRegisterController !== controller || controller.signal.aborted) {
+      return;
+    }
+    activeRegisterController = null;
+    elements.registerSubmitButton.disabled = false;
+    elements.registerPassword.value = "";
+    elements.loginUsername.value = result.username;
+    showLoginView({ notice: result.message });
+    elements.loginPassword.focus();
+  } catch (error) {
+    if (
+      activeRegisterController !== controller
+      || controller.signal.aborted
+      || error?.name === "AbortError"
+    ) {
+      return;
+    }
+    elements.registerPassword.value = "";
+    const message = error instanceof ApiError ? error.message : "회원가입에 실패했습니다.";
+    showRegisterError(message);
+  } finally {
+    if (activeRegisterController === controller) {
+      activeRegisterController = null;
+      elements.registerSubmitButton.disabled = false;
     }
   }
 }
@@ -142,6 +249,9 @@ function initializeAuth() {
   elements.closeAuthButton.addEventListener("click", cancelLoginAttempt);
   elements.logoutButton.addEventListener("click", clearSession);
   elements.loginForm.addEventListener("submit", handleLoginSubmit);
+  elements.registerForm.addEventListener("submit", handleRegisterSubmit);
+  elements.showRegisterButton.addEventListener("click", showRegisterView);
+  elements.showLoginButton.addEventListener("click", () => showLoginView());
   checkHealth();
   announceAuthChange(Boolean(token));
 }
