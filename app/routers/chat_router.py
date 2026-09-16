@@ -12,6 +12,8 @@ router = APIRouter(
     tags=["chat"],
 )
 
+# POST /api/chat 구현 후 공백 입력, 500자 초과, AI 타임아웃, DB 저장 실패 예외 처리 추가
+
 
 # POST /api/chat, GET /api/me/chats 구현 후 삭제하거나 내부 상태 확인용으로 유지
 @router.get("/chat/status")
