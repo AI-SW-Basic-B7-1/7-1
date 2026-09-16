@@ -128,3 +128,24 @@ export async function register(credentials, signal) {
   }
   return { message, username };
 }
+
+export async function sendChat(question, token, signal) {
+  const result = await request("/chat", {
+    method: "POST",
+    body: { question },
+    token,
+    signal,
+  });
+  const { answer, latency_ms: latencyMs } = result.data || {};
+  if (
+    result.status !== 200
+    || typeof answer !== "string"
+    || !Number.isInteger(latencyMs)
+    || latencyMs < 0
+  ) {
+    throw new ApiError("채팅 응답 형식이 올바르지 않습니다.", {
+      code: "INVALID_CONTRACT",
+    });
+  }
+  return { answer, latencyMs, aiMode: result.aiMode };
+}
