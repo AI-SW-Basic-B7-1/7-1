@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="로그인 사용자를 위한 AI Assistant 채팅 서비스">
+    <title>AI Assistant</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="app-header">
+        <div>
+          <p class="eyebrow">CODYSSEY B7-1</p>
+          <h1>AI Assistant</h1>
+        </div>
+        <div class="session-actions">
+          <span id="ai-mode-badge" class="mode-badge" hidden></span>
+          <p id="session-status" class="session-status">로그인이 필요합니다.</p>
+          <button id="open-login-button" class="button button-secondary" type="button">
+            로그인
+          </button>
+          <button id="logout-button" class="button button-secondary" type="button" hidden>
+            로그아웃
+          </button>
+        </div>
+      </header>
+
+      <main class="chat-panel" aria-labelledby="chat-title">
+        <section class="chat-heading">
+          <div>
+            <p class="eyebrow">CURRENT CONVERSATION</p>
+            <h2 id="chat-title">무엇이든 물어보세요</h2>
+          </div>
+          <p id="connection-status" class="connection-status" aria-live="polite">
+            서버 연결을 확인하는 중입니다.
+          </p>
+        </section>
+
+        <section
+          id="message-list"
+          class="message-list"
+          aria-label="대화 내용"
+          aria-live="polite"
+        >
+          <div id="empty-state" class="empty-state">
+            <p class="empty-state-title">아직 대화가 없습니다.</p>
+            <p>로그인하면 내 이전 기록을 불러오고 새 질문을 보낼 수 있습니다.</p>
+          </div>
+        </section>
+
+        <div id="loading-indicator" class="loading-indicator" role="status" hidden>
+          <span class="loading-dot"></span>
+          <span class="loading-dot"></span>
+          <span class="loading-dot"></span>
+          <span>AI가 답변을 준비하고 있습니다.</span>
+        </div>
+
+        <form id="chat-form" class="composer">
+          <label for="question-input">질문</label>
+          <textarea
+            id="question-input"
+            name="question"
+            rows="3"
+            placeholder="로그인 후 질문을 입력해 주세요."
+            disabled
+          ></textarea>
+          <div class="composer-footer">
+            <span id="question-counter" class="question-counter">0 / 500</span>
+            <button id="send-button" class="button button-primary" type="submit" disabled>
+              전송
+            </button>
+          </div>
+        </form>
+      </main>
+    </div>
+
+    <section
+      id="auth-modal"
+      class="modal-backdrop"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="auth-title"
+      hidden
+    >
+      <div class="modal-card">
+        <button id="close-auth-button" class="icon-button" type="button" aria-label="닫기">
+          ×
+        </button>
+        <p class="eyebrow">SECURE ACCESS</p>
+        <h2 id="auth-title">계정으로 시작하기</h2>
+        <div id="auth-content" class="auth-content">
+          <p>로그인과 회원가입 양식을 준비하고 있습니다.</p>
+        </div>
+      </div>
+    </section>
+
+    <div id="toast-region" class="toast-region" aria-live="assertive"></div>
+  </body>
+</html>
