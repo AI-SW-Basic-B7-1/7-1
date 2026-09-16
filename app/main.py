@@ -14,6 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+from app.exception_handlers import register_exception_handlers
 from app.routers.auth_router import router as auth_router
 from app.routers.chat_router import router as chat_router
 from app.schemas import HealthResponse
@@ -34,6 +35,7 @@ def create_app() -> FastAPI:
     )
 
     configure_cors(fastapi_app)
+    register_exception_handlers(fastapi_app)
     register_routers(fastapi_app)
     mount_static_files(fastapi_app)
     register_system_routes(fastapi_app)
