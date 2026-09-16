@@ -42,6 +42,7 @@
           class="message-list"
           aria-label="대화 내용"
           aria-live="polite"
+          aria-busy="false"
         >
           <div id="empty-state" class="empty-state">
             <p class="empty-state-title">아직 대화가 없습니다.</p>
@@ -56,7 +57,7 @@
           <span id="loading-message">AI가 답변을 준비하고 있습니다.</span>
         </div>
 
-        <form id="chat-form" class="composer">
+        <form id="chat-form" class="composer" aria-busy="false">
           <label for="question-input">질문</label>
           <textarea
             id="question-input"

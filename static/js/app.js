@@ -35,6 +35,13 @@ function renderComposerState() {
   const busy = sending || loadingHistory;
   elements.questionInput.disabled = !authenticated || busy;
   elements.sendButton.disabled = !authenticated || busy;
+  elements.sendButton.textContent = sending
+    ? "전송 중..."
+    : loadingHistory
+      ? "기록 확인 중..."
+      : "전송";
+  elements.chatForm.setAttribute("aria-busy", String(busy));
+  elements.messageList.setAttribute("aria-busy", String(busy));
   elements.questionInput.placeholder = authenticated
     ? "질문을 입력해 주세요."
     : "로그인 후 질문을 입력해 주세요.";
