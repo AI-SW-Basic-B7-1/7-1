@@ -67,6 +67,7 @@ async def lifespan(app: FastAPI):
 
 def configure_cors(app: FastAPI) -> None:
     """로컬 개발 환경에서 필요한 CORS 정책을 등록합니다."""
+    # 배포 환경 확정 후 EC2 도메인 또는 프론트엔드 도메인 기준으로 허용 출처 수정
     app.add_middleware(
         CORSMiddleware,
         allow_origins=[
@@ -83,12 +84,14 @@ def configure_cors(app: FastAPI) -> None:
 
 def register_routers(app: FastAPI) -> None:
     """기능별 API 라우터를 앱에 등록합니다."""
+    # auth_router.py, chat_router.py에 실제 엔드포인트 구현 후에도 유지
     app.include_router(auth_router)
     app.include_router(chat_router)
 
 
 def mount_static_files(app: FastAPI) -> None:
     """프론트엔드 정적 파일 디렉터리를 앱에 연결합니다."""
+    # Nginx가 정적 파일을 직접 서빙하도록 바꾸는 경우 배포 설정에 맞춰 수정
     if STATIC_DIR.exists():
         app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
@@ -96,6 +99,7 @@ def mount_static_files(app: FastAPI) -> None:
 def register_system_routes(app: FastAPI) -> None:
     """루트 페이지와 서버 상태 확인 라우트를 등록합니다."""
 
+    # 프론트엔드 진입 파일 위치가 변경되는 경우 INDEX_HTML 경로 수정
     @app.get("/", include_in_schema=False)
     async def serve_index() -> FileResponse:
         """프론트엔드 메인 HTML 파일을 반환합니다."""
