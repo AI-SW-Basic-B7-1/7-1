@@ -1,5 +1,6 @@
 import { ApiError, getChatHistory, sendChat } from "./api.js";
 import { clearSession, getAccessToken, openLoginModal } from "./auth.js";
+import { sortChatHistory } from "./history.js";
 import { shouldSubmitQuestion } from "./keyboard.js";
 
 const MAX_QUESTION_LENGTH = 500;
@@ -234,7 +235,7 @@ async function loadChatHistory() {
       return;
     }
     resetConversation();
-    for (const item of result.chats) {
+    for (const item of sortChatHistory(result.chats)) {
       appendMessage("user", item.question);
       appendMessage("assistant", item.response, item.latency_ms);
     }

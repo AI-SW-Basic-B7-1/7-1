@@ -13,6 +13,7 @@ const requiredFiles = [
   "static/js/api.js",
   "static/js/auth.js",
   "static/js/app.js",
+  "static/js/history.js",
   "static/js/keyboard.js",
 ];
 
@@ -37,10 +38,11 @@ test("HTML 정적 자원은 동일 출처의 /static 경로만 사용한다", as
 });
 
 test("fetch와 팀 API 경로는 api.js 한 곳에만 모여 있다", async () => {
-  const [apiSource, authSource, appSource, keyboardSource] = await Promise.all([
+  const [apiSource, authSource, appSource, historySource, keyboardSource] = await Promise.all([
     readRepositoryFile("static/js/api.js"),
     readRepositoryFile("static/js/auth.js"),
     readRepositoryFile("static/js/app.js"),
+    readRepositoryFile("static/js/history.js"),
     readRepositoryFile("static/js/keyboard.js"),
   ]);
 
@@ -49,8 +51,14 @@ test("fetch와 팀 API 경로는 api.js 한 곳에만 모여 있다", async () =
     assert.ok(apiSource.includes(`"${endpoint}"`), `${endpoint} 계약이 없습니다.`);
   }
   assert.match(apiSource, /\bfetch\s*\(/);
-  assert.doesNotMatch(`${authSource}\n${appSource}\n${keyboardSource}`, /\bfetch\s*\(/);
-  assert.doesNotMatch(`${apiSource}\n${authSource}\n${appSource}\n${keyboardSource}`, /(?:file|https?):\/\//i);
+  assert.doesNotMatch(
+    `${authSource}\n${appSource}\n${historySource}\n${keyboardSource}`,
+    /\bfetch\s*\(/,
+  );
+  assert.doesNotMatch(
+    `${apiSource}\n${authSource}\n${appSource}\n${historySource}\n${keyboardSource}`,
+    /(?:file|https?):\/\//i,
+  );
 });
 
 test("대화 내용은 HTML 실행 없이 textContent로 렌더링한다", async () => {
