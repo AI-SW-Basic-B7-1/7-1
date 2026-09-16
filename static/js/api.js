@@ -23,13 +23,30 @@ function fallbackMessage(status) {
 }
 
 async function parseJsonResponse(response) {
-  const text = await response.text();
+  let text;
+  try {
+    text = await response.text();
+  } catch (error) {
+    if (error?.name === "AbortError") {
+      throw error;
+    }
+    throw new ApiError("서버 응답을 읽지 못했습니다. 잠시 후 다시 시도해 주세요.", {
+      status: response.status,
+      code: "RESPONSE_READ_ERROR",
+    });
+  }
   if (!text) {
     return null;
   }
   try {
     return JSON.parse(text);
   } catch (_error) {
+    if (!response.ok) {
+      throw new ApiError(fallbackMessage(response.status), {
+        status: response.status,
+        code: "INVALID_JSON",
+      });
+    }
     throw new ApiError("서버 응답 형식을 확인할 수 없습니다.", {
       status: response.status,
       code: "INVALID_JSON",
@@ -68,7 +85,9 @@ export async function request(
 
   const data = await parseJsonResponse(response);
   if (!response.ok) {
-    const detail = typeof data?.detail === "string" ? data.detail : fallbackMessage(response.status);
+    const detail = typeof data?.detail === "string" && data.detail.trim()
+      ? data.detail
+      : fallbackMessage(response.status);
     throw new ApiError(detail, { status: response.status });
   }
 

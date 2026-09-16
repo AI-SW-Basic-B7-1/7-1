@@ -1,5 +1,5 @@
 import { ApiError, getChatHistory, sendChat } from "./api.js";
-import { getAccessToken } from "./auth.js";
+import { clearSession, getAccessToken, openLoginModal } from "./auth.js";
 
 const MAX_QUESTION_LENGTH = 500;
 let activeChatController = null;
@@ -55,6 +55,15 @@ function showToast(message) {
       toast.remove();
     }
   }, 4000);
+}
+
+function handleProtectedUnauthorized(error) {
+  if (!(error instanceof ApiError) || error.status !== 401) {
+    return false;
+  }
+  clearSession();
+  openLoginModal("로그인이 만료되었습니다. 다시 로그인해 주세요.");
+  return true;
 }
 
 function resetConversation({ title = "", description = "" } = {}) {
@@ -167,6 +176,9 @@ async function handleChatSubmit(event) {
     ) {
       return;
     }
+    if (handleProtectedUnauthorized(error)) {
+      return;
+    }
     const message = error instanceof ApiError ? error.message : "질문 전송에 실패했습니다.";
     showToast(message);
   } finally {
@@ -212,6 +224,9 @@ async function loadChatHistory() {
       || token !== getAccessToken()
       || error?.name === "AbortError"
     ) {
+      return;
+    }
+    if (handleProtectedUnauthorized(error)) {
       return;
     }
     const message = error instanceof ApiError

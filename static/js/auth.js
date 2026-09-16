@@ -108,9 +108,9 @@ function showRegisterView() {
   elements.registerUsername.focus();
 }
 
-function showLoginModal() {
+export function openLoginModal(notice = "") {
   elements.modal.hidden = false;
-  showLoginView();
+  showLoginView({ notice });
   elements.loginUsername.focus();
 }
 
@@ -146,6 +146,8 @@ async function handleLoginSubmit(event) {
   const controller = new AbortController();
   activeLoginController = controller;
   elements.loginError.hidden = true;
+  elements.authNotice.hidden = true;
+  elements.authNotice.textContent = "";
   elements.loginSubmitButton.disabled = true;
 
   const credentials = {
@@ -245,7 +247,7 @@ async function checkHealth() {
 function initializeAuth() {
   const token = getAccessToken();
   renderSession(token);
-  elements.openLoginButton.addEventListener("click", showLoginModal);
+  elements.openLoginButton.addEventListener("click", () => openLoginModal());
   elements.closeAuthButton.addEventListener("click", cancelLoginAttempt);
   elements.logoutButton.addEventListener("click", clearSession);
   elements.loginForm.addEventListener("submit", handleLoginSubmit);
