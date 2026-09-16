@@ -267,6 +267,51 @@ h2 {
   color: var(--color-muted);
 }
 
+.auth-form {
+  display: grid;
+  gap: 10px;
+}
+
+.auth-form label {
+  color: var(--color-text);
+  font-size: 0.86rem;
+  font-weight: 750;
+}
+
+.auth-form input {
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  outline: none;
+  color: var(--color-text);
+  background: var(--color-surface-soft);
+}
+
+.auth-form input:focus {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px rgba(49, 87, 213, 0.14);
+}
+
+.button-block {
+  width: 100%;
+  margin-top: 8px;
+}
+
+.form-error {
+  margin: 2px 0 0;
+  color: var(--color-danger);
+  font-size: 0.82rem;
+  font-weight: 650;
+}
+
+.auth-switch-hint {
+  margin: 16px 0 0;
+  font-size: 0.82rem;
+  text-align: center;
+}
+
 .toast-region {
   position: fixed;
   right: 20px;
