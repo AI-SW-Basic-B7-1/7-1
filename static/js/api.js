@@ -149,3 +149,31 @@ export async function sendChat(question, token, signal) {
   }
   return { answer, latencyMs, aiMode: result.aiMode };
 }
+
+function isChatHistoryItem(item) {
+  return (
+    item !== null
+    && typeof item === "object"
+    && Number.isInteger(item.id)
+    && typeof item.question === "string"
+    && typeof item.response === "string"
+    && Number.isInteger(item.latency_ms)
+    && item.latency_ms >= 0
+    && typeof item.created_at === "string"
+    && item.created_at.length > 0
+  );
+}
+
+export async function getChatHistory(token, signal) {
+  const result = await request("/me/chats", { token, signal });
+  if (
+    result.status !== 200
+    || !Array.isArray(result.data)
+    || !result.data.every(isChatHistoryItem)
+  ) {
+    throw new ApiError("대화 기록 응답 형식이 올바르지 않습니다.", {
+      code: "INVALID_CONTRACT",
+    });
+  }
+  return { chats: result.data, aiMode: result.aiMode };
+}

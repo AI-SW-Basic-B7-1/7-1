@@ -1,11 +1,13 @@
-import { ApiError, sendChat } from "./api.js";
+import { ApiError, getChatHistory, sendChat } from "./api.js";
 import { getAccessToken } from "./auth.js";
 
 const MAX_QUESTION_LENGTH = 500;
 let activeChatController = null;
+let activeHistoryController = null;
 let sessionGeneration = 0;
 let authenticated = false;
 let sending = false;
+let loadingHistory = false;
 
 const elements = {
   chatForm: document.querySelector("#chat-form"),
@@ -15,6 +17,7 @@ const elements = {
   messageList: document.querySelector("#message-list"),
   emptyState: document.querySelector("#empty-state"),
   loadingIndicator: document.querySelector("#loading-indicator"),
+  loadingMessage: document.querySelector("#loading-message"),
   toastRegion: document.querySelector("#toast-region"),
 };
 
@@ -29,12 +32,16 @@ function updateCounter() {
 }
 
 function renderComposerState() {
-  elements.questionInput.disabled = !authenticated || sending;
-  elements.sendButton.disabled = !authenticated || sending;
+  const busy = sending || loadingHistory;
+  elements.questionInput.disabled = !authenticated || busy;
+  elements.sendButton.disabled = !authenticated || busy;
   elements.questionInput.placeholder = authenticated
     ? "질문을 입력해 주세요."
     : "로그인 후 질문을 입력해 주세요.";
-  elements.loadingIndicator.hidden = !sending;
+  elements.loadingMessage.textContent = loadingHistory
+    ? "이전 대화를 불러오고 있습니다."
+    : "AI가 답변을 준비하고 있습니다.";
+  elements.loadingIndicator.hidden = !busy;
 }
 
 function showToast(message) {
@@ -50,13 +57,15 @@ function showToast(message) {
   }, 4000);
 }
 
-function resetConversation() {
+function resetConversation({ title = "", description = "" } = {}) {
   elements.emptyState.hidden = false;
   elements.messageList.replaceChildren(elements.emptyState);
-  const description = elements.emptyState.querySelector("p:last-child");
-  description.textContent = authenticated
+  const titleElement = elements.emptyState.querySelector(".empty-state-title");
+  const descriptionElement = elements.emptyState.querySelector("p:last-child");
+  titleElement.textContent = title || "아직 대화가 없습니다.";
+  descriptionElement.textContent = description || (authenticated
     ? "새 질문을 보내 대화를 시작해 보세요."
-    : "로그인하면 내 이전 기록을 불러오고 새 질문을 보낼 수 있습니다.";
+    : "로그인하면 내 이전 기록을 불러오고 새 질문을 보낼 수 있습니다.");
 }
 
 function appendMessage(role, text, latencyMs = null) {
@@ -94,6 +103,11 @@ function setSending(nextSending) {
   renderComposerState();
 }
 
+function setHistoryLoading(nextLoading) {
+  loadingHistory = nextLoading;
+  renderComposerState();
+}
+
 function validateQuestion(question) {
   if (!question.trim()) {
     return "질문은 공백일 수 없습니다.";
@@ -106,7 +120,7 @@ function validateQuestion(question) {
 
 async function handleChatSubmit(event) {
   event.preventDefault();
-  if (sending) {
+  if (sending || loadingHistory) {
     return;
   }
 
@@ -163,14 +177,73 @@ async function handleChatSubmit(event) {
   }
 }
 
+async function loadChatHistory() {
+  const token = getAccessToken();
+  if (!authenticated || !token) {
+    return;
+  }
+
+  activeHistoryController?.abort();
+  const controller = new AbortController();
+  const requestGeneration = sessionGeneration;
+  activeHistoryController = controller;
+  setHistoryLoading(true);
+
+  try {
+    const result = await getChatHistory(token, controller.signal);
+    if (
+      activeHistoryController !== controller
+      || controller.signal.aborted
+      || requestGeneration !== sessionGeneration
+      || token !== getAccessToken()
+    ) {
+      return;
+    }
+    resetConversation();
+    for (const item of result.chats) {
+      appendMessage("user", item.question);
+      appendMessage("assistant", item.response, item.latency_ms);
+    }
+  } catch (error) {
+    if (
+      activeHistoryController !== controller
+      || controller.signal.aborted
+      || requestGeneration !== sessionGeneration
+      || token !== getAccessToken()
+      || error?.name === "AbortError"
+    ) {
+      return;
+    }
+    const message = error instanceof ApiError
+      ? error.message
+      : "대화 기록을 불러오지 못했습니다.";
+    resetConversation({
+      title: "대화 기록을 불러오지 못했습니다.",
+      description: "새 질문은 보낼 수 있습니다. 잠시 후 다시 로그인해 기록을 확인해 주세요.",
+    });
+    showToast(message);
+  } finally {
+    if (activeHistoryController === controller) {
+      activeHistoryController = null;
+      setHistoryLoading(false);
+    }
+  }
+}
+
 function handleAuthChange(event) {
   sessionGeneration += 1;
   activeChatController?.abort();
+  activeHistoryController?.abort();
   activeChatController = null;
+  activeHistoryController = null;
   sending = false;
+  loadingHistory = false;
   authenticated = Boolean(event.detail?.authenticated && getAccessToken());
   resetConversation();
   renderComposerState();
+  if (authenticated) {
+    void loadChatHistory();
+  }
 }
 
 function initializeApp() {
@@ -181,6 +254,9 @@ function initializeApp() {
   resetConversation();
   updateCounter();
   renderComposerState();
+  if (authenticated) {
+    void loadChatHistory();
+  }
 }
 
 initializeApp();
