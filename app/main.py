@@ -10,9 +10,12 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+from app.routers.auth_router import router as auth_router
+from app.routers.chat_router import router as chat_router
 from app.schemas import HealthResponse
 
 
@@ -30,6 +33,7 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
+    configure_cors(fastapi_app)
     register_routers(fastapi_app)
     mount_static_files(fastapi_app)
     register_system_routes(fastapi_app)
@@ -54,19 +58,6 @@ async def _run_optional_startup_hook() -> None:
         await result
 
 
-# app/routers/auth_router.py, app/routers/chat_router.py 구현 후 명시적 router import 방식으로 수정
-def _include_router_if_exists(app: FastAPI, module_path: str) -> None:
-    """라우터 모듈에 router 객체가 있을 때만 앱에 연결합니다."""
-    try:
-        module = __import__(module_path, fromlist=["router"])
-    except ImportError:
-        return
-
-    router = getattr(module, "router", None)
-    if router is not None:
-        app.include_router(router)
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """애플리케이션 시작과 종료 시점의 공통 작업을 관리합니다."""
@@ -74,11 +65,26 @@ async def lifespan(app: FastAPI):
     yield
 
 
+def configure_cors(app: FastAPI) -> None:
+    """로컬 개발 환경에서 필요한 CORS 정책을 등록합니다."""
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=[
+            "http://localhost:8000",
+            "http://127.0.0.1:8000",
+            "http://localhost:5500",
+            "http://127.0.0.1:5500",
+        ],
+        allow_credentials=True,
+        allow_methods=["GET", "POST", "OPTIONS"],
+        allow_headers=["Authorization", "Content-Type"],
+    )
+
+
 def register_routers(app: FastAPI) -> None:
     """기능별 API 라우터를 앱에 등록합니다."""
-    # app/routers/auth_router.py, app/routers/chat_router.py 구현 후 app.include_router(...) 방식으로 수정
-    _include_router_if_exists(app, "app.routers.auth_router")
-    _include_router_if_exists(app, "app.routers.chat_router")
+    app.include_router(auth_router)
+    app.include_router(chat_router)
 
 
 def mount_static_files(app: FastAPI) -> None:
@@ -98,6 +104,11 @@ def register_system_routes(app: FastAPI) -> None:
     @app.get("/health", response_model=HealthResponse, tags=["system"])
     async def health_check() -> HealthResponse:
         """서버 상태 확인용 헬스체크 응답을 반환합니다."""
+        return HealthResponse(status="ok")
+
+    @app.get("/api/health", response_model=HealthResponse, tags=["system"])
+    async def api_health_check() -> HealthResponse:
+        """API 경로 기반 서버 상태 확인 응답을 반환합니다."""
         return HealthResponse(status="ok")
 
 
