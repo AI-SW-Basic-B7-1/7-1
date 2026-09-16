@@ -13,6 +13,7 @@ router = APIRouter(
 )
 
 
+# 회원가입/로그인 엔드포인트 구현 후 삭제하거나 내부 상태 확인용으로 유지
 @router.get("/status")
 async def auth_router_status() -> dict[str, str]:
     """인증 라우터 연결 상태를 반환합니다."""
