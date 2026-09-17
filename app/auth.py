@@ -94,3 +94,15 @@ def decode_access_token(token: str) -> Optional[Dict[str, Any]]:
         return payload
     except (jwt.PyJWTError, Exception):
         return None
+
+
+async def get_current_user(*args: Any, **kwargs: Any) -> Any:
+    """현재 로그인 사용자 인증 의존성 함수.
+
+    app.routers.auth_router.get_current_user 의존성으로 라우팅하며,
+    타 모듈(chat_router 등)에서의 순환 참조 방지 및 편리한 import 경로를 제공합니다.
+    """
+    from app.routers.auth_router import get_current_user as _get_current_user
+
+    return await _get_current_user(*args, **kwargs)
+
