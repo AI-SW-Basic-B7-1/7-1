@@ -107,6 +107,15 @@ python -m venv venv
 pip install -r requirements.txt
 ```
 
+#### 프론트엔드 테스트 사전 요구사항
+
+프론트엔드 테스트 실행에는 Node.js가 필요합니다.
+
+```bash
+node --version
+node --test tests/frontend/*.test.mjs
+```
+
 ### 6.2 환경변수 설정
 `.env.example` 파일을 복사하여 `.env` 파일을 생성하고 값을 설정합니다:
 ```bash
