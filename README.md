@@ -54,23 +54,27 @@
 
 SQLite 데이터베이스 파일 경로: `data/chatbot.db`
 
+DB 초기화 시 `PRAGMA journal_mode = WAL` 및 `PRAGMA foreign_keys = ON`을 적용합니다.
+
 ### 4.1 users 테이블
 | 필드명 | 타입 | 제약 조건 | 설명 |
 | :--- | :--- | :--- | :--- |
 | `id` | INTEGER | PRIMARY KEY AUTOINCREMENT | 사용자 고유 번호 |
 | `username` | VARCHAR(50) | UNIQUE, NOT NULL | 로그인 아이디 |
 | `hashed_password` | VARCHAR(255) | NOT NULL | bcrypt 단방향 암호화된 비밀번호 |
-| `created_at` | DATETIME | DEFAULT CURRENT_TIMESTAMP | 계정 생성 일시 |
+| `created_at` | DATETIME | NOT NULL, DEFAULT CURRENT_TIMESTAMP | 계정 생성 일시 |
 
 ### 4.2 chat_logs 테이블
 | 필드명 | 타입 | 제약 조건 | 설명 |
 | :--- | :--- | :--- | :--- |
 | `id` | INTEGER | PRIMARY KEY AUTOINCREMENT | 대화 로그 고유 번호 |
-| `user_id` | INTEGER | NOT NULL, FK(users.id) | 대화를 진행한 사용자 식별자 |
+| `user_id` | INTEGER | NOT NULL, FK(users.id) ON DELETE CASCADE | 대화를 진행한 사용자 식별자 |
 | `question` | TEXT | NOT NULL | 사용자가 입력한 질문 |
 | `response` | TEXT | NOT NULL | AI가 생성한 응답 텍스트 |
-| `latency_ms` | INTEGER | DEFAULT 0 | AI API 호출 소요 시간 (밀리초) |
-| `created_at` | DATETIME | DEFAULT CURRENT_TIMESTAMP | 대화 기록 일시 |
+| `latency_ms` | INTEGER | NOT NULL, DEFAULT 0 | AI API 호출 소요 시간 (밀리초) |
+| `created_at` | DATETIME | NOT NULL, DEFAULT CURRENT_TIMESTAMP | 대화 기록 일시 |
+
+`chat_logs` 테이블은 사용자별 최신 대화 조회를 위해 `(user_id, created_at DESC)` 인덱스를 생성합니다.
 
 ---
 

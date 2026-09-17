@@ -4,10 +4,7 @@
 헬스체크, 애플리케이션 시작 시 초기화 작업을 통합합니다.
 """
 
-from contextlib import asynccontextmanager
-from inspect import isawaitable
 from pathlib import Path
-from typing import Any, Callable, Optional
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -15,6 +12,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.exception_handlers import register_exception_handlers
+from app.lifespan import app_lifespan
 from app.routers.auth_router import router as auth_router
 from app.routers.chat_router import router as chat_router
 from app.schemas import HealthResponse
@@ -31,7 +29,7 @@ def create_app() -> FastAPI:
         title="AI Assistant API",
         description="웹 기반 AI 챗봇 서비스 백엔드 API",
         version="0.1.0",
-        lifespan=lifespan,
+        lifespan=app_lifespan,
     )
 
     configure_cors(fastapi_app)
@@ -41,30 +39,6 @@ def create_app() -> FastAPI:
     register_system_routes(fastapi_app)
 
     return fastapi_app
-
-
-# app/database.py 구현 후 명시적 init_db import 방식으로 수정
-async def _run_optional_startup_hook() -> None:
-    """DB 초기화 함수가 준비된 경우에만 실행합니다."""
-    try:
-        from app import database
-    except ImportError:
-        return
-
-    init_db: Optional[Callable[..., Any]] = getattr(database, "init_db", None)
-    if init_db is None:
-        return
-
-    result = init_db()
-    if isawaitable(result):
-        await result
-
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    """애플리케이션 시작과 종료 시점의 공통 작업을 관리합니다."""
-    await _run_optional_startup_hook()
-    yield
 
 
 def configure_cors(app: FastAPI) -> None:
