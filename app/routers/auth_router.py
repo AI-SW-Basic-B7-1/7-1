@@ -8,11 +8,11 @@
 from typing import Any, Dict, Optional
 import aiosqlite
 from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.auth import (
     create_access_token,
     decode_access_token,
+    get_current_user,
     hash_password,
     verify_password,
 )
@@ -28,9 +28,6 @@ from app.schemas import (
 
 router = APIRouter(prefix="/api/auth", tags=["인증"])
 
-# Swagger UI 및 요청 헤더 파싱을 위한 HTTP Bearer 보안 스키마 (커스텀 401 처리를 위해 auto_error=False)
-bearer_scheme = HTTPBearer(auto_error=False)
-
 
 @router.get(
     "/status",
@@ -40,60 +37,6 @@ bearer_scheme = HTTPBearer(auto_error=False)
 async def auth_router_status() -> dict[str, str]:
     """인증 라우터 연결 상태를 반환합니다."""
     return {"status": "auth_router_ready"}
-
-
-async def get_current_user(
-    credentials: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme),
-    db: aiosqlite.Connection = Depends(get_db),
-) -> UserInDB:
-    """HTTP Authorization 헤더의 JWT Bearer 토큰을 검증하고 현재 사용자를 반환하는 의존성 함수.
-
-    토큰이 누락되었거나, 형식이 올바르지 않거나, 만료/위변조되었거나,
-    데이터베이스에 해당 사용자가 존재하지 않는 경우 HTTP 401 Unauthorized 예외를 발생시킵니다.
-
-    Args:
-        credentials (Optional[HTTPAuthorizationCredentials]): Authorization 헤더 자격 증명
-        db (aiosqlite.Connection): 비동기 데이터베이스 커넥션
-
-    Returns:
-        UserInDB: 데이터베이스에서 조회된 현재 인증된 사용자 엔티티
-
-    Raises:
-        HTTPException: 인증 토큰이 유효하지 않거나 만료된 경우 (401)
-    """
-    unauthorized_exception = HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="인증 토큰이 유효하지 않거나 만료되었습니다.",
-        headers={"WWW-Authenticate": "Bearer"},
-    )
-
-    if credentials is None or not credentials.credentials:
-        raise unauthorized_exception
-
-    token = credentials.credentials
-    payload = decode_access_token(token)
-    if payload is None:
-        raise unauthorized_exception
-
-    username: Optional[str] = payload.get("sub")
-    if not username:
-        raise unauthorized_exception
-
-    # 데이터베이스에서 사용자 존재 여부 조회
-    cursor = await db.execute(
-        "SELECT id, username, hashed_password, created_at FROM users WHERE username = ?",
-        (username,),
-    )
-    user_row = await cursor.fetchone()
-    if user_row is None:
-        raise unauthorized_exception
-
-    return UserInDB(
-        id=user_row["id"],
-        username=user_row["username"],
-        hashed_password=user_row["hashed_password"],
-        created_at=user_row["created_at"],
-    )
 
 
 @router.post(
