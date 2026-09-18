@@ -5,7 +5,7 @@
 """
 
 from pathlib import Path
-from typing import AsyncIterator
+from typing import AsyncIterator, Optional
 
 import aiosqlite
 
@@ -82,3 +82,58 @@ async def init_db() -> None:
         await connection.commit()
     finally:
         await connection.close()
+
+
+async def get_user_by_username(
+    connection: aiosqlite.Connection,
+    username: str,
+) -> Optional[aiosqlite.Row]:
+    """사용자 아이디로 사용자 정보를 한 건 조회합니다."""
+    cursor = await connection.execute(
+        "SELECT id, username FROM users WHERE username = ?;",
+        (username,),
+    )
+    return await cursor.fetchone()
+
+
+async def save_chat_log(
+    connection: aiosqlite.Connection,
+    user_id: int,
+    question: str,
+    response: str,
+    latency_ms: int,
+) -> int:
+    """질문과 AI 응답을 저장하고 생성된 대화 식별자를 반환합니다."""
+    try:
+        cursor = await connection.execute(
+            """
+            INSERT INTO chat_logs (user_id, question, response, latency_ms)
+            VALUES (?, ?, ?, ?);
+            """,
+            (user_id, question, response, latency_ms),
+        )
+        await connection.commit()
+    except Exception:
+        await connection.rollback()
+        raise
+
+    if cursor.lastrowid is None:
+        raise RuntimeError("저장된 대화 식별자를 확인할 수 없습니다.")
+    return cursor.lastrowid
+
+
+async def get_chat_logs_by_user(
+    connection: aiosqlite.Connection,
+    user_id: int,
+) -> list[aiosqlite.Row]:
+    """지정한 사용자의 대화 이력을 최신순으로 조회합니다."""
+    cursor = await connection.execute(
+        """
+        SELECT id, question, response, latency_ms, created_at
+        FROM chat_logs
+        WHERE user_id = ?
+        ORDER BY created_at DESC, id DESC;
+        """,
+        (user_id,),
+    )
+    return await cursor.fetchall()
