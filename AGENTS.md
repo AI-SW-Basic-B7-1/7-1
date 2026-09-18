@@ -121,3 +121,13 @@ ERROR db_save_failed user_id={user_id} error={error_detail}
    - test: 테스트 코드 및 검증 스크립트 추가
 3. **팀원별 10회 커밋 룰**:
    - 전 팀원(4명)은 구현, 테스트, 리팩토링, 문서화를 작은 단위로 나누어 **최소 10회 이상의 유의미한 커밋**을 반드시 기록합니다.
+
+## 9. Git & 작업 규칙 (Git Workflow)
+
+- **커밋 단위 분리 (Atomic Commits)**
+  - 대규모 일괄 커밋은 지양하고, 논리적이고 의미 있는 단위로 나누어 커밋합니다.
+  - 기능 구현, 리팩터링, 버그 수정 등 작업 성격별로 분리하여 커밋 기록을 명확히 유지합니다.
+
+- **이슈 및 PR 규칙 (Issues & Pull Requests)**
+  - 푸시 후 이슈 발행 및 PR 생성 시 반드시 프로젝트의 기본 템플릿(`.github/ISSUE_TEMPLATE`, `.github/PULL_REQUEST_TEMPLATE`)을 준수합니다.
+  - 템플릿의 필수 항목(작업 내용, 관련 이슈 링크, 테스트 결과 등)을 누락 없이 작성합니다.

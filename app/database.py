@@ -24,12 +24,15 @@ def get_database_path() -> Path:
     return Path(database_path)
 
 
-async def get_db_connection() -> aiosqlite.Connection:
+async def get_db_connection(database_path: Path | str | None = None) -> aiosqlite.Connection:
     """SQLite DB 연결 객체를 생성하고 기본 PRAGMA 설정을 적용합니다."""
-    database_path = get_database_path()
-    database_path.parent.mkdir(parents=True, exist_ok=True)
+    if database_path is None:
+        target_path = get_database_path()
+    else:
+        target_path = Path(database_path)
+    target_path.parent.mkdir(parents=True, exist_ok=True)
 
-    connection = await aiosqlite.connect(database_path)
+    connection = await aiosqlite.connect(target_path)
     connection.row_factory = aiosqlite.Row
     await connection.execute("PRAGMA foreign_keys = ON;")
     await connection.execute("PRAGMA journal_mode = WAL;")
@@ -45,9 +48,9 @@ async def get_db() -> AsyncIterator[aiosqlite.Connection]:
         await connection.close()
 
 
-async def init_db() -> None:
+async def init_db(database_path: Path | str | None = None) -> None:
     """애플리케이션 시작 시 필요한 테이블과 WAL 모드를 초기화합니다."""
-    connection = await get_db_connection()
+    connection = await get_db_connection(database_path)
     try:
         await connection.execute("PRAGMA journal_mode = WAL;")
         await connection.execute(
