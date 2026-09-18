@@ -162,15 +162,6 @@ class ChatRequest(BaseModel):
         max_length=500,
         description="사용자가 질문할 텍스트 내용 (최대 500자)",
     )
-
-    @field_validator("question")
-    @classmethod
-    def validate_question(cls, value: str) -> str:
-        """질문 문자열 길이를 검증합니다 (500자 초과 시 422 오류)."""
-        if len(value) > 500:
-            raise ValueError("질문은 최대 500자까지 입력 가능합니다.")
-        return value
-
     model_config = ConfigDict(
         json_schema_extra={
             "example": {

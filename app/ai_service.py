@@ -13,19 +13,8 @@ from app.config import settings
 
 
 def _is_valid_api_key(api_key: str) -> bool:
-    """유효한 실제 API 키가 설정되어 있는지 확인합니다.
-
-    Args:
-        api_key (str): 검사할 API 키 문자열
-
-    Returns:
-        bool: 기본 플레이스홀더나 빈 문자열이 아닌 실제 키인 경우 True
-    """
-    if not api_key:
-        return False
-    if api_key in ("your_codessey_api_key", "your_codessey_api_key_here", ""):
-        return False
-    return True
+    """유효한 실제 API 키가 설정되어 있는지 확인합니다."""
+    return bool(api_key and api_key not in ("your_codessey_api_key", "your_codessey_api_key_here"))
 
 
 def _get_mock_response(prompt: str) -> str:
@@ -71,7 +60,6 @@ async def generate_chat_response(
     """
     # 1. 외부 API 키가 미설정된 경우 내장 Mock AI 엔진으로 즉시 응답
     if not _is_valid_api_key(settings.CODESSEY_API_KEY):
-        await asyncio.sleep(0.05)  # 최소한의 비동기 지연 시뮬레이션
         return _get_mock_response(prompt)
 
     # 2. 메시지 배열 구성 (슬라이딩 윈도우 문맥 결합)
