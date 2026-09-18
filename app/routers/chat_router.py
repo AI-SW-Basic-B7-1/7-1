@@ -5,7 +5,6 @@ get_current_user 인증 의존성을 결합하여 실제 로그인한 사용자 
 SQLite 데이터베이스(chat_logs)에 대화를 영속 저장하고 사용자별로 대화 이력을 격리 조회합니다.
 """
 
-import asyncio
 import time
 from typing import List
 import aiosqlite
@@ -102,11 +101,6 @@ async def send_chat_message(
     start_time = time.perf_counter()
     try:
         answer = await generate_chat_response(prompt=cleaned_question, history=history)
-    except (asyncio.TimeoutError, TimeoutError):
-        raise HTTPException(
-            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
-            detail="현재 AI 응답이 지연되고 있습니다. 잠시 후 다시 시도해 주세요.",
-        )
     except Exception:
         raise HTTPException(
             status_code=status.HTTP_504_GATEWAY_TIMEOUT,
@@ -167,17 +161,5 @@ async def get_my_chat_history(
         (current_user.id,),
     )
     rows = await cursor.fetchall()
+    return [ChatLogItem(**dict(row)) for row in rows]
 
-    chat_history: List[ChatLogItem] = []
-    for row in rows:
-        chat_history.append(
-            ChatLogItem(
-                id=row["id"],
-                question=row["question"],
-                response=row["response"],
-                latency_ms=row["latency_ms"],
-                created_at=row["created_at"],
-            )
-        )
-
-    return chat_history
