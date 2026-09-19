@@ -1,83 +1,97 @@
-"""인증된 사용자의 AI 채팅 및 대화 이력 조회 API 모듈."""
+"""인증된 사용자의 AI 채팅 및 대화 이력 조회 API 라우터 모듈."""
 
-from time import perf_counter
-from typing import Annotated, Any
+import time
+from typing import List
 from uuid import uuid4
-
 import aiosqlite
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.ai_service import AITimeoutError, generate_chat_response
-from app.auth import decode_access_token
-from app.database import (
-    get_chat_logs_by_user,
-    get_db,
-    get_user_by_username,
-    save_chat_log,
-)
+from app.auth import get_current_user
+from app.database import get_db, save_chat_log
 from app.logger import chat_logger
-from app.schemas import ChatLogItem, ChatRequest, ChatResponse
+from app.models import UserInDB
+from app.schemas import (
+    ChatLogItem,
+    ChatRequest,
+    ChatResponse,
+    ErrorDetailResponse,
+)
+
+router = APIRouter(
+    prefix="/api",
+    tags=["chat"],
+)
 
 
-router = APIRouter(prefix="/api", tags=["chat"])
-bearer_scheme = HTTPBearer(auto_error=False)
+@router.get("/chat/status", summary="채팅 라우터 연결 상태 확인")
+async def chat_router_status() -> dict[str, str]:
+    """채팅 라우터의 정상 연결 및 가용 상태를 반환합니다."""
+    return {"status": "chat_router_ready"}
 
 
-async def get_current_user(
-    credentials: Annotated[
-        HTTPAuthorizationCredentials | None,
-        Depends(bearer_scheme),
-    ],
-    connection: Annotated[aiosqlite.Connection, Depends(get_db)],
-) -> dict[str, Any]:
-    """Bearer 토큰을 검증하고 DB에 존재하는 현재 사용자를 반환합니다."""
-    unauthorized = HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="유효한 인증 정보가 필요합니다.",
-        headers={"WWW-Authenticate": "Bearer"},
-    )
-    if credentials is None:
-        raise unauthorized
-
-    payload = decode_access_token(credentials.credentials)
-    username = payload.get("sub") if payload else None
-    if not isinstance(username, str) or not username:
-        raise unauthorized
-
-    user = await get_user_by_username(connection, username)
-    if user is None:
-        raise unauthorized
-    return {"id": user["id"], "username": user["username"]}
-
-
-@router.post("/chat", response_model=ChatResponse)
-async def create_chat(
+@router.post(
+    "/chat",
+    response_model=ChatResponse,
+    status_code=status.HTTP_200_OK,
+    summary="AI 챗봇 질문 전송 및 답변 수신",
+    description="로그인된 사용자가 질문을 전송하면 최근 문맥을 기반으로 AI 답변을 생성하고, 응답 시간과 함께 DB에 저장합니다.",
+    responses={
+        200: {"description": "답변 생성 성공", "model": ChatResponse},
+        400: {"description": "공백 질문 입력 오류", "model": ErrorDetailResponse},
+        401: {"description": "미인증 또는 유효하지 않은 토큰", "model": ErrorDetailResponse},
+        422: {"description": "질문 길이 500자 초과 등 유효성 검사 실패", "model": ErrorDetailResponse},
+        504: {"description": "AI 응답 지연 타임아웃", "model": ErrorDetailResponse},
+    },
+)
+async def send_chat_message(
     chat_request: ChatRequest,
     request: Request,
-    current_user: Annotated[dict[str, Any], Depends(get_current_user)],
-    connection: Annotated[aiosqlite.Connection, Depends(get_db)],
+    current_user: UserInDB = Depends(get_current_user),
+    db: aiosqlite.Connection = Depends(get_db),
 ) -> ChatResponse:
-    """인증된 사용자의 질문을 AI에 전달하고 결과를 저장합니다."""
-    question = chat_request.question
-    if not question:
+    """사용자의 질문을 수신하여 AI 답변을 생성하고 SQLite chat_logs에 영속 저장합니다.
+
+    get_current_user 의존성을 통해 검증된 사용자의 user_id를 기반으로 저장하며,
+    공백 질문 시 400 Bad Request, AI 응답 지연(8.0초 초과) 시 504 Gateway Timeout을 반환합니다.
+    """
+    # 1. 질문 내용 공백 검증 (400 Bad Request)
+    cleaned_question = chat_request.question.strip()
+    if not cleaned_question:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="질문 내용을 입력해 주세요.",
+            detail="질문 내용은 공백일 수 없습니다.",
         )
 
-    user_id = int(current_user["id"])
+    user_id = current_user.id
     request_id = str(uuid4())
     chat_logger.info("request_received user_id=%s path=%s", user_id, request.url.path)
-    chat_logger.info(
-        "ai_call_start user_id=%s request_id=%s",
-        user_id,
-        request_id,
-    )
+    chat_logger.info("ai_call_start user_id=%s request_id=%s", user_id, request_id)
 
-    started_at = perf_counter()
+    # 2. 최근 대화 문맥(최근 5쌍) 조회하여 AI 호출 준비
+    history = []
     try:
-        answer = await generate_chat_response(question)
+        cursor = await db.execute(
+            """
+            SELECT question, response
+            FROM chat_logs
+            WHERE user_id = ?
+            ORDER BY id DESC
+            LIMIT 5
+            """,
+            (user_id,),
+        )
+        rows = await cursor.fetchall()
+        for row in reversed(rows):
+            history.append({"role": "user", "content": row["question"]})
+            history.append({"role": "assistant", "content": row["response"]})
+    except Exception:
+        history = []
+
+    # 3. AI 응답 생성 및 응답 시간(latency_ms) 정밀 측정
+    start_time = time.perf_counter()
+    try:
+        answer = await generate_chat_response(prompt=cleaned_question, history=history)
     except AITimeoutError as exc:
         chat_logger.error("ai_call_failed request_id=%s error=%s", request_id, exc)
         raise HTTPException(
@@ -87,25 +101,16 @@ async def create_chat(
     except Exception as exc:
         chat_logger.error("ai_call_failed request_id=%s error=%s", request_id, exc)
         raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="AI 응답을 생성하지 못했습니다. 잠시 후 다시 시도해 주세요.",
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail="현재 AI 응답이 지연되고 있습니다. 잠시 후 다시 시도해 주세요.",
         ) from exc
 
-    latency_ms = max(0, round((perf_counter() - started_at) * 1000))
-    chat_logger.info(
-        "ai_call_success request_id=%s latency_ms=%s",
-        request_id,
-        latency_ms,
-    )
+    latency_ms = max(0, round((time.perf_counter() - start_time) * 1000))
+    chat_logger.info("ai_call_success request_id=%s latency_ms=%s", request_id, latency_ms)
 
+    # 4. SQLite chat_logs 테이블에 실제 로그인 사용자 ID로 영속 저장 및 로깅
     try:
-        chat_id = await save_chat_log(
-            connection,
-            user_id,
-            question,
-            answer,
-            latency_ms,
-        )
+        chat_id = await save_chat_log(db, user_id, cleaned_question, answer, latency_ms)
     except Exception as exc:
         chat_logger.error("db_save_failed user_id=%s error=%s", user_id, exc)
         raise HTTPException(
@@ -117,18 +122,34 @@ async def create_chat(
     return ChatResponse(answer=answer, latency_ms=latency_ms)
 
 
-@router.get("/me/chats", response_model=list[ChatLogItem])
-async def read_my_chats(
-    current_user: Annotated[dict[str, Any], Depends(get_current_user)],
-    connection: Annotated[aiosqlite.Connection, Depends(get_db)],
-) -> list[ChatLogItem]:
-    """현재 로그인한 사용자의 대화 이력을 최신순으로 반환합니다."""
-    rows = await get_chat_logs_by_user(connection, int(current_user["id"]))
-    chats = [ChatLogItem.model_validate(dict(row)) for row in rows]
-    return chats
+@router.get(
+    "/me/chats",
+    response_model=List[ChatLogItem],
+    status_code=status.HTTP_200_OK,
+    summary="내 대화 이력 목록 조회",
+    description="현재 로그인한 사용자의 대화 기록 목록을 등록순(과거->최신)으로 조회합니다. 타인의 대화는 격리됩니다.",
+    responses={
+        200: {"description": "대화 이력 조회 성공", "model": List[ChatLogItem]},
+        401: {"description": "미인증 또는 유효하지 않은 토큰", "model": ErrorDetailResponse},
+    },
+)
+async def get_my_chat_history(
+    current_user: UserInDB = Depends(get_current_user),
+    db: aiosqlite.Connection = Depends(get_db),
+) -> List[ChatLogItem]:
+    """현재 로그인한 사용자의 대화 기록 목록을 반환합니다.
 
-
-@router.get("/chat/status")
-async def chat_router_status() -> dict[str, str]:
-    """채팅 라우터 연결 상태를 반환합니다."""
-    return {"status": "chat_router_ready"}
+    get_current_user 의존성을 통해 획득한 current_user.id로 필터링하여
+    타 사용자의 대화가 일절 노출되지 않는 테넌트 격리를 보장합니다.
+    """
+    cursor = await db.execute(
+        """
+        SELECT id, question, response, latency_ms, created_at
+        FROM chat_logs
+        WHERE user_id = ?
+        ORDER BY id ASC
+        """,
+        (current_user.id,),
+    )
+    rows = await cursor.fetchall()
+    return [ChatLogItem(**dict(row)) for row in rows]

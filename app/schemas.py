@@ -162,13 +162,11 @@ class ChatRequest(BaseModel):
         max_length=500,
         description="사용자가 질문할 텍스트 내용 (최대 500자)",
     )
-
     @field_validator("question")
     @classmethod
     def validate_question(cls, value: str) -> str:
         """질문 문자열의 앞뒤 공백을 제거합니다."""
         return value.strip()
-
     model_config = ConfigDict(
         json_schema_extra={
             "example": {

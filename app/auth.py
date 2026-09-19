@@ -26,9 +26,7 @@ def hash_password(plain_password: str) -> str:
     Returns:
         str: 안전하게 솔팅되어 해싱된 비밀번호 문자열
     """
-    salt = bcrypt.gensalt()
-    hashed_bytes = bcrypt.hashpw(plain_password.encode("utf-8"), salt)
-    return hashed_bytes.decode("utf-8")
+    return bcrypt.hashpw(plain_password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
