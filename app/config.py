@@ -31,10 +31,9 @@ class Settings:
     # [데이터베이스 경로 설정]
     DATABASE_URL: str = os.getenv("DATABASE_URL", "sqlite:///./data/chatbot.db")
 
-    # [코디세이 AI API 설정]
-    CODESSEY_API_KEY: str = os.getenv("CODESSEY_API_KEY", "your_codessey_api_key")
-    CODESSEY_API_BASE: str = os.getenv("CODESSEY_API_BASE", "https://api.openai.com/v1")
-    AI_MODEL_NAME: str = os.getenv("AI_MODEL_NAME", "gpt-4o-mini")
+    # [Gemini AI API 설정]
+    GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
+    GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite")
     AI_TIMEOUT_SECONDS: float = float(os.getenv("AI_TIMEOUT_SECONDS", "8.0"))
 
 
