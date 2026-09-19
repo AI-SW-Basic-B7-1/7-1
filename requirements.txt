@@ -11,6 +11,7 @@ python-dotenv>=1.0.0
 httpx>=0.25.0
 
 # [인증 및 보안 (비밀번호 해싱 & JWT 토큰)]
+
 PyJWT>=2.8.0
 bcrypt>=4.0.0
 python-multipart>=0.0.6

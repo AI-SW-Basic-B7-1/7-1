@@ -1,18 +1,15 @@
-"""채팅 API 라우터 모듈.
-
-본 모듈은 AI 대화 요청(POST /api/chat)과 내 대화 이력 조회(GET /api/me/chats) 엔드포인트를 제공하며,
-get_current_user 인증 의존성을 결합하여 실제 로그인한 사용자 식별자(user_id) 기반으로
-SQLite 데이터베이스(chat_logs)에 대화를 영속 저장하고 사용자별로 대화 이력을 격리 조회합니다.
-"""
+"""인증된 사용자의 AI 채팅 및 대화 이력 조회 API 라우터 모듈."""
 
 import time
 from typing import List
+from uuid import uuid4
 import aiosqlite
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 
-from app.ai_service import generate_chat_response
+from app.ai_service import AITimeoutError, generate_chat_response
 from app.auth import get_current_user
-from app.database import get_db
+from app.database import get_db, save_chat_log
+from app.logger import chat_logger
 from app.models import UserInDB
 from app.schemas import (
     ChatLogItem,
@@ -48,7 +45,8 @@ async def chat_router_status() -> dict[str, str]:
     },
 )
 async def send_chat_message(
-    request: ChatRequest,
+    chat_request: ChatRequest,
+    request: Request,
     current_user: UserInDB = Depends(get_current_user),
     db: aiosqlite.Connection = Depends(get_db),
 ) -> ChatResponse:
@@ -56,25 +54,19 @@ async def send_chat_message(
 
     get_current_user 의존성을 통해 검증된 사용자의 user_id를 기반으로 저장하며,
     공백 질문 시 400 Bad Request, AI 응답 지연(8.0초 초과) 시 504 Gateway Timeout을 반환합니다.
-
-    Args:
-        request (ChatRequest): 사용자가 입력한 질문 데이터
-        current_user (UserInDB): get_current_user 의존성을 통해 인증된 현재 사용자 객체
-        db (aiosqlite.Connection): 비동기 데이터베이스 커넥션
-
-    Returns:
-        ChatResponse: AI 생성 답변과 처리 소요 시간(ms)
-
-    Raises:
-        HTTPException: 공백 질문 입력 시 (400), 인증 실패 시 (401), AI 타임아웃/오류 시 (504)
     """
     # 1. 질문 내용 공백 검증 (400 Bad Request)
-    cleaned_question = request.question.strip()
+    cleaned_question = chat_request.question.strip()
     if not cleaned_question:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="질문 내용은 공백일 수 없습니다.",
         )
+
+    user_id = current_user.id
+    request_id = str(uuid4())
+    chat_logger.info("request_received user_id=%s path=%s", user_id, request.url.path)
+    chat_logger.info("ai_call_start user_id=%s request_id=%s", user_id, request_id)
 
     # 2. 최근 대화 문맥(최근 5쌍) 조회하여 AI 호출 준비
     history = []
@@ -87,41 +79,47 @@ async def send_chat_message(
             ORDER BY id DESC
             LIMIT 5
             """,
-            (current_user.id,),
+            (user_id,),
         )
         rows = await cursor.fetchall()
         for row in reversed(rows):
             history.append({"role": "user", "content": row["question"]})
             history.append({"role": "assistant", "content": row["response"]})
     except Exception:
-        # 문맥 조회 실패 시 빈 문맥으로 진행
         history = []
 
     # 3. AI 응답 생성 및 응답 시간(latency_ms) 정밀 측정
     start_time = time.perf_counter()
     try:
         answer = await generate_chat_response(prompt=cleaned_question, history=history)
-    except Exception:
+    except AITimeoutError as exc:
+        chat_logger.error("ai_call_failed request_id=%s error=%s", request_id, exc)
         raise HTTPException(
             status_code=status.HTTP_504_GATEWAY_TIMEOUT,
             detail="현재 AI 응답이 지연되고 있습니다. 잠시 후 다시 시도해 주세요.",
-        )
-    latency_ms = int((time.perf_counter() - start_time) * 1000)
+        ) from exc
+    except Exception as exc:
+        chat_logger.error("ai_call_failed request_id=%s error=%s", request_id, exc)
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail="현재 AI 응답이 지연되고 있습니다. 잠시 후 다시 시도해 주세요.",
+        ) from exc
 
-    # 4. SQLite chat_logs 테이블에 실제 로그인 사용자 ID(current_user.id)로 영속 저장
-    await db.execute(
-        """
-        INSERT INTO chat_logs (user_id, question, response, latency_ms)
-        VALUES (?, ?, ?, ?)
-        """,
-        (current_user.id, cleaned_question, answer, latency_ms),
-    )
-    await db.commit()
+    latency_ms = max(0, round((time.perf_counter() - start_time) * 1000))
+    chat_logger.info("ai_call_success request_id=%s latency_ms=%s", request_id, latency_ms)
 
-    return ChatResponse(
-        answer=answer,
-        latency_ms=latency_ms,
-    )
+    # 4. SQLite chat_logs 테이블에 실제 로그인 사용자 ID로 영속 저장 및 로깅
+    try:
+        chat_id = await save_chat_log(db, user_id, cleaned_question, answer, latency_ms)
+    except Exception as exc:
+        chat_logger.error("db_save_failed user_id=%s error=%s", user_id, exc)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="대화 기록을 저장하지 못했습니다.",
+        ) from exc
+
+    chat_logger.info("db_save_success user_id=%s chat_id=%s", user_id, chat_id)
+    return ChatResponse(answer=answer, latency_ms=latency_ms)
 
 
 @router.get(
@@ -143,13 +141,6 @@ async def get_my_chat_history(
 
     get_current_user 의존성을 통해 획득한 current_user.id로 필터링하여
     타 사용자의 대화가 일절 노출되지 않는 테넌트 격리를 보장합니다.
-
-    Args:
-        current_user (UserInDB): get_current_user 의존성을 통해 인증된 현재 사용자 객체
-        db (aiosqlite.Connection): 비동기 데이터베이스 커넥션
-
-    Returns:
-        List[ChatLogItem]: 로그인 사용자의 대화 기록 목록 (등록순)
     """
     cursor = await db.execute(
         """
@@ -162,4 +153,3 @@ async def get_my_chat_history(
     )
     rows = await cursor.fetchall()
     return [ChatLogItem(**dict(row)) for row in rows]
-

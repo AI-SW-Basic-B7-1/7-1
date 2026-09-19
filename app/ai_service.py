@@ -12,20 +12,23 @@ import httpx
 from app.config import settings
 
 
+class AITimeoutError(asyncio.TimeoutError):
+    """AI API가 제한 시간 안에 응답하지 못한 경우의 예외."""
+
+
+class AIServiceError(Exception):
+    """AI API 호출 또는 응답 처리에 실패한 경우의 예외."""
+
+
 def _is_valid_api_key(api_key: str) -> bool:
     """유효한 실제 API 키가 설정되어 있는지 확인합니다."""
-    return bool(api_key and api_key not in ("your_codessey_api_key", "your_codessey_api_key_here"))
+    if not api_key or api_key.startswith("your_"):
+        return False
+    return api_key not in ("your_codessey_api_key", "your_codessey_api_key_here")
 
 
 def _get_mock_response(prompt: str) -> str:
-    """외부 API 키 미설정 또는 테스트 환경에서 반환할 Mock AI 답변을 생성합니다.
-
-    Args:
-        prompt (str): 사용자의 입력 질문
-
-    Returns:
-        str: 시연 및 테스트용 내장 Mock AI 응답 문자열
-    """
+    """외부 API 키 미설정 또는 테스트 환경에서 반환할 Mock AI 답변을 생성합니다."""
     trimmed = prompt.strip()
     if "일정" in trimmed or "프로젝트" in trimmed:
         return "이번 주 4일 프로토타입 프로젝트 일정은 Day 1 독립 모듈 세팅, Day 2 코어 로직 완성, Day 3 E2E 결합, Day 4 안정성 점검 및 배포 순서로 진행됩니다."
@@ -45,7 +48,7 @@ async def generate_chat_response(
 
     API 키가 미설정된 경우 내장 Mock AI 엔진을 통해 즉각 응답을 반환하며,
     실제 API 키가 존재하는 경우 OpenAI 호환 엔드포인트를 비동기 호출합니다.
-    8.0초 타임아웃 발생 시 TimeoutError를 발생시켜 상위 라우터에서 504로 대응하도록 합니다.
+    8.0초 타임아웃 발생 시 AITimeoutError를 발생시켜 상위 라우터에서 504로 대응하도록 합니다.
 
     Args:
         prompt (str): 현재 사용자가 입력한 질문 텍스트
@@ -55,8 +58,8 @@ async def generate_chat_response(
         str: 생성된 AI 어시스턴트 답변 내용
 
     Raises:
-        asyncio.TimeoutError: AI 응답 생성 시간이 설정된 타임아웃(8.0초)을 초과한 경우
-        Exception: 외부 API 통신 실패 또는 비정상 응답 발생 시
+        AITimeoutError: AI 응답 생성 시간이 설정된 타임아웃(8.0초)을 초과한 경우
+        AIServiceError: 외부 API 통신 실패 또는 비정상 응답 발생 시
     """
     # 1. 외부 API 키가 미설정된 경우 내장 Mock AI 엔진으로 즉시 응답
     if not _is_valid_api_key(settings.CODESSEY_API_KEY):
@@ -96,7 +99,7 @@ async def generate_chat_response(
             data: Dict[str, Any] = response.json()
             answer: str = data["choices"][0]["message"]["content"].strip()
             return answer
-    except (httpx.TimeoutException, asyncio.TimeoutError):
-        raise asyncio.TimeoutError("AI API 응답 시간이 8.0초를 초과하였습니다.")
+    except (httpx.TimeoutException, asyncio.TimeoutError) as exc:
+        raise AITimeoutError("AI API 응답 시간이 8.0초를 초과하였습니다.") from exc
     except Exception as exc:
-        raise RuntimeError(f"AI API 호출 중 오류가 발생했습니다: {exc}")
+        raise AIServiceError(f"AI API 호출 중 오류가 발생했습니다: {exc}") from exc
