@@ -1,8 +1,4 @@
-"""AI 대화 응답 생성 서비스 스텁 모듈.
-
-다른 담당자가 실제 AI API 연동을 구현할 예정이며,
-그 전까지 임포트 에러를 방지하기 위한 최소 스텁입니다.
-"""
+"""Gemini API를 이용한 AI 응답 생성 모듈."""
 
 import asyncio
 from typing import Dict, List, Optional
@@ -12,9 +8,52 @@ class AITimeoutError(asyncio.TimeoutError):
     """AI API가 제한 시간 안에 응답하지 못한 경우의 예외."""
 
 
-async def generate_chat_response(
-    prompt: str,
-    history: Optional[List[Dict[str, str]]] = None,
-) -> str:
-    """AI 응답 생성 스텁 — 실제 구현 전까지 고정 응답을 반환합니다."""
-    return f"[스텁 응답] '{prompt}'에 대한 AI 응답이 아직 구현되지 않았습니다."
+async def generate_chat_response(question: str) -> str:
+    """사용자의 질문을 Gemini API에 전달하고 응답을 반환합니다."""
+    endpoint = (
+        f"https://generativelanguage.googleapis.com/v1beta/"
+        f"models/{settings.GEMINI_MODEL}:generateContent"
+    )
+
+    headers = {
+        "x-goog-api-key": settings.GEMINI_API_KEY,
+        "Content-Type": "application/json",
+    }
+
+    request_body = {
+        "contents": [
+            {
+                "parts": [
+                    {
+                        "text": question,
+                    }
+                ]
+            }
+        ]
+    }
+
+    try:
+        async with httpx.AsyncClient(
+            timeout=settings.AI_TIMEOUT_SECONDS
+        ) as client:
+            response = await client.post(
+                endpoint,
+                headers=headers,
+                json=request_body,
+            )
+            response.raise_for_status()
+
+    except httpx.TimeoutException as exc:
+        raise AITimeoutError("Gemini API 요청이 시간 초과되었습니다.") from exc
+
+    data = response.json()
+
+    try:
+        answer = data["candidates"][0]["content"]["parts"][0]["text"]
+    except (KeyError, IndexError, TypeError) as exc:
+        raise ValueError("Gemini 응답 형식이 올바르지 않습니다.") from exc
+
+    if not answer.strip():
+        raise ValueError("Gemini 응답이 비어 있습니다.")
+
+    return answer.strip()
