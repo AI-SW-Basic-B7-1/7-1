@@ -10,6 +10,8 @@ from dotenv import load_dotenv
 
 # 프로젝트 루트 경로 (.env 위치) 탐색 및 로드
 BASE_DIR = Path(__file__).resolve().parent.parent
+STATIC_DIR = BASE_DIR / "static"
+INDEX_HTML = STATIC_DIR / "index.html"
 ENV_PATH = BASE_DIR / ".env"
 if ENV_PATH.exists():
     load_dotenv(dotenv_path=ENV_PATH)
