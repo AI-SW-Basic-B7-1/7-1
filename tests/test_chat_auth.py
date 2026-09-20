@@ -5,13 +5,13 @@
 AI 응답 영속 저장 및 사용자 간 대화 이력 격리(Multi-tenant Isolation)를 검증합니다.
 """
 
-import asyncio
 from typing import AsyncGenerator
-from unittest.mock import patch
+from unittest.mock import AsyncMock, call, patch
 import aiosqlite
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from app.ai_service import AITimeoutError
 from app.database import get_db, init_db
 from app.main import app
 
@@ -40,6 +40,17 @@ async def test_client(tmp_path) -> AsyncGenerator[AsyncClient, None]:
 
     # 테스트 종료 후 의존성 오버라이드 정리
     app.dependency_overrides.clear()
+
+
+@pytest.fixture
+def mock_generate_chat_response() -> AsyncMock:
+    """실제 Gemini API 대신 비동기 목 응답 생성기를 제공합니다."""
+    with patch(
+        "app.routers.chat_router.generate_chat_response",
+        new_callable=AsyncMock,
+    ) as mock:
+        mock.return_value = "테스트용 AI 응답입니다."
+        yield mock
 
 
 async def register_and_login(client: AsyncClient, username: str, password: str = "pass1234") -> str:
@@ -128,7 +139,10 @@ async def test_chat_length_exceeded_validation_error(test_client: AsyncClient):
 
 
 @pytest.mark.anyio
-async def test_chat_success_and_db_persistence(test_client: AsyncClient):
+async def test_chat_success_and_db_persistence(
+    test_client: AsyncClient,
+    mock_generate_chat_response: AsyncMock,
+):
     """정상 로그인 사용자가 질문 전송 시 200 OK 응답 및 DB chat_logs에 user_id가 영속 저장되는지 검증합니다."""
     username = "chat_user_success"
     token = await register_and_login(test_client, username)
@@ -141,6 +155,7 @@ async def test_chat_success_and_db_persistence(test_client: AsyncClient):
         headers=headers,
     )
     assert response.status_code == 200
+    mock_generate_chat_response.assert_awaited_once_with(question)
 
     data = response.json()
     assert "answer" in data
@@ -162,13 +177,21 @@ async def test_chat_success_and_db_persistence(test_client: AsyncClient):
 
 
 @pytest.mark.anyio
-async def test_chat_multi_user_isolation(test_client: AsyncClient):
+async def test_chat_multi_user_isolation(
+    test_client: AsyncClient,
+    mock_generate_chat_response: AsyncMock,
+):
     """사용자 A와 B의 대화 기록이 각각 격리되어 본인의 대화만 조회되는지 검증합니다."""
     token_a = await register_and_login(test_client, "user_alpha")
     token_b = await register_and_login(test_client, "user_beta")
 
     headers_a = {"Authorization": f"Bearer {token_a}"}
     headers_b = {"Authorization": f"Bearer {token_b}"}
+    mock_generate_chat_response.side_effect = [
+        "알파의 첫 번째 답변",
+        "알파의 두 번째 답변",
+        "베타의 유일한 답변",
+    ]
 
     # 사용자 A가 대화 전송
     await test_client.post(
@@ -188,6 +211,11 @@ async def test_chat_multi_user_isolation(test_client: AsyncClient):
         json={"question": "베타의 유일한 질문"},
         headers=headers_b,
     )
+    assert mock_generate_chat_response.await_args_list == [
+        call("알파의 첫 번째 질문"),
+        call("알파의 두 번째 질문"),
+        call("베타의 유일한 질문"),
+    ]
 
     # 사용자 A의 대화 이력 확인: 알파의 대화 2건만 존재해야 함
     res_a = await test_client.get("/api/me/chats", headers=headers_a)
@@ -206,19 +234,19 @@ async def test_chat_multi_user_isolation(test_client: AsyncClient):
 
 
 @pytest.mark.anyio
-async def test_chat_ai_timeout_504(test_client: AsyncClient):
+async def test_chat_ai_timeout_504(
+    test_client: AsyncClient,
+    mock_generate_chat_response: AsyncMock,
+):
     """AI 호출 타임아웃 발생 시 504 Gateway Timeout 및 표준 안내 메시지를 반환하는지 검증합니다."""
     token = await register_and_login(test_client, "user_timeout_test")
     headers = {"Authorization": f"Bearer {token}"}
 
-    async def mock_timeout_generate(*args, **kwargs):
-        raise asyncio.TimeoutError("AI API 타임아웃")
-
-    with patch("app.routers.chat_router.generate_chat_response", side_effect=mock_timeout_generate):
-        response = await test_client.post(
-            "/api/chat",
-            json={"question": "타임아웃 발생 테스트"},
-            headers=headers,
-        )
-        assert response.status_code == 504
-        assert response.json()["detail"] == "현재 AI 응답이 지연되고 있습니다. 잠시 후 다시 시도해 주세요."
+    mock_generate_chat_response.side_effect = AITimeoutError("AI API 타임아웃")
+    response = await test_client.post(
+        "/api/chat",
+        json={"question": "타임아웃 발생 테스트"},
+        headers=headers,
+    )
+    assert response.status_code == 504
+    assert response.json()["detail"] == "현재 AI 응답이 지연되고 있습니다. 잠시 후 다시 시도해 주세요."

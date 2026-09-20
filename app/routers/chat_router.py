@@ -35,7 +35,7 @@ async def chat_router_status() -> dict[str, str]:
     response_model=ChatResponse,
     status_code=status.HTTP_200_OK,
     summary="AI 챗봇 질문 전송 및 답변 수신",
-    description="로그인된 사용자가 질문을 전송하면 최근 문맥을 기반으로 AI 답변을 생성하고, 응답 시간과 함께 DB에 저장합니다.",
+    description="로그인된 사용자가 질문을 전송하면 AI 답변을 생성하고, 응답 시간과 함께 DB에 저장합니다.",
     responses={
         200: {"description": "답변 생성 성공", "model": ChatResponse},
         400: {"description": "공백 질문 입력 오류", "model": ErrorDetailResponse},
@@ -68,30 +68,10 @@ async def send_chat_message(
     chat_logger.info("request_received user_id=%s path=%s", user_id, request.url.path)
     chat_logger.info("ai_call_start user_id=%s request_id=%s", user_id, request_id)
 
-    # 2. 최근 대화 문맥(최근 5쌍) 조회하여 AI 호출 준비
-    history = []
-    try:
-        cursor = await db.execute(
-            """
-            SELECT question, response
-            FROM chat_logs
-            WHERE user_id = ?
-            ORDER BY id DESC
-            LIMIT 5
-            """,
-            (user_id,),
-        )
-        rows = await cursor.fetchall()
-        for row in reversed(rows):
-            history.append({"role": "user", "content": row["question"]})
-            history.append({"role": "assistant", "content": row["response"]})
-    except Exception:
-        history = []
-
-    # 3. AI 응답 생성 및 응답 시간(latency_ms) 정밀 측정
+    # 2. AI 응답 생성 및 응답 시간(latency_ms) 정밀 측정
     start_time = time.perf_counter()
     try:
-        answer = await generate_chat_response(prompt=cleaned_question, history=history)
+        answer = await generate_chat_response(cleaned_question)
     except AITimeoutError as exc:
         chat_logger.error("ai_call_failed request_id=%s error=%s", request_id, exc)
         raise HTTPException(
@@ -108,7 +88,7 @@ async def send_chat_message(
     latency_ms = max(0, round((time.perf_counter() - start_time) * 1000))
     chat_logger.info("ai_call_success request_id=%s latency_ms=%s", request_id, latency_ms)
 
-    # 4. SQLite chat_logs 테이블에 실제 로그인 사용자 ID로 영속 저장 및 로깅
+    # 3. SQLite chat_logs 테이블에 실제 로그인 사용자 ID로 영속 저장 및 로깅
     try:
         chat_id = await save_chat_log(db, user_id, cleaned_question, answer, latency_ms)
     except Exception as exc:
