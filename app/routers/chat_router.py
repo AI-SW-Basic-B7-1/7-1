@@ -48,7 +48,7 @@ async def get_current_user(
     user = await get_user_by_username(connection, username)
     if user is None:
         raise unauthorized
-    return {"id": user["id"], "username": user["username"]}
+    return {"user_id": user["user_id"], "username": user["username"]}
 
 
 @router.post("/chat", response_model=ChatResponse)
@@ -66,7 +66,7 @@ async def create_chat(
             detail="질문 내용을 입력해 주세요.",
         )
 
-    user_id = int(current_user["id"])
+    user_id = int(current_user["user_id"])
     request_id = str(uuid4())
     chat_logger.info("request_received user_id=%s path=%s", user_id, request.url.path)
     chat_logger.info(
@@ -99,13 +99,19 @@ async def create_chat(
     )
 
     try:
-        chat_id = await save_chat_log(
+        chat_log_id, conversation_id = await save_chat_log(
             connection,
             user_id,
             question,
             answer,
             latency_ms,
+            chat_request.conversation_id,
         )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
     except Exception as exc:
         chat_logger.error("db_save_failed user_id=%s error=%s", user_id, exc)
         raise HTTPException(
@@ -113,8 +119,16 @@ async def create_chat(
             detail="대화 기록을 저장하지 못했습니다.",
         ) from exc
 
-    chat_logger.info("db_save_success user_id=%s chat_id=%s", user_id, chat_id)
-    return ChatResponse(answer=answer, latency_ms=latency_ms)
+    chat_logger.info(
+        "db_save_success user_id=%s chat_id=%s",
+        user_id,
+        chat_log_id,
+    )
+    return ChatResponse(
+        conversation_id=conversation_id,
+        answer=answer,
+        latency_ms=latency_ms,
+    )
 
 
 @router.get("/me/chats", response_model=list[ChatLogItem])
@@ -123,7 +137,7 @@ async def read_my_chats(
     connection: Annotated[aiosqlite.Connection, Depends(get_db)],
 ) -> list[ChatLogItem]:
     """현재 로그인한 사용자의 대화 이력을 최신순으로 반환합니다."""
-    rows = await get_chat_logs_by_user(connection, int(current_user["id"]))
+    rows = await get_chat_logs_by_user(connection, int(current_user["user_id"]))
     chats = [ChatLogItem.model_validate(dict(row)) for row in rows]
     return chats
 
