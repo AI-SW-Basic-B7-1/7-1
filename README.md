@@ -12,7 +12,7 @@
 | 팀원 | 담당 역할 | 세부 업무 내용 및 기여 영역 |
 | :--- | :--- | :--- |
 | **고준석** (팀장) | **로그인 & 인증 (Auth) / PM** | • 회원가입(`POST /api/auth/register`) 및 로그인(`POST /api/auth/login`) API<br>• 비밀번호 `bcrypt` 단방향 해싱 및 JWT 액세스 토큰 발급/검증 로직<br>• 미인증 사용자 접근 차단용 FastAPI Dependency (`get_current_user`) 구현<br>• 프로젝트 전체 일정 조율 및 마일스톤 관리 |
-| **박범규** | **백엔드 코어 & DB (Chat Owner)** | • FastAPI 메인 애플리케이션 진입점 및 라우터 통합 (`app/main.py`)<br>• **`POST /api/chat` 엔드포인트 전체 흐름 최종 소유**: 요청 검증(공백/500자 제한), 인증 확인, AI 서비스 호출, 응답시간(`latency_ms`) 측정, DB 저장 및 에러 핸들링<br>• SQLite DB 연결 및 테이블 스키마 (`users`, `chat_logs`) 설계/구축, 내 대화 이력 조회 API (`GET /api/me/chats`)<br>• 표준 4대 이벤트 로깅 모듈, DB 검증용 `scripts/check_db_chats.sql` 및 서버 로그 검증 스크립트 작성 |
+| **박범규** | **백엔드 코어 & DB (Chat Owner)** | • FastAPI 메인 애플리케이션 진입점 및 라우터 통합 (`app/main.py`)<br>• **`POST /api/chat` 엔드포인트 전체 흐름 최종 소유**: 요청 검증(공백/500자 제한), 인증 확인, AI 서비스 호출, 응답시간(`latency_ms`) 측정, DB 저장 및 에러 핸들링<br>• SQLite DB 연결 및 테이블 스키마 (`users`, `conversations`, `chat_logs`) 설계/구축, 내 대화 이력 조회 API (`GET /api/me/chats`)<br>• 표준 4대 이벤트 로깅 모듈, DB 검증용 `scripts/check_db_chats.sql` 및 서버 로그 검증 스크립트 작성 |
 | **이준혁** | **프론트엔드 UI/UX** | • 단일 페이지 반응형 웹 챗봇 인터페이스 (`static/index.html`, `style.css`)<br>• 로그인 및 회원가입 모달 UI, JWT 로컬 스토리지 보관 및 헤더 전송 (`auth.js`)<br>• 실시간 메시지 버블 렌더링, 로딩 인디케이터, 비동기 API 통신 (`app.js`)<br>• Day 1~2 Mock API 기반 조기 E2E 연동 및 에러 토스트 피드백 |
 | **차종민** | **AI 파이프라인 (Service Provider)** | • **웹/DB 의존성이 배제된 순수 비동기 함수 모듈**(`app/ai_service.py`: `generate_chat_response`) 제공<br>• 최근 대화 3~5쌍을 조합하는 슬라이딩 윈도우 문맥(Context) 유지 전략 구현<br>• 8.0초 타임아웃 예외 핸들링 및 서버 프로세스 다운 방지 로직 (504 반환 규격 준수)<br>• 외부 키 미설정 시에도 시연 및 평가가 가능한 내장 Mock AI 엔진 구현 |
 
@@ -30,7 +30,7 @@
       ├── [ 인증 미들웨어 ] (JWT 토큰 유효성 검증, 미인증 시 401 차단)
       ├── [ AI 파이프라인 ] (문맥 조립 -> 8초 타임아웃 -> 코디세이 AI API / Mock AI)
       ├── [ 표준 로거 ] (4대 핵심 이벤트 실시간 콘솔/파일 기록)
-      └── [ SQLite DB ] (users, chat_logs 테이블 / WAL 모드)
+      └── [ SQLite DB ] (users, conversations, chat_logs 테이블 / WAL 모드)
 ```
 
 ---
@@ -59,22 +59,31 @@ DB 초기화 시 `PRAGMA journal_mode = WAL` 및 `PRAGMA foreign_keys = ON`을 �
 ### 4.1 users 테이블
 | 필드명 | 타입 | 제약 조건 | 설명 |
 | :--- | :--- | :--- | :--- |
-| `id` | INTEGER | PRIMARY KEY AUTOINCREMENT | 사용자 고유 번호 |
+| `user_id` | INTEGER | PRIMARY KEY AUTOINCREMENT | 사용자 고유 번호 |
 | `username` | VARCHAR(50) | UNIQUE, NOT NULL | 로그인 아이디 |
 | `hashed_password` | VARCHAR(255) | NOT NULL | bcrypt 단방향 암호화된 비밀번호 |
 | `created_at` | DATETIME | NOT NULL, DEFAULT CURRENT_TIMESTAMP | 계정 생성 일시 |
 
-### 4.2 chat_logs 테이블
+### 4.2 conversations 테이블
 | 필드명 | 타입 | 제약 조건 | 설명 |
 | :--- | :--- | :--- | :--- |
-| `id` | INTEGER | PRIMARY KEY AUTOINCREMENT | 대화 로그 고유 번호 |
-| `user_id` | INTEGER | NOT NULL, FK(users.id) ON DELETE CASCADE | 대화를 진행한 사용자 식별자 |
+| `conversation_id` | INTEGER | PRIMARY KEY AUTOINCREMENT | 대화방 고유 번호 |
+| `user_id` | INTEGER | NOT NULL, FK(users.user_id) ON DELETE CASCADE | 대화방 소유 사용자 |
+| `title` | VARCHAR(100) | NOT NULL | 대화 주제 |
+| `created_at` | DATETIME | NOT NULL, DEFAULT CURRENT_TIMESTAMP | 대화방 생성 일시 |
+| `updated_at` | DATETIME | NOT NULL, DEFAULT CURRENT_TIMESTAMP | 마지막 대화 일시 |
+
+### 4.3 chat_logs 테이블
+| 필드명 | 타입 | 제약 조건 | 설명 |
+| :--- | :--- | :--- | :--- |
+| `chat_log_id` | INTEGER | PRIMARY KEY AUTOINCREMENT | 대화 기록 고유 번호 |
+| `conversation_id` | INTEGER | NOT NULL, FK(conversations.conversation_id) ON DELETE CASCADE | 소속 대화방 |
 | `question` | TEXT | NOT NULL | 사용자가 입력한 질문 |
 | `response` | TEXT | NOT NULL | AI가 생성한 응답 텍스트 |
 | `latency_ms` | INTEGER | NOT NULL, DEFAULT 0 | AI API 호출 소요 시간 (밀리초) |
 | `created_at` | DATETIME | NOT NULL, DEFAULT CURRENT_TIMESTAMP | 대화 기록 일시 |
 
-`chat_logs` 테이블은 사용자별 최신 대화 조회를 위해 `(user_id, created_at DESC)` 인덱스를 생성합니다.
+사용자별 대화방 조회에는 `(user_id, updated_at DESC)`, 대화방별 기록 조회에는 `(conversation_id, created_at ASC)` 인덱스를 사용합니다.
 
 ---
 
@@ -84,8 +93,8 @@ DB 초기화 시 `PRAGMA journal_mode = WAL` 및 `PRAGMA foreign_keys = ON`을 �
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | `POST` | `/api/auth/register` | X | 신규 회원가입 | `{"username": "testuser", "password": "pass1234"}` | `201 Created` |
 | `POST` | `/api/auth/login` | X | 로그인 및 JWT 토큰 발급 | `{"username": "testuser", "password": "pass1234"}` | `{"access_token": "eyJ...", "token_type": "bearer"}` |
-| `POST` | `/api/chat` | **O (필수)** | AI 질문 전송 및 답변 수신 | `{"question": "안녕? 너는 누구야?"}` | `{"answer": "안녕하세요! AI 어시스턴트입니다.", "latency_ms": 450}` |
-| `GET` | `/api/me/chats` | **O (필수)** | 본인 대화 이력 조회 | - | `[{"id": 1, "question": "...", "response": "...", "created_at": "..."}]` |
+| `POST` | `/api/chat` | **O (필수)** | 새 대화 또는 기존 대화방에 AI 질문 전송 | `{"conversation_id": 1, "question": "후속 질문"}` | `{"conversation_id": 1, "answer": "AI 응답", "latency_ms": 450}` |
+| `GET` | `/api/me/chats` | **O (필수)** | 대화방 정보가 포함된 본인 대화 이력 조회 | - | `[{"id": 1, "conversation_id": 1, "title": "대화 주제", "question": "...", "response": "..."}]` |
 | `GET` | `/api/health` | X | 서버 헬스체크 | - | `{"status": "ok"}` |
 
 👉 **엔드포인트별 상세 Request/Response JSON, Pydantic 스키마 및 상태 코드 규격**: [docs/api_spec.md](docs/api_spec.md) 참고
