@@ -76,8 +76,12 @@ async def create_chat(
     )
 
     started_at = perf_counter()
+
+    recent_logs = await get_chat_logs_by_user(connection, user_id)
+    recent_logs = list(reversed(recent_logs[:5]))
+
     try:
-        answer = await generate_chat_response(question)
+        answer = await generate_chat_response(question, recent_logs)
     except AITimeoutError as exc:
         chat_logger.error("ai_call_failed request_id=%s error=%s", request_id, exc)
         raise HTTPException(
