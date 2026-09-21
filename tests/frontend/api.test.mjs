@@ -76,14 +76,13 @@ test("회원가입은 JSON 두 필드와 201 응답만 허용한다", async () =
   );
 });
 
-test("선택 AI 헤더 없이 로그인 계약을 처리한다", async () => {
+test("로그인은 인증 토큰 계약을 처리한다", async () => {
   let calls = 0;
   globalThis.fetch = async (url, options) => {
     calls += 1;
     assert.equal(url, "/api/auth/login");
     assert.equal(options.method, "POST");
     assert.equal(options.headers["Content-Type"], "application/json; charset=utf-8");
-    assert.equal(options.headers["X-AI-Mode"], undefined);
     assert.deepEqual(JSON.parse(options.body), {
       username: "tester",
       password: "local-only",
@@ -96,7 +95,6 @@ test("선택 AI 헤더 없이 로그인 계약을 처리한다", async () => {
   assert.deepEqual(result, {
     accessToken: "test-token",
     tokenType: "bearer",
-    aiMode: null,
   });
   assert.equal(calls, 1);
 });
@@ -244,7 +242,6 @@ test("채팅은 bearer와 원문 question을 보내고 빈 문자열 answer도 �
     assert.equal(url, "/api/chat");
     assert.equal(options.method, "POST");
     assert.equal(options.headers.Authorization, "Bearer current-token");
-    assert.equal(options.headers["X-AI-Mode"], undefined);
     assert.deepEqual(JSON.parse(options.body), { question: "  원문 질문  " });
     return jsonResponse(200, { answer: "", latency_ms: 0 });
   };
