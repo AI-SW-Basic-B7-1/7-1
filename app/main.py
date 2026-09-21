@@ -4,23 +4,17 @@
 헬스체크, 애플리케이션 시작 시 초기화 작업을 통합합니다.
 """
 
-from pathlib import Path
-
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+from app.config import INDEX_HTML, STATIC_DIR
 from app.exception_handlers import register_exception_handlers
 from app.lifespan import app_lifespan
 from app.routers.auth_router import router as auth_router
 from app.routers.chat_router import router as chat_router
 from app.schemas import HealthResponse
-
-
-BASE_DIR = Path(__file__).resolve().parent.parent
-STATIC_DIR = BASE_DIR / "static"
-INDEX_HTML = STATIC_DIR / "index.html"
 
 
 def create_app() -> FastAPI:
