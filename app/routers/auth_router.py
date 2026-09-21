@@ -5,12 +5,13 @@
 그리고 라우터 연결 상태 확인 엔드포인트를 제공합니다.
 """
 
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 import aiosqlite
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.auth import (
     create_access_token,
+    decode_access_token,
     get_current_user,
     hash_password,
     verify_password,

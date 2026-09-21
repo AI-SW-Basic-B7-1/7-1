@@ -19,3 +19,15 @@ class UserInDB(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
+
+class ChatLogInDB(BaseModel):
+    """chat_logs 테이블에 저장된 대화 로그 엔티티 모델."""
+
+    id: int
+    user_id: int
+    question: str
+    response: str
+    latency_ms: int = 0
+    created_at: Optional[datetime] = None
+
+    model_config = ConfigDict(from_attributes=True)
