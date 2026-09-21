@@ -9,81 +9,98 @@
   </head>
   <body>
     <div class="app-shell">
-      <header class="app-header">
-        <div>
-          <p class="eyebrow">CODYSSEY B7-1</p>
-          <h1>AI Assistant</h1>
+      <aside class="sidebar" aria-label="워크스페이스 안내">
+        <div class="brand" aria-label="AI Assistant">
+          <span class="brand-mark" aria-hidden="true">✦</span>
+          <span><strong>AI Assistant</strong><small>IDEAS, IN MOTION</small></span>
         </div>
-        <div class="session-actions">
-          <span id="ai-mode-badge" class="mode-badge" hidden></span>
-          <button id="open-login-button" class="button button-secondary" type="button">
-            로그인
-          </button>
-          <button id="logout-button" class="button button-secondary" type="button" hidden>
-            로그아웃
-          </button>
+        <button id="new-question-button" class="new-chat-link" type="button">
+          새 질문 작성 <span aria-hidden="true">＋</span>
+        </button>
+        <p class="sidebar-label">대화</p>
+        <span class="sidebar-current" aria-current="page">현재 대화</span>
+        <p class="sidebar-help">이전 질문과 답변은 로그인 후 이 대화 화면에 표시됩니다.</p>
+        <div class="sidebar-spacer"></div>
+        <div class="sidebar-foot">
+          <span class="sidebar-avatar" aria-hidden="true">✦</span>
+          <span>생각이 정리되는 대화</span>
         </div>
-      </header>
+      </aside>
 
-      <main class="chat-panel" aria-labelledby="chat-title">
-        <section class="chat-heading">
-          <div>
-            <p class="eyebrow">CURRENT CONVERSATION</p>
-            <h2 id="chat-title">무엇이든 물어보세요</h2>
+      <div class="workspace">
+        <header class="app-header">
+          <div class="breadcrumb"><span>내 워크스페이스</span><span aria-hidden="true">/</span><strong>대화</strong></div>
+          <div class="session-actions">
+            <span id="ai-mode-badge" class="mode-badge" hidden></span>
+            <button id="open-login-button" class="button button-secondary" type="button">로그인</button>
+            <button id="logout-button" class="button button-secondary" type="button" hidden>로그아웃</button>
           </div>
-          <span
-            id="connection-status"
-            class="connection-status"
-            data-state="checking"
-            role="status"
-            aria-live="polite"
-            aria-atomic="true"
-            title="서버 연결 확인 중"
-          >
-            <span class="connection-dot" aria-hidden="true"></span>
-            <span id="connection-status-label" class="visually-hidden">서버 연결 확인 중</span>
-          </span>
-        </section>
+        </header>
 
-        <section
-          id="message-list"
-          class="message-list"
-          aria-label="대화 내용"
-          aria-live="polite"
-          aria-busy="false"
-        >
-          <div id="empty-state" class="empty-state">
-            <p class="empty-state-title">아직 대화가 없습니다.</p>
-            <p>로그인하면 내 이전 기록을 불러오고 새 질문을 보낼 수 있습니다.</p>
+        <main class="chat-panel" aria-labelledby="chat-title">
+          <section class="chat-heading">
+            <div class="chat-heading-inner">
+              <p class="eyebrow">A CLEARER WAY TO THINK</p>
+              <h1 id="chat-title">생각이 정리되는 대화.</h1>
+              <p class="chat-subtitle">아이디어를 꺼내고, 다듬고, 다음 문장으로 이어가세요.</p>
+            </div>
+            <span
+              id="connection-status"
+              class="connection-status"
+              data-state="checking"
+              role="status"
+              aria-live="polite"
+              aria-atomic="true"
+              title="서버 연결 확인 중"
+            >
+              <span class="connection-dot" aria-hidden="true"></span>
+              <span id="connection-status-label" class="visually-hidden">서버 연결 확인 중</span>
+            </span>
+          </section>
+
+          <section id="message-list" class="message-list" aria-label="대화 내용" aria-busy="false">
+            <div id="empty-state" class="empty-state">
+              <p class="empty-state-title">여기서 대화를 시작해 보세요.</p>
+              <p>로그인하면 이전 기록을 불러오고 새 질문을 보낼 수 있습니다.</p>
+            </div>
+          </section>
+
+          <div id="loading-indicator" class="loading-indicator" role="status" hidden>
+            <span class="loading-dot" aria-hidden="true"></span>
+            <span class="loading-dot" aria-hidden="true"></span>
+            <span class="loading-dot" aria-hidden="true"></span>
+            <span id="loading-message">이전 대화를 불러오고 있습니다.</span>
           </div>
-        </section>
 
-        <div id="loading-indicator" class="loading-indicator" role="status" hidden>
-          <span class="loading-dot"></span>
-          <span class="loading-dot"></span>
-          <span class="loading-dot"></span>
-          <span id="loading-message">AI가 답변을 준비하고 있습니다.</span>
-        </div>
+          <button id="latest-button" class="latest-button" type="button" hidden>↓ 최신 답변으로</button>
 
-        <form id="chat-form" class="composer" aria-busy="false">
-          <label for="question-input">질문</label>
-          <textarea
-            id="question-input"
-            name="question"
-            rows="3"
-            placeholder="로그인 후 질문을 입력해 주세요."
-            aria-describedby="question-counter"
-            aria-invalid="false"
-            disabled
-          ></textarea>
-          <div class="composer-footer">
-            <span id="question-counter" class="question-counter">0 / 500</span>
-            <button id="send-button" class="button button-primary" type="submit" disabled>
-              전송
-            </button>
+          <div class="composer-area">
+            <div id="suggestion-list" class="suggestion-list" aria-label="질문 제안"></div>
+            <form id="chat-form" class="composer" aria-busy="false">
+              <label class="visually-hidden" for="question-input">질문</label>
+              <div class="composer-field">
+                <textarea
+                  id="question-input"
+                  name="question"
+                  rows="2"
+                  placeholder="로그인 후 질문을 입력해 주세요."
+                  aria-describedby="question-counter"
+                  aria-invalid="false"
+                  disabled
+                ></textarea>
+                <button id="send-button" class="button button-primary send-button" type="submit" disabled aria-label="질문 전송">
+                  <span class="send-button-label">전송</span>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12 14-8-4 16-4-6-6-2Zm6 2 8-10"></path></svg>
+                </button>
+              </div>
+              <div class="composer-footer">
+                <span>Enter로 전송 · Shift+Enter로 줄바꿈</span>
+                <span id="question-counter" class="question-counter">0 / 500</span>
+              </div>
+            </form>
           </div>
-        </form>
-      </main>
+        </main>
+      </div>
     </div>
 
     <section
