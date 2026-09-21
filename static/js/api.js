@@ -94,6 +94,7 @@ export async function request(
   return {
     data,
     status: response.status,
+    aiMode: response.headers.get("X-AI-Mode") || null,
   };
 }
 
@@ -125,7 +126,7 @@ export async function login(credentials, signal) {
       code: "INVALID_CONTRACT",
     });
   }
-  return { accessToken, tokenType };
+  return { accessToken, tokenType, aiMode: result.aiMode };
 }
 
 export async function register(credentials, signal) {
@@ -170,7 +171,7 @@ export async function sendChat(question, token, signal) {
       code: "INVALID_CONTRACT",
     });
   }
-  return { answer, latencyMs };
+  return { answer, latencyMs, aiMode: result.aiMode };
 }
 
 function isChatHistoryItem(item) {
@@ -198,5 +199,5 @@ export async function getChatHistory(token, signal) {
       code: "INVALID_CONTRACT",
     });
   }
-  return { chats: result.data };
+  return { chats: result.data, aiMode: result.aiMode };
 }

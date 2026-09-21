@@ -27,6 +27,7 @@ const elements = {
   showLoginButton: document.querySelector("#show-login-button"),
   connectionStatus: document.querySelector("#connection-status"),
   connectionStatusLabel: document.querySelector("#connection-status-label"),
+  aiModeBadge: document.querySelector("#ai-mode-badge"),
 };
 
 export function getAccessToken() {
@@ -274,6 +275,16 @@ async function handleRegisterSubmit(event) {
   }
 }
 
+function renderAiMode(aiMode) {
+  if (!aiMode) {
+    elements.aiModeBadge.hidden = true;
+    elements.aiModeBadge.textContent = "";
+    return;
+  }
+  elements.aiModeBadge.textContent = aiMode === "mock" ? "MOCK MODE" : "AI ONLINE";
+  elements.aiModeBadge.hidden = false;
+}
+
 function renderConnectionState(state) {
   const labels = {
     checking: "서버 연결 확인 중",
@@ -290,10 +301,12 @@ function renderConnectionState(state) {
 async function checkHealth() {
   renderConnectionState("checking");
   try {
-    await health();
+    const result = await health();
     renderConnectionState("connected");
+    renderAiMode(result.aiMode);
   } catch (_error) {
     renderConnectionState("disconnected");
+    renderAiMode(null);
   }
 }
 
