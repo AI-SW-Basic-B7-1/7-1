@@ -70,12 +70,24 @@ async def send_chat_message(
     chat_logger.info("ai_call_start user_id=%s request_id=%s", user_id, request_id)
 
     # 2. 최근 대화 문맥을 조립하고 AI 응답 생성 시간을 측정합니다.
+    try:
+        recent_logs = await get_chat_logs_by_user(db, user_id)
+        recent_logs = list(reversed(recent_logs[:5]))
+    except Exception as exc:
+        chat_logger.error(
+            "chat_history_load_failed user_id=%s error=%s",
+            user_id,
+            exc,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="대화 기록을 불러오지 못했습니다.",
+        ) from exc
+
     start_time = time.perf_counter()
-    recent_logs = await get_chat_logs_by_user(db, user_id)
-    recent_logs = list(reversed(recent_logs[:5]))
 
     try:
-        answer = await generate_chat_response(cleaned_question, recent_logs)
+        answer = await generate_chat_response(cleaned_question, recent_logs)     
     except AITimeoutError as exc:
         chat_logger.error("ai_call_failed request_id=%s error=%s", request_id, exc)
         raise HTTPException(
