@@ -6,7 +6,7 @@ AI 응답 영속 저장 및 사용자 간 대화 이력 격리(Multi-tenant Isol
 """
 
 from typing import AsyncGenerator
-from unittest.mock import AsyncMock, call, patch
+from unittest.mock import AsyncMock, patch
 import aiosqlite
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -155,7 +155,7 @@ async def test_chat_success_and_db_persistence(
         headers=headers,
     )
     assert response.status_code == 200
-    mock_generate_chat_response.assert_awaited_once_with(question)
+    mock_generate_chat_response.assert_awaited_once_with(question, [])
 
     data = response.json()
     assert "answer" in data
@@ -211,19 +211,19 @@ async def test_chat_multi_user_isolation(
         json={"question": "베타의 유일한 질문"},
         headers=headers_b,
     )
-    assert mock_generate_chat_response.await_args_list == [
-        call("알파의 첫 번째 질문"),
-        call("알파의 두 번째 질문"),
-        call("베타의 유일한 질문"),
-    ]
+    calls = mock_generate_chat_response.await_args_list
+    assert calls[0].args == ("알파의 첫 번째 질문", [])
+    assert calls[1].args[0] == "알파의 두 번째 질문"
+    assert [item["question"] for item in calls[1].args[1]] == ["알파의 첫 번째 질문"]
+    assert calls[2].args == ("베타의 유일한 질문", [])
 
     # 사용자 A의 대화 이력 확인: 알파의 대화 2건만 존재해야 함
     res_a = await test_client.get("/api/me/chats", headers=headers_a)
     assert res_a.status_code == 200
     chats_a = res_a.json()
     assert len(chats_a) == 2
-    assert chats_a[0]["question"] == "알파의 첫 번째 질문"
-    assert chats_a[1]["question"] == "알파의 두 번째 질문"
+    assert chats_a[0]["question"] == "알파의 두 번째 질문"
+    assert chats_a[1]["question"] == "알파의 첫 번째 질문"
 
     # 사용자 B의 대화 이력 확인: 베타의 대화 1건만 존재해야 함
     res_b = await test_client.get("/api/me/chats", headers=headers_b)
@@ -250,3 +250,59 @@ async def test_chat_ai_timeout_504(
     )
     assert response.status_code == 504
     assert response.json()["detail"] == "현재 AI 응답이 지연되고 있습니다. 잠시 후 다시 시도해 주세요."
+
+
+@pytest.mark.anyio
+async def test_chat_ai_failure_502(
+    test_client: AsyncClient,
+    mock_generate_chat_response: AsyncMock,
+):
+    """타임아웃이 아닌 Gemini 오류가 502 Bad Gateway로 변환되는지 검증합니다."""
+    token = await register_and_login(test_client, "user_failure_test")
+    headers = {"Authorization": f"Bearer {token}"}
+
+    mock_generate_chat_response.side_effect = RuntimeError("Gemini API 오류")
+    response = await test_client.post(
+        "/api/chat",
+        json={"question": "일반 오류 테스트"},
+        headers=headers,
+    )
+
+    assert response.status_code == 502
+    assert response.json()["detail"] == "AI 응답을 생성하지 못했습니다. 잠시 후 다시 시도해 주세요."
+
+
+@pytest.mark.anyio
+async def test_chat_context_is_limited_to_recent_five_pairs(
+    test_client: AsyncClient,
+    mock_generate_chat_response: AsyncMock,
+):
+    """Gemini에 전달하는 이전 대화 문맥이 최근 5쌍으로 제한되는지 검증합니다."""
+    token = await register_and_login(test_client, "user_context_test")
+    headers = {"Authorization": f"Bearer {token}"}
+
+    for index in range(6):
+        response = await test_client.post(
+            "/api/chat",
+            json={"question": f"이전 질문 {index}"},
+            headers=headers,
+        )
+        assert response.status_code == 200
+
+    mock_generate_chat_response.reset_mock()
+    response = await test_client.post(
+        "/api/chat",
+        json={"question": "새 질문"},
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    history = mock_generate_chat_response.await_args.args[1]
+    assert len(history) == 5
+    assert [item["question"] for item in history] == [
+        "이전 질문 1",
+        "이전 질문 2",
+        "이전 질문 3",
+        "이전 질문 4",
+        "이전 질문 5",
+    ]
