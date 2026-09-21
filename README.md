@@ -1,7 +1,7 @@
 # AI Assistant (7-1 웹 기반 AI 챗봇 서비스)
 
 > **과제명**: B7-1 웹 기반 AI 챗봇 서비스 개발 프로젝트  
-> **프로젝트 목표**: 사용자 인증, 코디세이 AI API 비동기 연동, 대화 문맥 유지, SQLite 영속 저장 및 4대 표준 로깅을 결합한 4일 단기 완성 웹 챗봇 프로토타입(MVP)
+> **프로젝트 목표**: 사용자 인증, Gemini API 비동기 연동, 대화 문맥 유지, SQLite 영속 저장 및 4대 표준 로깅을 결합한 4일 단기 완성 웹 챗봇 프로토타입(MVP)
 
 ---
 
@@ -13,8 +13,8 @@
 | :--- | :--- | :--- |
 | **고준석** (팀장) | **로그인 & 인증 (Auth) / PM** | • 회원가입(`POST /api/auth/register`) 및 로그인(`POST /api/auth/login`) API<br>• 비밀번호 `bcrypt` 단방향 해싱 및 JWT 액세스 토큰 발급/검증 로직<br>• 미인증 사용자 접근 차단용 FastAPI Dependency (`get_current_user`) 구현<br>• 프로젝트 전체 일정 조율 및 마일스톤 관리 |
 | **박범규** | **백엔드 코어 & DB (Chat Owner)** | • FastAPI 메인 애플리케이션 진입점 및 라우터 통합 (`app/main.py`)<br>• **`POST /api/chat` 엔드포인트 전체 흐름 최종 소유**: 요청 검증(공백/500자 제한), 인증 확인, AI 서비스 호출, 응답시간(`latency_ms`) 측정, DB 저장 및 에러 핸들링<br>• SQLite DB 연결 및 테이블 스키마 (`users`, `chat_logs`) 설계/구축, 내 대화 이력 조회 API (`GET /api/me/chats`)<br>• 표준 4대 이벤트 로깅 모듈, DB 검증용 `scripts/check_db_chats.sql` 및 서버 로그 검증 스크립트 작성 |
-| **이준혁** | **프론트엔드 UI/UX** | • 단일 페이지 반응형 웹 챗봇 인터페이스 (`static/index.html`, `style.css`)<br>• 로그인 및 회원가입 모달 UI, JWT 로컬 스토리지 보관 및 헤더 전송 (`auth.js`)<br>• 실시간 메시지 버블 렌더링, 로딩 인디케이터, 비동기 API 통신 (`app.js`)<br>• Day 1~2 Mock API 기반 조기 E2E 연동 및 에러 토스트 피드백 |
-| **차종민** | **AI 파이프라인 (Service Provider)** | • **웹/DB 의존성이 배제된 순수 비동기 함수 모듈**(`app/ai_service.py`: `generate_chat_response`) 제공<br>• 최근 대화 3~5쌍을 조합하는 슬라이딩 윈도우 문맥(Context) 유지 전략 구현<br>• 8.0초 타임아웃 예외 핸들링 및 서버 프로세스 다운 방지 로직 (504 반환 규격 준수)<br>• 외부 키 미설정 시에도 시연 및 평가가 가능한 내장 Mock AI 엔진 구현 |
+| **이준혁** | **프론트엔드 UI/UX** | • 단일 페이지 반응형 웹 챗봇 인터페이스 (`static/index.html`, `style.css`)<br>• 로그인 및 회원가입 모달 UI, JWT 로컬 스토리지 보관 및 헤더 전송 (`auth.js`)<br>• 실시간 메시지 버블 렌더링, 로딩 인디케이터, 비동기 API 통신 (`app.js`)<br>• API 계약 테스트와 에러 토스트 피드백 |
+| **차종민** | **AI 파이프라인 (Service Provider)** | • **웹/DB 의존성이 배제된 순수 비동기 함수 모듈**(`app/ai_service.py`: `generate_chat_response`) 제공<br>• 최근 대화 3~5쌍을 조합하는 슬라이딩 윈도우 문맥(Context) 유지 전략 구현<br>• 8.0초 타임아웃 예외 핸들링 및 서버 프로세스 다운 방지 로직 (504 반환 규격 준수)<br>• Gemini API 키와 모델 설정을 통한 실제 응답 생성 |
 
 ---
 
@@ -28,7 +28,7 @@
  ├── [ Nginx 리버스 프록시 ] (Port 80 -> Port 8000 라우팅 및 정적 리소스 서빙)
  └── [ Uvicorn + FastAPI ] (Port 8000 로컬 바인딩, Systemd 서비스 데몬 구동)
       ├── [ 인증 미들웨어 ] (JWT 토큰 유효성 검증, 미인증 시 401 차단)
-      ├── [ AI 파이프라인 ] (문맥 조립 -> 8초 타임아웃 -> 코디세이 AI API / Mock AI)
+      ├── [ AI 파이프라인 ] (문맥 조립 -> 8초 타임아웃 -> Gemini API)
       ├── [ 표준 로거 ] (4대 핵심 이벤트 실시간 콘솔/파일 기록)
       └── [ SQLite DB ] (users, chat_logs 테이블 / WAL 모드)
 ```
@@ -38,11 +38,11 @@
 ## 3. 4일 프로토타입 개발 일정 (마일스톤 요약)
 
 ```text
-[Day 1] 독립 모듈 & Mock API 세팅 ──> [Day 2] 코어 로직 & 조기 Mock E2E ──> [Day 3] 실제 AI/DB 결합 ──> [Day 4] 안정성 & 시연 점검
+[Day 1] 독립 모듈 & API 계약 테스트 ──> [Day 2] 코어 로직 & 통합 테스트 ──> [Day 3] 실제 Gemini/DB 결합 ──> [Day 4] 안정성 & 시연 점검
 ```
 
-- **Day 1**: 독립 컴포넌트 뼈대 세팅, 단독 PoC 검증, **조기 연동용 Mock 응답 엔드포인트 선행 배포**
-- **Day 2**: 각자 코어 로직 완성 및 **프론트↔백엔드 간 조기 Mock E2E 연동(Walking Skeleton) 완료** (통합 리스크 조기 제거)
+- **Day 1**: 독립 컴포넌트 뼈대 세팅, Gemini 단독 PoC 및 API 계약 테스트
+- **Day 2**: 각자 코어 로직 완성 및 **프론트↔백엔드 통합 테스트 완료** (통합 리스크 조기 제거)
 - **Day 3**: 백엔드-프론트엔드-AI 전체 파이프라인에 **실제 AI API 및 SQLite DB 영속 저장 교체 결합** (Alpha Release)
 - **Day 4**: 안정성 강화, 입력 검증, SQLite DB 무결성/서버 로그 검증, EC2 배포 및 프로토타입 시연 점검
 
@@ -131,10 +131,9 @@ ACCESS_TOKEN_EXPIRE_MINUTES=1440
 # [데이터베이스 경로]
 DATABASE_URL="sqlite:///./data/chatbot.db"
 
-# [코디세이 AI API 설정 (500만 토큰 제공)]
-CODESSEY_API_KEY="your_codessey_api_key"
-CODESSEY_API_BASE="https://api.openai.com/v1"
-AI_MODEL_NAME="gpt-4o-mini"
+# [Gemini API 설정]
+GEMINI_API_KEY="여기에_본인의_Gemini_API_Key"
+GEMINI_MODEL="gemini-3.5-flash-lite"
 AI_TIMEOUT_SECONDS=8.0
 ```
 
@@ -222,5 +221,5 @@ RDBMS(`chat_logs` 테이블)에 누적 저장된 사용자 질문, AI 응답, �
   ```
 
 ### 8.3 AI 타임아웃 및 장애 복원력
-- **8.0초 타임아웃 격리**: 코디세이 API 호출 지연 시 서버 프로세스가 다운되지 않고 즉시 504 Gateway Timeout 안내 응답을 반환합니다.
-- **내장 Mock AI 엔진**: `CODESSEY_API_KEY` 미입력 환경에서도 서비스 정상 동작을 100% 시연할 수 있도록 모의 응답 폴백을 지원합니다.
+- **8.0초 타임아웃 격리**: Gemini API 호출 지연 시 서버 프로세스가 다운되지 않고 504 Gateway Timeout 안내 응답을 반환합니다.
+- **Gemini 장애 분리**: 타임아웃이 아닌 Gemini API 오류는 502 Bad Gateway로 반환하며 서버 프로세스를 유지합니다.
