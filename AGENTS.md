@@ -6,9 +6,9 @@
 
 ## 1. 프로젝트 기본 정보
 - **서비스명**: AI Assistant (7-1 웹 기반 AI 챗봇)
-- **프로젝트 목표**: 4일 내 핵심 컴포넌트(웹 UI ↔ 로그인/인증 ↔ FastAPI 백엔드 ↔ 코디세이 AI API ↔ SQLite DB ↔ AWS EC2 배포)가 100% 결합된 동작 가능한 프로토타입(MVP) 완성
+- **프로젝트 목표**: 4일 내 핵심 컴포넌트(웹 UI ↔ 로그인/인증 ↔ FastAPI 백엔드 ↔ Gemini API ↔ SQLite DB ↔ AWS EC2 배포)가 100% 결합된 동작 가능한 프로토타입(MVP) 완성
 - **개발 환경**: Python 3.10+, FastAPI, SQLite, Vanilla HTML/CSS/JavaScript
-- **AI 연동**: 코디세이 AI API (GPT-4o-mini / Claude 3.5 Sonnet 호환 엔드포인트) + Mock AI Fallback 지원
+- **AI 연동**: Gemini API (`GEMINI_API_KEY`, `GEMINI_MODEL`) 기반 실제 응답 생성 및 테스트 대역 검증
 - **배포 인프라**: AWS EC2 프리티어 (t2.micro / Ubuntu 22.04 LTS), 2GB Swap 메모리, Nginx 리버스 프록시, Systemd 데몬
 
 ---
@@ -20,7 +20,7 @@
 | **고준석**<br>(팀장) | **로그인 & 인증 (Auth)** | • 회원가입 API (POST /api/auth/register) 및 로그인 API (POST /api/auth/login)<br>• 비밀번호 bcrypt 해싱 및 JWT 토큰 발급/검증 유틸리티<br>• 미인증 사용자 401 차단용 FastAPI 의존성(get_current_user) 구현<br>• 전체 일정 관리 및 마일스톤 조율 (PM) |
 | **박범규** | **백엔드 코어 & DB** | • FastAPI 메인 애플리케이션 진입점 및 라우터 통합 (app/main.py)<br>• SQLite DB 연결 및 테이블 스키마 (users, chat_logs)<br>• 대화 로그 저장 함수 및 내 대화 조회 API (GET /api/me/chats)<br>• 과제 필수 표준 4대 이벤트 로깅 모듈 및 scripts/check_logs.sql 작성 |
 | **이준혁** | **프론트엔드 UI/UX** | • 반응형 단일 페이지 웹 챗봇 인터페이스 (static/index.html, style.css)<br>• 로그인 / 회원가입 모달 UI 및 JWT 로컬 스토리지 보관 처리 (auth.js)<br>• 실시간 질문 입력, 로딩 인디케이터, AI 응답 렌더링 스크립트 (app.js)<br>• 에러 알림 토스트 및 모바일/데스크탑 반응형 레이아웃 구성 |
-| **차종민** | **AI 파이프라인** | • 코디세이 AI API 연동 모듈 (app/ai_service.py) 구축<br>• 최근 대화 3~5쌍을 조합하는 슬라이딩 윈도우 문맥(Context) 유지 전략 구현<br>• 8.0초 타임아웃 예외 핸들링 및 서버 프로세스 다운 방지 로직<br>• 키 미설정 및 테스트용 내장 Mock AI 엔진 구현 |
+| **차종민** | **AI 파이프라인** | • Gemini API 연동 모듈 (app/ai_service.py) 구축<br>• 최근 대화 3~5쌍을 조합하는 슬라이딩 윈도우 문맥(Context) 유지 전략 구현<br>• 8.0초 타임아웃 예외 핸들링 및 서버 프로세스 다운 방지 로직<br>• Gemini 응답 형식과 오류 처리 검증 |
 
 ---
 
@@ -28,7 +28,7 @@
 
 - **Day 1 (독립 모듈 세팅 & AI PoC)**:
   - 브랜치 생성 (feat/auth-ko, feat/backend-park, feat/ui-lee, feat/ai-cha)
-  - [차종민] 코디세이 AI API 단독 호출 PoC 스크립트 작성 및 8초 타임아웃 검증
+  - [차종민] Gemini API 단독 호출 PoC 스크립트 작성 및 8초 타임아웃 검증
   - [고준석] bcrypt 암호화 및 JWT 토큰 생성 유틸 함수 작성
   - [박범규] FastAPI 기본 서버 세팅 및 SQLite 스키마(users, chat_logs) 생성
   - [이준혁] 반응형 채팅 웹 UI HTML/CSS 와이어프레임 작성
@@ -36,7 +36,7 @@
   - [고준석] 회원가입/로그인 엔드포인트 및 get_current_user 의존성 완성
   - [박범규] 대화 로그 DB 저장 함수, GET /api/me/chats 구현, 표준 4대 로깅 세팅
   - [이준혁] 로그인/회원가입 모달 완성, 토큰 저장 및 백엔드 비동기 통신 연동
-  - [차종민] 슬라이딩 윈도우 문맥 조립, 8초 타임아웃 방어, Mock AI 모드 구현
+  - [차종민] 슬라이딩 윈도우 문맥 조립, 8초 타임아웃 방어, Gemini 응답 처리 구현
 - **Day 3 (전체 E2E 결합 - Alpha Release)**:
   - 인증 미들웨어 + 채팅 라우터 결합
   - UI에서 질문 입력 시 토큰 검증 -> 백엔드 수신 -> AI 호출 -> DB 저장 -> 화면 출력 전체 파이프라인 1차 통합
@@ -67,7 +67,7 @@
 ## 5. 보안 및 설정 가드레일 (Security First)
 
 1. **민감 정보 절대 노출 금지**:
-   - 코디세이 AI API Key, JWT Secret Key, DB 파일 등 모든 민감 정보는 소스코드에 하드코딩하지 않습니다.
+   - Gemini API Key, JWT Secret Key, DB 파일 등 모든 민감 정보는 소스코드에 하드코딩하지 않습니다.
    - 반드시 .env 파일과 환경 변수를 사용하며, .gitignore에 .env 및 *.db를 반드시 등록합니다.
    - 공개 저장소에는 .env.example만 제공합니다.
 2. **AWS EC2 프리티어 인프라 보안**:
@@ -98,8 +98,8 @@ ERROR db_save_failed user_id={user_id} error={error_detail}
 ## 7. 예외 처리 및 안정성 규칙
 
 1. **AI API 호출 타임아웃**:
-   - 코디세이 AI 호출 시 timeout=8.0초를 설정하여 무한 대기를 방지합니다.
-   - 타임아웃 또는 API 에러 발생 시 FastAPI 프로세스가 다운되지 않고, 사용자에게 504 Gateway Timeout과 친절한 오류 안내(현재 AI 응답이 지연되고 있습니다. 잠시 후 다시 시도해 주세요.)를 반환합니다.
+   - Gemini API 호출 시 timeout=8.0초를 설정하여 무한 대기를 방지합니다.
+   - 타임아웃은 504 Gateway Timeout, 그 외 Gemini API 오류는 502 Bad Gateway로 반환하며 FastAPI 프로세스를 유지합니다.
 2. **사용자 입력 검증**:
    - 빈 문자열 또는 공백만 있는 질문 차단 (400 Bad Request).
    - 최대 500자 길이 초과 질문 차단 (422 Unprocessable Entity).

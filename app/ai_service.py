@@ -9,7 +9,10 @@ class AITimeoutError(Exception):
     """AI API가 제한 시간 안에 응답하지 못한 경우의 예외."""
 
 
-async def generate_chat_response(question: str) -> str:
+async def generate_chat_response(
+    question: str,
+    history: list,
+) -> str:
     """사용자의 질문을 Gemini API에 전달하고 응답을 반환합니다."""
     endpoint = (
         f"https://generativelanguage.googleapis.com/v1beta/"
@@ -21,16 +24,31 @@ async def generate_chat_response(question: str) -> str:
         "Content-Type": "application/json",
     }
 
-    request_body = {
-        "contents": [
+    contents = []
+
+    for chat in history:
+        contents.append(
             {
-                "parts": [
-                    {
-                        "text": question,
-                    }
-                ]
+                "role": "user",
+                "parts": [{"text": chat["question"]}],
             }
-        ]
+        )
+        contents.append(
+            {
+                "role": "model",
+                "parts": [{"text": chat["response"]}],
+            }
+        )
+
+    contents.append(
+        {
+            "role": "user",
+            "parts": [{"text": question}],
+        }
+    )
+
+    request_body = {
+        "contents": contents
     }
 
     try:

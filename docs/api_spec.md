@@ -187,6 +187,12 @@ Content-Type: application/json; charset=utf-8
     "detail": "질문은 최대 500자까지 입력 가능합니다."
   }
   ```
+- **502 Bad Gateway** (Gemini API 오류 또는 응답 형식 오류):
+  ```json
+  {
+    "detail": "AI 응답을 생성하지 못했습니다. 잠시 후 다시 시도해 주세요."
+  }
+  ```
 - **504 Gateway Timeout** (AI API 호출 8.0초 초과):
   ```json
   {
@@ -197,7 +203,7 @@ Content-Type: application/json; charset=utf-8
 ---
 
 ### 3.4 [GET] 내 대화 이력 목록 조회 (`/api/me/chats`)
-로그인한 본인의 대화 기록 목록을 최신순 또는 등록순으로 반환합니다.
+로그인한 본인의 대화 기록 목록을 최신순으로 반환합니다. 프론트엔드는 화면 표시 시 시간순으로 정렬할 수 있습니다.
 
 - **URL**: `/api/me/chats`
 - **Method**: `GET`
@@ -260,7 +266,7 @@ Authorization: Bearer eyJhbGciOiJIUzI1NiIsIn...
 
 ## 4. 프론트엔드 연동 가이드 (Frontend Integration Guide)
 
-프론트엔드 담당(이준혁)은 백엔드 완성 전이라도 아래 표준 통신 함수 패턴과 가짜 데이터(Mocking)를 사용하여 UI를 독립적으로 완성할 수 있습니다.
+프론트엔드 담당(이준혁)은 백엔드 완성 전이라도 아래 표준 통신 함수 패턴과 테스트 대역을 사용하여 UI를 독립적으로 검증할 수 있습니다.
 
 ### 4.1 인증 토큰 관리 및 공통 Fetch 래퍼 (예시)
 ```javascript
@@ -300,13 +306,13 @@ async function sendChatMessage(question) {
 }
 ```
 
-### 4.2 프론트엔드 Mock 테스트용 더미 응답 데이터
-백엔드 서버 연동 전 로컬 브라우저 단독 개발 시 아래 더미 데이터를 활용하여 채팅 버블 렌더링, 로딩 인디케이터 동작, 에러 토스트 피드백을 테스트할 수 있습니다:
+### 4.2 프론트엔드 계약 테스트용 예시 응답 데이터
+백엔드 서버 연동 전 로컬 브라우저 단독 테스트에서 아래 예시 데이터를 활용하여 채팅 버블 렌더링, 로딩 인디케이터 동작, 에러 토스트 피드백을 검증할 수 있습니다:
 
 ```javascript
-// 가짜(Mock) AI 응답 예시
-const MOCK_CHAT_RESPONSE = {
-  answer: "안녕하세요! [Mock] 프론트엔드 인터페이스 검증용 테스트 답변입니다.",
+// 계약 테스트용 응답 예시
+const TEST_CHAT_RESPONSE = {
+  answer: "안녕하세요! 계약 테스트용 예시 답변입니다.",
   latency_ms: 350
 };
 ```
