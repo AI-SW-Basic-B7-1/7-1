@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 from app.ai_service import AITimeoutError, generate_chat_response
 from app.auth import get_current_user
-from app.database import get_db, save_chat_log
+from app.database import get_chat_logs_by_user, get_db, save_chat_log
 from app.logger import chat_logger
 from app.models import UserInDB
 from app.schemas import (
@@ -41,6 +41,7 @@ async def chat_router_status() -> dict[str, str]:
         400: {"description": "공백 질문 입력 오류", "model": ErrorDetailResponse},
         401: {"description": "미인증 또는 유효하지 않은 토큰", "model": ErrorDetailResponse},
         422: {"description": "질문 길이 500자 초과 등 유효성 검사 실패", "model": ErrorDetailResponse},
+        502: {"description": "AI 서비스 오류", "model": ErrorDetailResponse},
         504: {"description": "AI 응답 지연 타임아웃", "model": ErrorDetailResponse},
     },
 )
@@ -68,10 +69,13 @@ async def send_chat_message(
     chat_logger.info("request_received user_id=%s path=%s", user_id, request.url.path)
     chat_logger.info("ai_call_start user_id=%s request_id=%s", user_id, request_id)
 
-    # 2. AI 응답 생성 및 응답 시간(latency_ms) 정밀 측정
+    # 2. 최근 대화 문맥을 조립하고 AI 응답 생성 시간을 측정합니다.
     start_time = time.perf_counter()
+    recent_logs = await get_chat_logs_by_user(db, user_id)
+    recent_logs = list(reversed(recent_logs[:5]))
+
     try:
-        answer = await generate_chat_response(cleaned_question)
+        answer = await generate_chat_response(cleaned_question, recent_logs)
     except AITimeoutError as exc:
         chat_logger.error("ai_call_failed request_id=%s error=%s", request_id, exc)
         raise HTTPException(
@@ -81,8 +85,8 @@ async def send_chat_message(
     except Exception as exc:
         chat_logger.error("ai_call_failed request_id=%s error=%s", request_id, exc)
         raise HTTPException(
-            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
-            detail="현재 AI 응답이 지연되고 있습니다. 잠시 후 다시 시도해 주세요.",
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="AI 응답을 생성하지 못했습니다. 잠시 후 다시 시도해 주세요.",
         ) from exc
 
     latency_ms = max(0, round((time.perf_counter() - start_time) * 1000))
@@ -107,7 +111,7 @@ async def send_chat_message(
     response_model=List[ChatLogItem],
     status_code=status.HTTP_200_OK,
     summary="내 대화 이력 목록 조회",
-    description="현재 로그인한 사용자의 대화 기록 목록을 등록순(과거->최신)으로 조회합니다. 타인의 대화는 격리됩니다.",
+    description="현재 로그인한 사용자의 대화 기록 목록을 최신순으로 조회합니다. 타인의 대화는 격리됩니다.",
     responses={
         200: {"description": "대화 이력 조회 성공", "model": List[ChatLogItem]},
         401: {"description": "미인증 또는 유효하지 않은 토큰", "model": ErrorDetailResponse},
@@ -122,14 +126,5 @@ async def get_my_chat_history(
     get_current_user 의존성을 통해 획득한 current_user.id로 필터링하여
     타 사용자의 대화가 일절 노출되지 않는 테넌트 격리를 보장합니다.
     """
-    cursor = await db.execute(
-        """
-        SELECT id, question, response, latency_ms, created_at
-        FROM chat_logs
-        WHERE user_id = ?
-        ORDER BY id ASC
-        """,
-        (current_user.id,),
-    )
-    rows = await cursor.fetchall()
-    return [ChatLogItem(**dict(row)) for row in rows]
+    rows = await get_chat_logs_by_user(db, current_user.id)
+    return [ChatLogItem.model_validate(dict(row)) for row in rows]
