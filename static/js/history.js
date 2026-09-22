@@ -42,3 +42,25 @@ export function groupChatHistory(chats) {
     return compareChatHistoryPosition(rightLatest, leftLatest);
   });
 }
+
+export async function synchronizeConversationCache({
+  loadChats,
+  isCurrent,
+  applyConversations,
+  handleFailure,
+}) {
+  try {
+    const chats = await loadChats();
+    if (!isCurrent()) {
+      return "stale";
+    }
+    applyConversations(groupChatHistory(chats));
+    return "success";
+  } catch (error) {
+    if (!isCurrent() || error?.name === "AbortError") {
+      return "stale";
+    }
+    handleFailure(error);
+    return "failure";
+  }
+}

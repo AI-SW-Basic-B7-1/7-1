@@ -1,7 +1,7 @@
 import { ApiError, getChatHistory, sendChat } from "./api.js";
 import { clearSession, getAccessToken, openLoginModal } from "./auth.js";
 import { CHAT_CONTENT } from "./chat-content.js";
-import { groupChatHistory } from "./history.js";
+import { groupChatHistory, synchronizeConversationCache } from "./history.js";
 import { shouldSubmitQuestion } from "./keyboard.js";
 
 const MAX_QUESTION_LENGTH = 500;
@@ -407,7 +407,7 @@ async function performChat(question, existingAssistantRow = null) {
     }
     currentConversationId = result.conversationId;
     revealAnswer(assistantRow, result.answer, result.latencyMs, requestGeneration);
-    void loadChatHistory({ preferredConversationId: result.conversationId });
+    void synchronizeChatHistory();
     if (elements.questionInput.value === question) {
       elements.questionInput.value = "";
       updateCounter();
@@ -505,6 +505,45 @@ function renderConversationMessages(conversation) {
     appendMessage("assistant", item.response, item.latency_ms);
   }
   scrollToLatest();
+}
+
+async function synchronizeChatHistory() {
+  const token = getAccessToken();
+  if (!authenticated || !token) {
+    return;
+  }
+  activeHistoryController?.abort();
+  const controller = new AbortController();
+  const requestGeneration = viewGeneration;
+  activeHistoryController = controller;
+
+  try {
+    await synchronizeConversationCache({
+      loadChats: async () => {
+        const result = await getChatHistory(token, controller.signal);
+        return result.chats;
+      },
+      isCurrent: () => (
+        activeHistoryController === controller
+        && !controller.signal.aborted
+        && requestGeneration === viewGeneration
+        && token === getAccessToken()
+      ),
+      applyConversations: (conversations) => {
+        conversationCache = conversations;
+        renderConversationList();
+      },
+      handleFailure: (error) => {
+        if (!handleProtectedUnauthorized(error)) {
+          showToast(CHAT_CONTENT.historySyncFailureMessage);
+        }
+      },
+    });
+  } finally {
+    if (activeHistoryController === controller) {
+      activeHistoryController = null;
+    }
+  }
 }
 
 async function loadChatHistory({ preferredConversationId = currentConversationId } = {}) {

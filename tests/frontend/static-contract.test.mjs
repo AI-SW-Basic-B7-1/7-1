@@ -142,3 +142,20 @@ test("새 대화는 현재 ID만 비우고 기존 대화방 캐시는 유지한�
   assert.match(newConversationSource, /resetConversation/);
   assert.doesNotMatch(newConversationSource, /conversationCache = \[\]/);
 });
+
+test("채팅 성공 뒤 목록 동기화는 현재 메시지 화면을 교체하지 않는다", async () => {
+  const appSource = await readRepositoryFile("static/js/app.js");
+  const synchronizationSource = appSource.slice(
+    appSource.indexOf("async function synchronizeChatHistory"),
+    appSource.indexOf("async function loadChatHistory"),
+  );
+
+  assert.match(appSource, /revealAnswer\([\s\S]*?void synchronizeChatHistory\(\)/);
+  assert.match(synchronizationSource, /conversationCache = conversations/);
+  assert.match(synchronizationSource, /renderConversationList\(\)/);
+  assert.match(synchronizationSource, /historySyncFailureMessage/);
+  assert.doesNotMatch(synchronizationSource, /invalidateView/);
+  assert.doesNotMatch(synchronizationSource, /cancelReveal/);
+  assert.doesNotMatch(synchronizationSource, /resetConversation/);
+  assert.doesNotMatch(synchronizationSource, /renderConversationMessages/);
+});

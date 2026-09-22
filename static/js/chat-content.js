@@ -41,4 +41,5 @@ export const CHAT_CONTENT = Object.freeze({
   chatFailureMessage: "답변을 불러오지 못했습니다. 다시 시도해 주세요.",
   historyFailureMessage: "대화 기록을 불러오지 못했습니다.",
   historyFailureDescription: "새 질문은 보낼 수 있습니다. 잠시 후 다시 확인해 주세요.",
+  historySyncFailureMessage: "답변은 받았지만 대화방 목록 동기화에 실패했습니다.",
 });
