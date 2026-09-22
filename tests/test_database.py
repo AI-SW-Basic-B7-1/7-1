@@ -127,8 +127,9 @@ async def test_save_chat_log_rejects_another_users_conversation(tmp_path):
 
 
 @pytest.mark.anyio
-async def test_init_db_migrates_legacy_chat_records(tmp_path):
-    """기존 사용자와 대화 기록이 새 대화방 구조로 보존되는지 검증합니다."""
+@pytest.mark.parametrize("has_orphan", [False, True])
+async def test_init_db_migrates_legacy_chat_records(tmp_path, has_orphan):
+    """정상 기록은 이전하고 외래키 위반 시 기존 구조와 데이터를 보존합니다."""
     database_path = tmp_path / "legacy_chat.db"
     async with aiosqlite.connect(database_path) as connection:
         await connection.executescript(
@@ -154,7 +155,36 @@ async def test_init_db_migrates_legacy_chat_records(tmp_path):
             VALUES (1, '기존 질문', '기존 답변', 90);
             """
         )
+        if has_orphan:
+            await connection.execute("PRAGMA foreign_keys = OFF;")
+            await connection.execute(
+                "INSERT INTO chat_logs (user_id, question, response) VALUES (?, ?, ?);",
+                (999, "소유자 없는 질문", "소유자 없는 답변"),
+            )
         await connection.commit()
+
+        async with connection.execute(
+            "SELECT type, name, sql FROM sqlite_master ORDER BY type, name;"
+        ) as cursor:
+            original_schema = await cursor.fetchall()
+        async with connection.execute("SELECT * FROM users ORDER BY id;") as cursor:
+            original_users = await cursor.fetchall()
+        async with connection.execute("SELECT * FROM chat_logs ORDER BY id;") as cursor:
+            original_chats = await cursor.fetchall()
+
+    if has_orphan:
+        with pytest.raises(RuntimeError, match="외래키 무결성 위반"):
+            await init_db(database_path)
+        async with aiosqlite.connect(database_path) as connection:
+            async with connection.execute(
+                "SELECT type, name, sql FROM sqlite_master ORDER BY type, name;"
+            ) as cursor:
+                assert await cursor.fetchall() == original_schema
+            async with connection.execute("SELECT * FROM users ORDER BY id;") as cursor:
+                assert await cursor.fetchall() == original_users
+            async with connection.execute("SELECT * FROM chat_logs ORDER BY id;") as cursor:
+                assert await cursor.fetchall() == original_chats
+        return
 
     await init_db(database_path)
     connection = await get_db_connection(database_path)
