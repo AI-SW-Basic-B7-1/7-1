@@ -69,7 +69,7 @@ async def register(
     """
     # 1. 아이디 중복 여부 확인
     cursor = await db.execute(
-        "SELECT id FROM users WHERE username = ?",
+        "SELECT user_id FROM users WHERE username = ?",
         (request.username,),
     )
     existing_user = await cursor.fetchone()
@@ -125,7 +125,7 @@ async def login(
     """
     # 1. 사용자 계정 조회
     cursor = await db.execute(
-        "SELECT id, username, hashed_password FROM users WHERE username = ?",
+        "SELECT user_id, username, hashed_password FROM users WHERE username = ?",
         (request.username,),
     )
     user_row = await cursor.fetchone()
@@ -141,7 +141,7 @@ async def login(
     # 3. JWT 액세스 토큰 발급
     token_claims = {
         "sub": user_row["username"],
-        "user_id": user_row["id"],
+        "user_id": user_row["user_id"],
     }
     access_token = create_access_token(data=token_claims)
 
@@ -172,7 +172,7 @@ async def get_my_profile(
         Dict[str, Any]: 사용자 기본 프로필 정보 (id, username, created_at)
     """
     return {
-        "id": current_user.id,
+        "id": current_user.user_id,
         "username": current_user.username,
         "created_at": current_user.created_at,
     }
