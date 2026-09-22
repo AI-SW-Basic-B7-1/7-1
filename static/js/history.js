@@ -1,4 +1,4 @@
-function compareChatHistory(left, right) {
+export function compareChatHistoryPosition(left, right) {
   const leftTime = Date.parse(left.created_at);
   const rightTime = Date.parse(right.created_at);
 
@@ -14,5 +14,5 @@ function compareChatHistory(left, right) {
 }
 
 export function sortChatHistory(chats) {
-  return [...chats].sort(compareChatHistory);
+  return [...chats].sort(compareChatHistoryPosition);
 }
