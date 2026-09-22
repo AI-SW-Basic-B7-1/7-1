@@ -52,6 +52,7 @@ function renderComposerState() {
   const busy = sending || loadingHistory;
   elements.questionInput.disabled = !authenticated || busy;
   elements.sendButton.disabled = !authenticated || busy;
+  elements.newQuestionButton.disabled = busy;
   const sendLabel = sending
     ? CHAT_CONTENT.sendingLabel
     : loadingHistory
@@ -412,6 +413,24 @@ function handleQuestionKeydown(event) {
   }
 }
 
+function startNewConversation() {
+  if (!authenticated) {
+    openLoginModal(CHAT_CONTENT.loginRequiredMessage);
+    return;
+  }
+  if (sending || loadingHistory) {
+    return;
+  }
+  viewGeneration += 1;
+  activeHistoryController?.abort();
+  activeHistoryController = null;
+  cancelReveal();
+  currentConversationId = null;
+  resetConversation({ description: CHAT_CONTENT.newConversationDescription });
+  renderComposerState();
+  elements.questionInput.focus();
+}
+
 function renderConversationMessages(conversation) {
   resetConversation();
   if (!conversation) {
@@ -512,13 +531,7 @@ function initializeApp() {
     updateLatestButton();
   }, { passive: true });
   elements.latestButton?.addEventListener("click", scrollToLatest);
-  elements.newQuestionButton?.addEventListener("click", () => {
-    if (!authenticated) {
-      openLoginModal(CHAT_CONTENT.loginRequiredMessage);
-      return;
-    }
-    elements.questionInput.focus();
-  });
+  elements.newQuestionButton?.addEventListener("click", startNewConversation);
   window.addEventListener("auth:changed", handleAuthChange);
   resetConversation();
   updateCounter();
