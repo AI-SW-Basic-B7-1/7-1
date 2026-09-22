@@ -34,6 +34,8 @@ const elements = {
   latestButton: document.querySelector("#latest-button"),
   suggestionList: document.querySelector("#suggestion-list"),
   newQuestionButton: document.querySelector("#new-question-button"),
+  conversationList: document.querySelector("#conversation-list"),
+  conversationListEmpty: document.querySelector("#conversation-list-empty"),
 };
 
 function questionLength(value) {
@@ -158,6 +160,28 @@ function resetConversation({ title = "", description = "" } = {}) {
     elements.suggestionList.hidden = false;
   }
   updateLatestButton();
+}
+
+function renderConversationList() {
+  elements.conversationList.replaceChildren();
+  elements.conversationListEmpty.textContent = authenticated
+    ? CHAT_CONTENT.conversationListEmpty
+    : CHAT_CONTENT.conversationListAnonymous;
+  for (const conversation of conversationCache) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "conversation-button";
+    button.dataset.conversationId = String(conversation.conversationId);
+    button.textContent = conversation.title.trim() || CHAT_CONTENT.untitledConversation;
+    button.disabled = sending || loadingHistory;
+    if (conversation.conversationId === currentConversationId) {
+      button.setAttribute("aria-current", "page");
+    }
+    button.addEventListener("click", () => {
+      selectConversation(conversation.conversationId);
+    });
+    elements.conversationList.append(button);
+  }
 }
 
 function appendMessage(role, text, latencyMs = null) {
@@ -308,11 +332,13 @@ function revealAnswer(row, answer, latencyMs, generation) {
 function setSending(nextSending) {
   sending = nextSending;
   renderComposerState();
+  renderConversationList();
 }
 
 function setHistoryLoading(nextLoading) {
   loadingHistory = nextLoading;
   renderComposerState();
+  renderConversationList();
 }
 
 function validateQuestion(question) {
@@ -427,8 +453,29 @@ function startNewConversation() {
   cancelReveal();
   currentConversationId = null;
   resetConversation({ description: CHAT_CONTENT.newConversationDescription });
+  renderConversationList();
   renderComposerState();
   elements.questionInput.focus();
+}
+
+function selectConversation(conversationId) {
+  if (!authenticated || sending || loadingHistory) {
+    return;
+  }
+  const conversation = conversationCache.find(
+    (item) => item.conversationId === conversationId,
+  );
+  if (!conversation) {
+    return;
+  }
+  viewGeneration += 1;
+  activeHistoryController?.abort();
+  activeHistoryController = null;
+  cancelReveal();
+  currentConversationId = conversation.conversationId;
+  renderConversationList();
+  renderConversationMessages(conversation);
+  renderComposerState();
 }
 
 function renderConversationMessages(conversation) {
@@ -470,6 +517,7 @@ async function loadChatHistory({ preferredConversationId = currentConversationId
     );
     const selectedConversation = preferredConversation || conversationCache[0] || null;
     currentConversationId = selectedConversation?.conversationId ?? null;
+    renderConversationList();
     renderConversationMessages(selectedConversation);
   } catch (error) {
     if (
@@ -534,6 +582,7 @@ function initializeApp() {
   elements.newQuestionButton?.addEventListener("click", startNewConversation);
   window.addEventListener("auth:changed", handleAuthChange);
   resetConversation();
+  renderConversationList();
   updateCounter();
   renderComposerState();
   if (authenticated) {

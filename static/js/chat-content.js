@@ -5,6 +5,8 @@ export const CHAT_CONTENT = Object.freeze({
   newConversationLabel: "새 대화",
   sidebarSectionLabel: "대화방",
   conversationListEmpty: "저장된 대화방이 없습니다.",
+  conversationListAnonymous: "로그인하면 저장된 대화방을 볼 수 있습니다.",
+  untitledConversation: "제목 없는 대화",
   sidebarFootText: "질문을 이어가 보세요",
   breadcrumbWorkspace: "내 워크스페이스",
   breadcrumbCurrent: "대화",

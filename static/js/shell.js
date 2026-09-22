@@ -7,6 +7,7 @@ const workspace = document.querySelector(".workspace");
 const openButton = document.querySelector("#sidebar-open-button");
 const closeButton = document.querySelector("#sidebar-close-button");
 const backdrop = document.querySelector("#sidebar-backdrop");
+const conversationList = document.querySelector("#conversation-list");
 let mobileOpen = false;
 let desktopCollapsed = false;
 
@@ -80,6 +81,16 @@ document.querySelector("#new-question-button").addEventListener("click", () => {
     if (!questionInput.disabled) {
       questionInput.focus();
     }
+  }
+});
+conversationList.addEventListener("click", (event) => {
+  if (!event.target.closest(".conversation-button") || !mobileMedia.matches) {
+    return;
+  }
+  closeSidebar(false);
+  const questionInput = document.querySelector("#question-input");
+  if (!questionInput.disabled) {
+    questionInput.focus();
   }
 });
 window.addEventListener("keydown", (event) => {
