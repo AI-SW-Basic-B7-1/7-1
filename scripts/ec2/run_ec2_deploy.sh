@@ -217,7 +217,7 @@ remote_command="$(
 
 # Windows용 AWS CLI shorthand 문법이 원격 Bash의 대괄호를 해석하지 않도록 전체 명령을 인코딩합니다.
 remote_command_base64="$(printf '%s' "${remote_command}" | base64 | tr -d '\r\n')"
-ssm_command="printf '%s' '${remote_command_base64}' | base64 --decode | bash"
+ssm_command="printf %s ${remote_command_base64} | base64 --decode | bash"
 
 log_step 'SSM으로 EC2 배포 명령 전송'
 command_id="$(aws ssm send-command \
