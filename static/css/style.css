@@ -993,11 +993,10 @@ body {
 }
 
 .latest-button {
-  position: absolute;
+  position: relative;
   z-index: 2;
-  right: 50%;
-  bottom: 158px;
-  transform: translateX(50%);
+  align-self: center;
+  margin: 0 auto 8px;
   border: 1px solid #dce4f2;
   border-radius: 50px;
   padding: 8px 13px;
@@ -1235,9 +1234,6 @@ body {
     font-size: 9px;
   }
 
-  .latest-button {
-    bottom: 138px;
-  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1247,5 +1243,215 @@ body {
     animation-duration: 0.01ms !important;
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
+  }
+}
+
+/* 사이드바를 접거나 모바일 서랍으로 열어도 헤더 양쪽 정렬을 유지합니다. */
+.app-shell {
+  transition: grid-template-columns 220ms ease;
+}
+
+.app-shell.is-sidebar-collapsed {
+  grid-template-columns: 0 minmax(0, 1fr);
+}
+
+.sidebar {
+  position: relative;
+  z-index: 12;
+  min-width: 0;
+  overflow: hidden;
+  transition: transform 220ms ease, visibility 0s linear;
+}
+
+.is-sidebar-collapsed .sidebar {
+  visibility: hidden;
+  transform: translateX(-100%);
+  transition-delay: 0s, 220ms;
+}
+
+.sidebar-top,
+.header-start {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+}
+
+.sidebar-top {
+  gap: 4px;
+}
+
+.sidebar-top .brand {
+  min-width: 0;
+  flex: 1;
+  padding-right: 0;
+}
+
+.sidebar-toggle {
+  display: grid;
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+  place-items: center;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  padding: 0;
+  background: transparent;
+}
+
+.sidebar-toggle svg {
+  width: 19px;
+  height: 19px;
+}
+
+.sidebar-close {
+  align-self: flex-start;
+  color: #d9e3fa;
+}
+
+.sidebar-close:hover,
+.sidebar-close:focus-visible {
+  background: #344767;
+}
+
+.sidebar-open {
+  border-color: #e2e8f2;
+  color: #34476c;
+  background: #fff;
+}
+
+.sidebar-open:hover,
+.sidebar-open:focus-visible {
+  background: #edf2ff;
+}
+
+.sidebar-toggle:focus-visible,
+.new-chat-link:focus-visible {
+  outline: 3px solid #9bb3ff;
+  outline-offset: 2px;
+}
+
+.header-start {
+  flex: 0 1 auto;
+  gap: 12px;
+}
+
+.app-header {
+  min-width: 0;
+  align-items: center;
+  flex-direction: row;
+  justify-content: space-between;
+}
+
+.breadcrumb {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.breadcrumb span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.session-actions {
+  width: auto;
+  flex: 0 0 auto;
+  flex-wrap: nowrap;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.sidebar-backdrop {
+  display: none;
+}
+
+@media (max-width: 800px) {
+  .sidebar {
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 12;
+    display: flex;
+    width: min(320px, 86vw);
+    height: 100vh;
+    height: 100dvh;
+    padding-top: calc(20px + env(safe-area-inset-top));
+    visibility: hidden;
+    transform: translateX(-105%);
+    box-shadow: 16px 0 48px rgba(20, 32, 56, 0.2);
+    transition-delay: 0s, 220ms;
+  }
+
+  .sidebar.is-open {
+    visibility: visible;
+    transform: translateX(0);
+    transition-delay: 0s, 0s;
+  }
+
+  .sidebar-backdrop:not([hidden]) {
+    position: fixed;
+    inset: 0;
+    z-index: 11;
+    display: block;
+    width: 100%;
+    border: 0;
+    border-radius: 0;
+    background: rgba(15, 25, 45, 0.48);
+  }
+
+  .app-header {
+    height: calc(61px + env(safe-area-inset-top));
+    padding-top: env(safe-area-inset-top);
+    padding-right: calc(20px + env(safe-area-inset-right));
+    padding-left: calc(20px + env(safe-area-inset-left));
+  }
+
+  .header-start {
+    gap: 10px;
+  }
+
+  .breadcrumb {
+    gap: 6px;
+    font-size: 11px;
+  }
+
+  .session-actions .button {
+    min-height: 44px;
+  }
+
+  .message-list {
+    -webkit-overflow-scrolling: touch;
+  }
+}
+
+@media (max-width: 480px) {
+  .app-header {
+    padding-right: calc(12px + env(safe-area-inset-right));
+    padding-left: calc(12px + env(safe-area-inset-left));
+  }
+
+  .session-actions {
+    gap: 5px;
+  }
+
+  .session-actions .button {
+    padding: 7px 9px;
+    font-size: 11px;
+  }
+
+  .mode-badge {
+    max-width: 64px;
+    overflow: hidden;
+    padding: 4px 6px;
+    font-size: 9px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
+
+@media (max-width: 360px) {
+  .mode-badge {
+    display: none;
   }
 }

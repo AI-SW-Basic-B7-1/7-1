@@ -25,6 +25,7 @@ const elements = {
   sendButtonLabel: document.querySelector("#send-button .send-button-label"),
   messageList: document.querySelector("#message-list"),
   emptyState: document.querySelector("#empty-state"),
+  emptyStateDescription: document.querySelector("#empty-state-description"),
   loadingIndicator: document.querySelector("#loading-indicator"),
   loadingMessage: document.querySelector("#loading-message"),
   toastRegion: document.querySelector("#toast-region"),
@@ -144,9 +145,8 @@ function resetConversation({ title = "", description = "" } = {}) {
   elements.emptyState.hidden = false;
   elements.messageList.replaceChildren(elements.emptyState);
   const titleElement = elements.emptyState.querySelector(".empty-state-title");
-  const descriptionElement = elements.emptyState.querySelectorAll("p")[1];
   titleElement.textContent = title || CHAT_CONTENT.emptyTitle;
-  descriptionElement.textContent = description || (authenticated
+  elements.emptyStateDescription.textContent = description || (authenticated
     ? CHAT_CONTENT.emptyAuthenticatedDescription
     : CHAT_CONTENT.emptyAnonymousDescription);
   followLatest = true;

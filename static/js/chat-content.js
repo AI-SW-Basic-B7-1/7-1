@@ -1,6 +1,18 @@
 // 챗봇 이름과 사용자에게 보이는 문구는 성격이 정해졌을 때 이 파일에서 바꿉니다.
 export const CHAT_CONTENT = Object.freeze({
   assistantName: "AI Assistant",
+  brandTagline: "생각을 정리하는 공간",
+  newQuestionLabel: "질문 입력으로 이동",
+  sidebarSectionLabel: "대화",
+  sidebarCurrentLabel: "대화 기록",
+  sidebarHelp: "질문과 답변을 이 화면에서 확인할 수 있어요.",
+  sidebarFootText: "질문을 이어가 보세요",
+  breadcrumbWorkspace: "내 워크스페이스",
+  breadcrumbCurrent: "대화",
+  heroEyebrow: "AI ASSISTANT",
+  heroTitle: "생각이 정리되는 대화.",
+  heroSubtitle: "궁금한 점을 질문하고 답변을 이어가세요.",
+  composerHint: "Enter로 전송 · Shift+Enter로 줄바꿈",
   userName: "나",
   emptyTitle: "무엇부터 이야기해 볼까요?",
   emptyAuthenticatedDescription: "생각을 정리하거나, 새로운 아이디어를 탐색해 보세요.",
