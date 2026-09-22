@@ -13,10 +13,9 @@ let desktopCollapsed = false;
 const copy = {
   "#brand-name": CHAT_CONTENT.assistantName,
   "#brand-tagline": CHAT_CONTENT.brandTagline,
-  "#new-question-label": CHAT_CONTENT.newQuestionLabel,
+  "#new-question-label": CHAT_CONTENT.newConversationLabel,
   "#sidebar-section-label": CHAT_CONTENT.sidebarSectionLabel,
-  "#sidebar-current-label": CHAT_CONTENT.sidebarCurrentLabel,
-  "#sidebar-help": CHAT_CONTENT.sidebarHelp,
+  "#conversation-list-empty": CHAT_CONTENT.conversationListEmpty,
   "#sidebar-foot-text": CHAT_CONTENT.sidebarFootText,
   "#breadcrumb-workspace": CHAT_CONTENT.breadcrumbWorkspace,
   "#breadcrumb-current": CHAT_CONTENT.breadcrumbCurrent,
@@ -27,7 +26,10 @@ const copy = {
 };
 
 for (const [selector, value] of Object.entries(copy)) {
-  document.querySelector(selector).textContent = value;
+  const element = document.querySelector(selector);
+  if (element) {
+    element.textContent = value;
+  }
 }
 document.title = CHAT_CONTENT.assistantName;
 document.querySelector(".brand").setAttribute("aria-label", CHAT_CONTENT.assistantName);

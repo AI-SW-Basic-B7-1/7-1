@@ -2,10 +2,9 @@
 export const CHAT_CONTENT = Object.freeze({
   assistantName: "AI Assistant",
   brandTagline: "생각을 정리하는 공간",
-  newQuestionLabel: "질문 입력으로 이동",
-  sidebarSectionLabel: "대화",
-  sidebarCurrentLabel: "대화 기록",
-  sidebarHelp: "질문과 답변을 이 화면에서 확인할 수 있어요.",
+  newConversationLabel: "새 대화",
+  sidebarSectionLabel: "대화방",
+  conversationListEmpty: "저장된 대화방이 없습니다.",
   sidebarFootText: "질문을 이어가 보세요",
   breadcrumbWorkspace: "내 워크스페이스",
   breadcrumbCurrent: "대화",
@@ -17,6 +16,7 @@ export const CHAT_CONTENT = Object.freeze({
   emptyTitle: "무엇부터 이야기해 볼까요?",
   emptyAuthenticatedDescription: "생각을 정리하거나, 새로운 아이디어를 탐색해 보세요.",
   emptyAnonymousDescription: "로그인하면 이전 대화를 이어서 볼 수 있습니다.",
+  newConversationDescription: "새로운 주제로 질문을 시작해 보세요.",
   samplePrompts: Object.freeze([
     "오늘 해야 할 일을 함께 정리해 줘",
     "새로운 아이디어를 같이 생각해 보자",
