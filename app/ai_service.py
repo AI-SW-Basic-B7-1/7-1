@@ -79,8 +79,7 @@ async def generate_chat_response(
             "Gemini API 네트워크 요청에 실패했습니다."
         ) from exc
 
-    data = response.json()
-
+  
     try:
         data = response.json()
         answer = data["candidates"][0]["content"]["parts"][0]["text"]
