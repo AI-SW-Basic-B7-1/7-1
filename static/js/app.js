@@ -274,6 +274,20 @@ function cancelReveal() {
   activeRevealFinish = null;
 }
 
+function invalidateView({ abortChat = false } = {}) {
+  viewGeneration += 1;
+  activeHistoryController?.abort();
+  activeHistoryController = null;
+  if (abortChat) {
+    activeChatController?.abort();
+    activeChatController = null;
+    sending = false;
+  }
+  loadingHistory = false;
+  cancelReveal();
+  return viewGeneration;
+}
+
 function revealAnswer(row, answer, latencyMs, generation) {
   activeRevealFinish?.();
   cancelReveal();
@@ -411,6 +425,15 @@ async function performChat(question, existingAssistantRow = null) {
     if (handleProtectedUnauthorized(error, question)) {
       return;
     }
+    if (
+      error instanceof ApiError
+      && error.code === "INVALID_CONTRACT"
+      && requestConversationId !== null
+    ) {
+      showToast(error.message);
+      void loadChatHistory({ preferredConversationId: requestConversationId });
+      return;
+    }
     const message = error instanceof ApiError ? error.message : CHAT_CONTENT.chatFailureMessage;
     const ambiguousResult = error instanceof ApiError
       && ["NETWORK_ERROR", "RESPONSE_READ_ERROR", "INVALID_JSON"].includes(error.code);
@@ -447,10 +470,7 @@ function startNewConversation() {
   if (sending || loadingHistory) {
     return;
   }
-  viewGeneration += 1;
-  activeHistoryController?.abort();
-  activeHistoryController = null;
-  cancelReveal();
+  invalidateView();
   currentConversationId = null;
   resetConversation({ description: CHAT_CONTENT.newConversationDescription });
   renderConversationList();
@@ -468,10 +488,7 @@ function selectConversation(conversationId) {
   if (!conversation) {
     return;
   }
-  viewGeneration += 1;
-  activeHistoryController?.abort();
-  activeHistoryController = null;
-  cancelReveal();
+  invalidateView();
   currentConversationId = conversation.conversationId;
   renderConversationList();
   renderConversationMessages(conversation);
@@ -495,9 +512,8 @@ async function loadChatHistory({ preferredConversationId = currentConversationId
   if (!authenticated || !token) {
     return;
   }
-  activeHistoryController?.abort();
+  const requestGeneration = invalidateView();
   const controller = new AbortController();
-  const requestGeneration = viewGeneration;
   activeHistoryController = controller;
   setHistoryLoading(true);
 
@@ -547,14 +563,9 @@ async function loadChatHistory({ preferredConversationId = currentConversationId
 }
 
 function handleAuthChange(event) {
-  viewGeneration += 1;
-  activeChatController?.abort();
-  activeHistoryController?.abort();
-  cancelReveal();
-  activeChatController = null;
-  activeHistoryController = null;
-  sending = false;
-  loadingHistory = false;
+  invalidateView({ abortChat: true });
+  currentConversationId = null;
+  conversationCache = [];
   authenticated = Boolean(event.detail?.authenticated && getAccessToken());
   elements.questionInput.value = protectedDraft ?? "";
   if (authenticated) {
@@ -563,6 +574,7 @@ function handleAuthChange(event) {
   elements.toastRegion.replaceChildren();
   updateCounter();
   resetConversation();
+  renderConversationList();
   renderComposerState();
   if (authenticated) {
     void loadChatHistory();
