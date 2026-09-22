@@ -16,3 +16,29 @@ export function compareChatHistoryPosition(left, right) {
 export function sortChatHistory(chats) {
   return [...chats].sort(compareChatHistoryPosition);
 }
+
+export function groupChatHistory(chats) {
+  const groupedMessages = new Map();
+  for (const chat of chats) {
+    const messages = groupedMessages.get(chat.conversation_id) || [];
+    messages.push(chat);
+    groupedMessages.set(chat.conversation_id, messages);
+  }
+
+  const conversations = [];
+  for (const [conversationId, messages] of groupedMessages) {
+    const sortedMessages = sortChatHistory(messages);
+    const latestMessage = sortedMessages[sortedMessages.length - 1];
+    conversations.push({
+      conversationId,
+      title: latestMessage.title,
+      messages: sortedMessages,
+    });
+  }
+
+  return conversations.sort((left, right) => {
+    const leftLatest = left.messages[left.messages.length - 1];
+    const rightLatest = right.messages[right.messages.length - 1];
+    return compareChatHistoryPosition(rightLatest, leftLatest);
+  });
+}
