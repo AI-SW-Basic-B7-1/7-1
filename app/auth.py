@@ -97,7 +97,7 @@ def decode_access_token(token: str) -> Optional[Dict[str, Any]]:
             algorithms=[settings.ALGORITHM],
         )
         return payload
-    except (jwt.PyJWTError, Exception):
+    except Exception:
         return None
 
 
