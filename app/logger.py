@@ -5,12 +5,7 @@
 
 import logging
 from logging.handlers import RotatingFileHandler
-from pathlib import Path
-
-
-BASE_DIR = Path(__file__).resolve().parent.parent
-LOG_DIR = BASE_DIR / "logs"
-LOG_FILE = LOG_DIR / "app.log"
+from app.config import LOG_DIR, LOG_FILE
 
 
 def get_app_logger() -> logging.Logger:
