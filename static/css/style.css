@@ -1260,12 +1260,13 @@ body {
   z-index: 12;
   min-width: 0;
   overflow: hidden;
-  transition: transform 220ms ease, visibility 220ms ease;
+  transition: transform 220ms ease, visibility 0s linear;
 }
 
 .is-sidebar-collapsed .sidebar {
   visibility: hidden;
   transform: translateX(-100%);
+  transition-delay: 0s, 220ms;
 }
 
 .sidebar-top,
@@ -1379,11 +1380,13 @@ body {
     visibility: hidden;
     transform: translateX(-105%);
     box-shadow: 16px 0 48px rgba(20, 32, 56, 0.2);
+    transition-delay: 0s, 220ms;
   }
 
   .sidebar.is-open {
     visibility: visible;
     transform: translateX(0);
+    transition-delay: 0s, 0s;
   }
 
   .sidebar-backdrop:not([hidden]) {

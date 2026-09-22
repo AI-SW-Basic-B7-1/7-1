@@ -90,10 +90,13 @@ window.addEventListener("keydown", (event) => {
 });
 mobileMedia.addEventListener("change", () => {
   const focusWasInSidebar = sidebar.contains(document.activeElement);
+  const focusWasOnOpenButton = document.activeElement === openButton;
   mobileOpen = false;
   renderSidebar();
   if (focusWasInSidebar && sidebar.inert) {
     openButton.focus();
+  } else if (focusWasOnOpenButton && openButton.hidden && !sidebar.inert) {
+    closeButton.focus();
   }
 });
 
