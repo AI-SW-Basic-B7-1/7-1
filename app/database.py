@@ -164,6 +164,11 @@ async def init_db(database_path: Path | str | None = None) -> None:
             ON chat_logs (conversation_id, created_at ASC);
             """
         )
+        # 외래키 검사를 끈 동안 이전한 데이터도 커밋 전에 검증합니다.
+        async with connection.execute("PRAGMA foreign_key_check;") as cursor:
+            violation = await cursor.fetchone()
+        if violation is not None:
+            raise RuntimeError("DB 초기화 중 외래키 무결성 위반을 발견했습니다.")
         await connection.commit()
     except Exception:
         await connection.rollback()
