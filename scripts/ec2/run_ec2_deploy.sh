@@ -192,13 +192,13 @@ remote_command="$(
     printf 'set -Eeuo pipefail\n'
     printf 'install -d -m 755 -o root -g root %s\n' "${clone_parent_q}"
     printf 'if [[ -d %s/.git ]]; then\n' "${clone_dir_q}"
-    printf '  git -C %s fetch --prune origin %s\n' "${clone_dir_q}" "${branch_q}"
-    printf '  if git -C %s show-ref --verify --quiet refs/heads/%s; then\n' "${clone_dir_q}" "${branch_q}"
-    printf '    git -C %s checkout %s\n' "${clone_dir_q}" "${branch_q}"
+    printf '  git -c safe.directory=%s -C %s fetch --prune origin %s\n' "${clone_dir_q}" "${clone_dir_q}" "${branch_q}"
+    printf '  if git -c safe.directory=%s -C %s show-ref --verify --quiet refs/heads/%s; then\n' "${clone_dir_q}" "${clone_dir_q}" "${branch_q}"
+    printf '    git -c safe.directory=%s -C %s checkout %s\n' "${clone_dir_q}" "${clone_dir_q}" "${branch_q}"
     printf '  else\n'
-    printf '    git -C %s checkout -b %s origin/%s\n' "${clone_dir_q}" "${branch_q}" "${branch_q}"
+    printf '    git -c safe.directory=%s -C %s checkout -b %s origin/%s\n' "${clone_dir_q}" "${clone_dir_q}" "${branch_q}" "${branch_q}"
     printf '  fi\n'
-    printf '  git -C %s pull --ff-only origin %s\n' "${clone_dir_q}" "${branch_q}"
+    printf '  git -c safe.directory=%s -C %s pull --ff-only origin %s\n' "${clone_dir_q}" "${clone_dir_q}" "${branch_q}"
     printf 'else\n'
     printf '  if [[ -e %s && -n "$(find %s -mindepth 1 -maxdepth 1 -print -quit)" ]]; then\n' "${clone_dir_q}" "${clone_dir_q}"
     printf '    echo %q\n' 'clone 경로가 비어 있지 않아 중단합니다.'
