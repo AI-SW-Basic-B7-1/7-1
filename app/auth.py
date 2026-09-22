@@ -147,7 +147,7 @@ async def get_current_user(
 
     # 데이터베이스에서 사용자 존재 여부 조회
     cursor = await db.execute(
-        "SELECT id, username, hashed_password, created_at FROM users WHERE username = ?",
+        "SELECT user_id, username, hashed_password, created_at FROM users WHERE username = ?",
         (username,),
     )
     user_row = await cursor.fetchone()
@@ -155,9 +155,8 @@ async def get_current_user(
         raise unauthorized_exception
 
     return UserInDB(
-        id=user_row["id"],
+        user_id=user_row["user_id"],
         username=user_row["username"],
         hashed_password=user_row["hashed_password"],
         created_at=user_row["created_at"],
     )
-

@@ -15,6 +15,8 @@ const requiredFiles = [
   "static/js/app.js",
   "static/js/history.js",
   "static/js/keyboard.js",
+  "static/js/chat-content.js",
+  "static/js/shell.js",
 ];
 
 async function readRepositoryFile(relativePath) {
@@ -87,4 +89,73 @@ test("대화 내용은 HTML 실행 없이 textContent로 렌더링한다", async
   assert.match(appSource, /content\.textContent = text/);
   assert.doesNotMatch(appSource, /\.innerHTML\s*=/);
   assert.doesNotMatch(appSource, /insertAdjacentHTML/);
+});
+
+test("사이드바는 새 대화와 버튼 기반 대화방 선택 계약을 제공한다", async () => {
+  const [html, appSource, shellSource, styleSource] = await Promise.all([
+    readRepositoryFile("static/index.html"),
+    readRepositoryFile("static/js/app.js"),
+    readRepositoryFile("static/js/shell.js"),
+    readRepositoryFile("static/css/style.css"),
+  ]);
+
+  assert.match(html, /id="new-question-label">새 대화</);
+  assert.match(html, /id="conversation-list"[\s\S]*?aria-labelledby="sidebar-section-label"/);
+  assert.doesNotMatch(html, /id="sidebar-current-label"/);
+  assert.match(appSource, /button\.className = "conversation-button"/);
+  assert.match(appSource, /button\.setAttribute\("aria-current", "page"\)/);
+  assert.match(appSource, /button\.disabled = sending \|\| loadingHistory/);
+  assert.match(shellSource, /closest\("\.conversation-button"\)[\s\S]*?closeSidebar\(false\)/);
+  assert.match(styleSource, /\.conversation-button\[aria-current="page"\]/);
+});
+
+test("대화방 상태는 저장소가 아닌 현재 메모리와 viewGeneration으로 격리한다", async () => {
+  const appSource = await readRepositoryFile("static/js/app.js");
+  const authChangeSource = appSource.slice(
+    appSource.indexOf("function handleAuthChange"),
+    appSource.indexOf("function initializeApp"),
+  );
+
+  assert.match(appSource, /let currentConversationId = null/);
+  assert.match(appSource, /let conversationCache = \[\]/);
+  assert.match(appSource, /let viewGeneration = 0/);
+  assert.doesNotMatch(appSource, /sessionGeneration/);
+  assert.doesNotMatch(appSource, /localStorage/);
+  assert.ok(
+    authChangeSource.indexOf("currentConversationId = null")
+      < authChangeSource.indexOf("loadChatHistory"),
+  );
+  assert.ok(
+    authChangeSource.indexOf("conversationCache = []")
+      < authChangeSource.indexOf("loadChatHistory"),
+  );
+});
+
+test("새 대화는 현재 ID만 비우고 기존 대화방 캐시는 유지한다", async () => {
+  const appSource = await readRepositoryFile("static/js/app.js");
+  const newConversationSource = appSource.slice(
+    appSource.indexOf("function startNewConversation"),
+    appSource.indexOf("function selectConversation"),
+  );
+
+  assert.match(newConversationSource, /currentConversationId = null/);
+  assert.match(newConversationSource, /resetConversation/);
+  assert.doesNotMatch(newConversationSource, /conversationCache = \[\]/);
+});
+
+test("채팅 성공 뒤 목록 동기화는 현재 메시지 화면을 교체하지 않는다", async () => {
+  const appSource = await readRepositoryFile("static/js/app.js");
+  const synchronizationSource = appSource.slice(
+    appSource.indexOf("async function synchronizeChatHistory"),
+    appSource.indexOf("async function loadChatHistory"),
+  );
+
+  assert.match(appSource, /revealAnswer\([\s\S]*?void synchronizeChatHistory\(\)/);
+  assert.match(synchronizationSource, /conversationCache = conversations/);
+  assert.match(synchronizationSource, /renderConversationList\(\)/);
+  assert.match(synchronizationSource, /historySyncFailureMessage/);
+  assert.doesNotMatch(synchronizationSource, /invalidateView/);
+  assert.doesNotMatch(synchronizationSource, /cancelReveal/);
+  assert.doesNotMatch(synchronizationSource, /resetConversation/);
+  assert.doesNotMatch(synchronizationSource, /renderConversationMessages/);
 });

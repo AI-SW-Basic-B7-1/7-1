@@ -6,6 +6,7 @@ const FALLBACK_MESSAGES = {
   404: "요청한 기능을 찾을 수 없습니다.",
   422: "입력 형식을 확인해 주세요.",
   500: "서버 처리 중 오류가 발생했습니다.",
+  502: "AI 응답을 생성하지 못했습니다. 잠시 후 다시 시도해 주세요.",
   504: "현재 AI 응답이 지연되고 있습니다. 잠시 후 다시 시도해 주세요.",
 };
 
@@ -153,25 +154,57 @@ export async function register(credentials, signal) {
   return { message, username };
 }
 
-export async function sendChat(question, token, signal) {
+function isPositiveInteger(value) {
+  return Number.isInteger(value) && value > 0;
+}
+
+export async function sendChat(
+  question,
+  token,
+  { signal, conversationId = null } = {},
+) {
+  if (conversationId !== null && !isPositiveInteger(conversationId)) {
+    throw new ApiError("대화방 식별자가 올바르지 않습니다.", {
+      code: "INVALID_CONTRACT",
+    });
+  }
+  const body = { question };
+  if (conversationId !== null) {
+    body.conversation_id = conversationId;
+  }
   const result = await request("/chat", {
     method: "POST",
-    body: { question },
+    body,
     token,
     signal,
   });
-  const { answer, latency_ms: latencyMs } = result.data || {};
+  const {
+    answer,
+    latency_ms: latencyMs,
+    conversation_id: responseConversationId,
+  } = result.data || {};
   if (
     result.status !== 200
     || typeof answer !== "string"
     || !Number.isInteger(latencyMs)
     || latencyMs < 0
+    || !isPositiveInteger(responseConversationId)
   ) {
     throw new ApiError("채팅 응답 형식이 올바르지 않습니다.", {
       code: "INVALID_CONTRACT",
     });
   }
-  return { answer, latencyMs, aiMode: result.aiMode };
+  if (conversationId !== null && responseConversationId !== conversationId) {
+    throw new ApiError("채팅 응답의 대화방 정보가 요청과 일치하지 않습니다.", {
+      code: "INVALID_CONTRACT",
+    });
+  }
+  return {
+    answer,
+    latencyMs,
+    conversationId: responseConversationId,
+    aiMode: result.aiMode,
+  };
 }
 
 function isChatHistoryItem(item) {
@@ -179,6 +212,8 @@ function isChatHistoryItem(item) {
     item !== null
     && typeof item === "object"
     && Number.isInteger(item.id)
+    && isPositiveInteger(item.conversation_id)
+    && typeof item.title === "string"
     && typeof item.question === "string"
     && typeof item.response === "string"
     && Number.isInteger(item.latency_ms)

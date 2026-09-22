@@ -157,6 +157,11 @@ class TokenData(BaseModel):
 class ChatRequest(BaseModel):
     """AI 챗봇 질문 전송 요청 스키마."""
 
+    conversation_id: Optional[int] = Field(
+        default=None,
+        ge=1,
+        description="이어갈 대화방 고유 번호 (없으면 새 대화방 생성)",
+    )
     question: str = Field(
         ...,
         max_length=500,
@@ -172,6 +177,7 @@ class ChatRequest(BaseModel):
     model_config = ConfigDict(
         json_schema_extra={
             "example": {
+                "conversation_id": 1,
                 "question": "이번 주 프로젝트 4일 일정 요약해줘.",
             }
         }
@@ -181,6 +187,11 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     """AI 챗봇 질문에 대한 응답 반환 스키마."""
 
+    conversation_id: int = Field(
+        ...,
+        ge=1,
+        description="질문과 AI 응답이 저장된 대화방 고유 번호",
+    )
     answer: str = Field(
         ...,
         description="AI 모델이 생성한 답변 내용",
@@ -194,6 +205,7 @@ class ChatResponse(BaseModel):
     model_config = ConfigDict(
         json_schema_extra={
             "example": {
+                "conversation_id": 1,
                 "answer": "이번 주 4일 프로토타입 프로젝트 일정은 Day 1 독립 모듈 세팅, Day 2 코어 로직 완성, Day 3 E2E 결합, Day 4 안정성 점검 및 배포 순서로 진행됩니다.",
                 "latency_ms": 520,
             }
@@ -206,7 +218,16 @@ class ChatLogItem(BaseModel):
 
     id: int = Field(
         ...,
+        validation_alias="chat_log_id",
         description="대화 이력 식별자 (PK)",
+    )
+    conversation_id: int = Field(
+        ...,
+        description="대화 기록이 속한 대화방 식별자 (FK)",
+    )
+    title: str = Field(
+        ...,
+        description="대화방 주제",
     )
     question: str = Field(
         ...,
@@ -231,6 +252,8 @@ class ChatLogItem(BaseModel):
         json_schema_extra={
             "example": {
                 "id": 1,
+                "conversation_id": 1,
+                "title": "이번 주 프로젝트 4일 일정 요약해줘.",
                 "question": "안녕? 너는 누구야?",
                 "response": "안녕하세요! AI 어시스턴트입니다.",
                 "latency_ms": 420,
@@ -255,6 +278,8 @@ class ChatHistoryResponse(BaseModel):
                 "chats": [
                     {
                         "id": 1,
+                        "conversation_id": 1,
+                        "title": "안녕?",
                         "question": "안녕?",
                         "response": "안녕하세요! AI 어시스턴트입니다.",
                         "latency_ms": 420,

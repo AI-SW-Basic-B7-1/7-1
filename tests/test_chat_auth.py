@@ -194,14 +194,18 @@ async def test_chat_multi_user_isolation(
     ]
 
     # 사용자 A가 대화 전송
-    await test_client.post(
+    first_response = await test_client.post(
         "/api/chat",
         json={"question": "알파의 첫 번째 질문"},
         headers=headers_a,
     )
+    conversation_id = first_response.json()["conversation_id"]
     await test_client.post(
         "/api/chat",
-        json={"question": "알파의 두 번째 질문"},
+        json={
+            "conversation_id": conversation_id,
+            "question": "알파의 두 번째 질문",
+        },
         headers=headers_a,
     )
 
@@ -281,18 +285,23 @@ async def test_chat_context_is_limited_to_recent_five_pairs(
     token = await register_and_login(test_client, "user_context_test")
     headers = {"Authorization": f"Bearer {token}"}
 
+    conversation_id = None
     for index in range(6):
+        body = {"question": f"이전 질문 {index}"}
+        if conversation_id is not None:
+            body["conversation_id"] = conversation_id
         response = await test_client.post(
             "/api/chat",
-            json={"question": f"이전 질문 {index}"},
+            json=body,
             headers=headers,
         )
         assert response.status_code == 200
+        conversation_id = response.json()["conversation_id"]
 
     mock_generate_chat_response.reset_mock()
     response = await test_client.post(
         "/api/chat",
-        json={"question": "새 질문"},
+        json={"conversation_id": conversation_id, "question": "새 질문"},
         headers=headers,
     )
 
@@ -306,3 +315,55 @@ async def test_chat_context_is_limited_to_recent_five_pairs(
         "이전 질문 4",
         "이전 질문 5",
     ]
+
+
+@pytest.mark.anyio
+async def test_foreign_conversation_is_rejected_before_ai_call(
+    test_client: AsyncClient,
+    mock_generate_chat_response: AsyncMock,
+):
+    """다른 사용자의 대화방은 AI 호출 전에 차단하는지 검증합니다."""
+    owner_token = await register_and_login(test_client, "conversation_owner")
+    other_token = await register_and_login(test_client, "conversation_other")
+    owner_headers = {"Authorization": f"Bearer {owner_token}"}
+    other_headers = {"Authorization": f"Bearer {other_token}"}
+
+    first = await test_client.post(
+        "/api/chat",
+        json={"question": "소유자 질문"},
+        headers=owner_headers,
+    )
+    conversation_id = first.json()["conversation_id"]
+    mock_generate_chat_response.reset_mock()
+
+    rejected = await test_client.post(
+        "/api/chat",
+        json={"conversation_id": conversation_id, "question": "접근 시도"},
+        headers=other_headers,
+    )
+    assert rejected.status_code == 404
+    mock_generate_chat_response.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_new_conversation_excludes_other_topic_context(
+    test_client: AsyncClient,
+    mock_generate_chat_response: AsyncMock,
+):
+    """새 대화방에는 이전 주제의 문맥이 포함되지 않는지 검증합니다."""
+    token = await register_and_login(test_client, "topic_isolation_user")
+    headers = {"Authorization": f"Bearer {token}"}
+    first = await test_client.post(
+        "/api/chat",
+        json={"question": "첫 번째 주제"},
+        headers=headers,
+    )
+    mock_generate_chat_response.reset_mock()
+
+    second = await test_client.post(
+        "/api/chat",
+        json={"question": "두 번째 주제"},
+        headers=headers,
+    )
+    assert first.json()["conversation_id"] != second.json()["conversation_id"]
+    mock_generate_chat_response.assert_awaited_once_with("두 번째 주제", [])

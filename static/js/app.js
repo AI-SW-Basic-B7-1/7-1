@@ -1,7 +1,7 @@
 import { ApiError, getChatHistory, sendChat } from "./api.js";
 import { clearSession, getAccessToken, openLoginModal } from "./auth.js";
 import { CHAT_CONTENT } from "./chat-content.js";
-import { sortChatHistory } from "./history.js";
+import { groupChatHistory, synchronizeConversationCache } from "./history.js";
 import { shouldSubmitQuestion } from "./keyboard.js";
 
 const MAX_QUESTION_LENGTH = 500;
@@ -10,7 +10,9 @@ let activeChatController = null;
 let activeHistoryController = null;
 let revealTimer = null;
 let activeRevealFinish = null;
-let sessionGeneration = 0;
+let viewGeneration = 0;
+let currentConversationId = null;
+let conversationCache = [];
 let authenticated = false;
 let sending = false;
 let loadingHistory = false;
@@ -25,12 +27,15 @@ const elements = {
   sendButtonLabel: document.querySelector("#send-button .send-button-label"),
   messageList: document.querySelector("#message-list"),
   emptyState: document.querySelector("#empty-state"),
+  emptyStateDescription: document.querySelector("#empty-state-description"),
   loadingIndicator: document.querySelector("#loading-indicator"),
   loadingMessage: document.querySelector("#loading-message"),
   toastRegion: document.querySelector("#toast-region"),
   latestButton: document.querySelector("#latest-button"),
   suggestionList: document.querySelector("#suggestion-list"),
   newQuestionButton: document.querySelector("#new-question-button"),
+  conversationList: document.querySelector("#conversation-list"),
+  conversationListEmpty: document.querySelector("#conversation-list-empty"),
 };
 
 function questionLength(value) {
@@ -49,6 +54,7 @@ function renderComposerState() {
   const busy = sending || loadingHistory;
   elements.questionInput.disabled = !authenticated || busy;
   elements.sendButton.disabled = !authenticated || busy;
+  elements.newQuestionButton.disabled = busy;
   const sendLabel = sending
     ? CHAT_CONTENT.sendingLabel
     : loadingHistory
@@ -144,9 +150,8 @@ function resetConversation({ title = "", description = "" } = {}) {
   elements.emptyState.hidden = false;
   elements.messageList.replaceChildren(elements.emptyState);
   const titleElement = elements.emptyState.querySelector(".empty-state-title");
-  const descriptionElement = elements.emptyState.querySelectorAll("p")[1];
   titleElement.textContent = title || CHAT_CONTENT.emptyTitle;
-  descriptionElement.textContent = description || (authenticated
+  elements.emptyStateDescription.textContent = description || (authenticated
     ? CHAT_CONTENT.emptyAuthenticatedDescription
     : CHAT_CONTENT.emptyAnonymousDescription);
   followLatest = true;
@@ -155,6 +160,28 @@ function resetConversation({ title = "", description = "" } = {}) {
     elements.suggestionList.hidden = false;
   }
   updateLatestButton();
+}
+
+function renderConversationList() {
+  elements.conversationList.replaceChildren();
+  elements.conversationListEmpty.textContent = authenticated
+    ? CHAT_CONTENT.conversationListEmpty
+    : CHAT_CONTENT.conversationListAnonymous;
+  for (const conversation of conversationCache) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "conversation-button";
+    button.dataset.conversationId = String(conversation.conversationId);
+    button.textContent = conversation.title.trim() || CHAT_CONTENT.untitledConversation;
+    button.disabled = sending || loadingHistory;
+    if (conversation.conversationId === currentConversationId) {
+      button.setAttribute("aria-current", "page");
+    }
+    button.addEventListener("click", () => {
+      selectConversation(conversation.conversationId);
+    });
+    elements.conversationList.append(button);
+  }
 }
 
 function appendMessage(role, text, latencyMs = null) {
@@ -247,6 +274,20 @@ function cancelReveal() {
   activeRevealFinish = null;
 }
 
+function invalidateView({ abortChat = false } = {}) {
+  viewGeneration += 1;
+  activeHistoryController?.abort();
+  activeHistoryController = null;
+  if (abortChat) {
+    activeChatController?.abort();
+    activeChatController = null;
+    sending = false;
+  }
+  loadingHistory = false;
+  cancelReveal();
+  return viewGeneration;
+}
+
 function revealAnswer(row, answer, latencyMs, generation) {
   activeRevealFinish?.();
   cancelReveal();
@@ -266,7 +307,7 @@ function revealAnswer(row, answer, latencyMs, generation) {
 
   function finish() {
     cancelReveal();
-    if (generation !== sessionGeneration || !row.isConnected) {
+    if (generation !== viewGeneration || !row.isConnected) {
       return;
     }
     content.textContent = answer;
@@ -286,7 +327,7 @@ function revealAnswer(row, answer, latencyMs, generation) {
   const duration = Math.min(680, Math.max(200, chars.length * 10));
   const started = performance.now();
   revealTimer = window.setInterval(() => {
-    if (generation !== sessionGeneration || !row.isConnected) {
+    if (generation !== viewGeneration || !row.isConnected) {
       cancelReveal();
       return;
     }
@@ -305,11 +346,13 @@ function revealAnswer(row, answer, latencyMs, generation) {
 function setSending(nextSending) {
   sending = nextSending;
   renderComposerState();
+  renderConversationList();
 }
 
 function setHistoryLoading(nextLoading) {
   loadingHistory = nextLoading;
   renderComposerState();
+  renderConversationList();
 }
 
 function validateQuestion(question) {
@@ -344,21 +387,27 @@ async function performChat(question, existingAssistantRow = null) {
   setAssistantPending(assistantRow);
   activeChatController?.abort();
   const controller = new AbortController();
-  const requestGeneration = sessionGeneration;
+  const requestGeneration = viewGeneration;
+  const requestConversationId = currentConversationId;
   activeChatController = controller;
   setSending(true);
 
   try {
-    const result = await sendChat(question, token, controller.signal);
+    const result = await sendChat(question, token, {
+      signal: controller.signal,
+      conversationId: requestConversationId,
+    });
     if (
       activeChatController !== controller
       || controller.signal.aborted
-      || requestGeneration !== sessionGeneration
+      || requestGeneration !== viewGeneration
       || token !== getAccessToken()
     ) {
       return;
     }
+    currentConversationId = result.conversationId;
     revealAnswer(assistantRow, result.answer, result.latencyMs, requestGeneration);
+    void synchronizeChatHistory();
     if (elements.questionInput.value === question) {
       elements.questionInput.value = "";
       updateCounter();
@@ -367,13 +416,22 @@ async function performChat(question, existingAssistantRow = null) {
     if (
       activeChatController !== controller
       || controller.signal.aborted
-      || requestGeneration !== sessionGeneration
+      || requestGeneration !== viewGeneration
       || token !== getAccessToken()
       || error?.name === "AbortError"
     ) {
       return;
     }
     if (handleProtectedUnauthorized(error, question)) {
+      return;
+    }
+    if (
+      error instanceof ApiError
+      && error.code === "INVALID_CONTRACT"
+      && requestConversationId !== null
+    ) {
+      showToast(error.message);
+      void loadChatHistory({ preferredConversationId: requestConversationId });
       return;
     }
     const message = error instanceof ApiError ? error.message : CHAT_CONTENT.chatFailureMessage;
@@ -404,14 +462,97 @@ function handleQuestionKeydown(event) {
   }
 }
 
-async function loadChatHistory() {
+function startNewConversation() {
+  if (!authenticated) {
+    openLoginModal(CHAT_CONTENT.loginRequiredMessage);
+    return;
+  }
+  if (sending || loadingHistory) {
+    return;
+  }
+  invalidateView();
+  currentConversationId = null;
+  resetConversation({ description: CHAT_CONTENT.newConversationDescription });
+  renderConversationList();
+  renderComposerState();
+  elements.questionInput.focus();
+}
+
+function selectConversation(conversationId) {
+  if (!authenticated || sending || loadingHistory) {
+    return;
+  }
+  const conversation = conversationCache.find(
+    (item) => item.conversationId === conversationId,
+  );
+  if (!conversation) {
+    return;
+  }
+  invalidateView();
+  currentConversationId = conversation.conversationId;
+  renderConversationList();
+  renderConversationMessages(conversation);
+  renderComposerState();
+}
+
+function renderConversationMessages(conversation) {
+  resetConversation();
+  if (!conversation) {
+    return;
+  }
+  for (const item of conversation.messages) {
+    appendMessage("user", item.question);
+    appendMessage("assistant", item.response, item.latency_ms);
+  }
+  scrollToLatest();
+}
+
+async function synchronizeChatHistory() {
   const token = getAccessToken();
   if (!authenticated || !token) {
     return;
   }
   activeHistoryController?.abort();
   const controller = new AbortController();
-  const requestGeneration = sessionGeneration;
+  const requestGeneration = viewGeneration;
+  activeHistoryController = controller;
+
+  try {
+    await synchronizeConversationCache({
+      loadChats: async () => {
+        const result = await getChatHistory(token, controller.signal);
+        return result.chats;
+      },
+      isCurrent: () => (
+        activeHistoryController === controller
+        && !controller.signal.aborted
+        && requestGeneration === viewGeneration
+        && token === getAccessToken()
+      ),
+      applyConversations: (conversations) => {
+        conversationCache = conversations;
+        renderConversationList();
+      },
+      handleFailure: (error) => {
+        if (!handleProtectedUnauthorized(error)) {
+          showToast(CHAT_CONTENT.historySyncFailureMessage);
+        }
+      },
+    });
+  } finally {
+    if (activeHistoryController === controller) {
+      activeHistoryController = null;
+    }
+  }
+}
+
+async function loadChatHistory({ preferredConversationId = currentConversationId } = {}) {
+  const token = getAccessToken();
+  if (!authenticated || !token) {
+    return;
+  }
+  const requestGeneration = invalidateView();
+  const controller = new AbortController();
   activeHistoryController = controller;
   setHistoryLoading(true);
 
@@ -420,22 +561,24 @@ async function loadChatHistory() {
     if (
       activeHistoryController !== controller
       || controller.signal.aborted
-      || requestGeneration !== sessionGeneration
+      || requestGeneration !== viewGeneration
       || token !== getAccessToken()
     ) {
       return;
     }
-    resetConversation();
-    for (const item of sortChatHistory(result.chats)) {
-      appendMessage("user", item.question);
-      appendMessage("assistant", item.response, item.latency_ms);
-    }
-    scrollToLatest();
+    conversationCache = groupChatHistory(result.chats);
+    const preferredConversation = conversationCache.find(
+      (conversation) => conversation.conversationId === preferredConversationId,
+    );
+    const selectedConversation = preferredConversation || conversationCache[0] || null;
+    currentConversationId = selectedConversation?.conversationId ?? null;
+    renderConversationList();
+    renderConversationMessages(selectedConversation);
   } catch (error) {
     if (
       activeHistoryController !== controller
       || controller.signal.aborted
-      || requestGeneration !== sessionGeneration
+      || requestGeneration !== viewGeneration
       || token !== getAccessToken()
       || error?.name === "AbortError"
     ) {
@@ -459,14 +602,9 @@ async function loadChatHistory() {
 }
 
 function handleAuthChange(event) {
-  sessionGeneration += 1;
-  activeChatController?.abort();
-  activeHistoryController?.abort();
-  cancelReveal();
-  activeChatController = null;
-  activeHistoryController = null;
-  sending = false;
-  loadingHistory = false;
+  invalidateView({ abortChat: true });
+  currentConversationId = null;
+  conversationCache = [];
   authenticated = Boolean(event.detail?.authenticated && getAccessToken());
   elements.questionInput.value = protectedDraft ?? "";
   if (authenticated) {
@@ -475,6 +613,7 @@ function handleAuthChange(event) {
   elements.toastRegion.replaceChildren();
   updateCounter();
   resetConversation();
+  renderConversationList();
   renderComposerState();
   if (authenticated) {
     void loadChatHistory();
@@ -491,15 +630,10 @@ function initializeApp() {
     updateLatestButton();
   }, { passive: true });
   elements.latestButton?.addEventListener("click", scrollToLatest);
-  elements.newQuestionButton?.addEventListener("click", () => {
-    if (!authenticated) {
-      openLoginModal(CHAT_CONTENT.loginRequiredMessage);
-      return;
-    }
-    elements.questionInput.focus();
-  });
+  elements.newQuestionButton?.addEventListener("click", startNewConversation);
   window.addEventListener("auth:changed", handleAuthChange);
   resetConversation();
+  renderConversationList();
   updateCounter();
   renderComposerState();
   if (authenticated) {

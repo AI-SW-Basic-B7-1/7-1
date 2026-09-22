@@ -1,10 +1,24 @@
 // 챗봇 이름과 사용자에게 보이는 문구는 성격이 정해졌을 때 이 파일에서 바꿉니다.
 export const CHAT_CONTENT = Object.freeze({
   assistantName: "AI Assistant",
+  brandTagline: "생각을 정리하는 공간",
+  newConversationLabel: "새 대화",
+  sidebarSectionLabel: "대화방",
+  conversationListEmpty: "저장된 대화방이 없습니다.",
+  conversationListAnonymous: "로그인하면 저장된 대화방을 볼 수 있습니다.",
+  untitledConversation: "제목 없는 대화",
+  sidebarFootText: "질문을 이어가 보세요",
+  breadcrumbWorkspace: "내 워크스페이스",
+  breadcrumbCurrent: "대화",
+  heroEyebrow: "AI ASSISTANT",
+  heroTitle: "생각이 정리되는 대화.",
+  heroSubtitle: "궁금한 점을 질문하고 답변을 이어가세요.",
+  composerHint: "Enter로 전송 · Shift+Enter로 줄바꿈",
   userName: "나",
   emptyTitle: "무엇부터 이야기해 볼까요?",
   emptyAuthenticatedDescription: "생각을 정리하거나, 새로운 아이디어를 탐색해 보세요.",
   emptyAnonymousDescription: "로그인하면 이전 대화를 이어서 볼 수 있습니다.",
+  newConversationDescription: "새로운 주제로 질문을 시작해 보세요.",
   samplePrompts: Object.freeze([
     "오늘 해야 할 일을 함께 정리해 줘",
     "새로운 아이디어를 같이 생각해 보자",
@@ -27,4 +41,5 @@ export const CHAT_CONTENT = Object.freeze({
   chatFailureMessage: "답변을 불러오지 못했습니다. 다시 시도해 주세요.",
   historyFailureMessage: "대화 기록을 불러오지 못했습니다.",
   historyFailureDescription: "새 질문은 보낼 수 있습니다. 잠시 후 다시 확인해 주세요.",
+  historySyncFailureMessage: "답변은 받았지만 대화방 목록 동기화에 실패했습니다.",
 });
