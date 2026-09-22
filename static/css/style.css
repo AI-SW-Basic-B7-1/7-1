@@ -673,20 +673,53 @@ body {
   letter-spacing: 0.15em;
 }
 
-.sidebar-current {
-  border-radius: 10px;
-  padding: 12px;
-  color: #fff;
-  background: #334361;
-  font-size: 12px;
-  font-weight: 700;
+.conversation-list {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  gap: 5px;
+  overflow-y: auto;
+  scrollbar-width: thin;
 }
 
-.sidebar-help {
-  margin: 12px;
+.conversation-button {
+  width: 100%;
+  flex: none;
+  overflow: hidden;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  padding: 11px 12px;
+  color: #c6d2e9;
+  background: transparent;
+  font-size: 12px;
+  font-weight: 650;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conversation-button:hover:not(:disabled),
+.conversation-button:focus-visible {
+  color: #fff;
+  background: #273652;
+}
+
+.conversation-button[aria-current="page"] {
+  border-color: #526685;
+  color: #fff;
+  background: #334361;
+  font-weight: 750;
+}
+
+.conversation-list-empty {
+  margin: 2px 12px 12px;
   color: #afbdd9;
   font-size: 11px;
   line-height: 1.7;
+}
+
+.conversation-list:not(:empty) + .conversation-list-empty {
+  display: none;
 }
 
 .sidebar-spacer {
@@ -1325,7 +1358,8 @@ body {
 }
 
 .sidebar-toggle:focus-visible,
-.new-chat-link:focus-visible {
+.new-chat-link:focus-visible,
+.conversation-button:focus-visible {
   outline: 3px solid #9bb3ff;
   outline-offset: 2px;
 }
