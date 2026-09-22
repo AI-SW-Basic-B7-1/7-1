@@ -38,7 +38,7 @@ async def chat_client(tmp_path, monkeypatch) -> AsyncGenerator[AsyncClient, None
         finally:
             await connection.close()
 
-    async def mock_generate_chat_response(question: str) -> str:
+    async def mock_generate_chat_response(question: str, history: list) -> str:
         """외부 API 호출 없이 테스트 답변을 반환합니다."""
         return f"테스트 답변: {question}"
 
@@ -80,7 +80,7 @@ async def test_chat_authentication_and_input_validation(chat_client: AsyncClient
     assert unauthorized.status_code == 401
     assert unauthorized.headers["www-authenticate"] == "Bearer"
     assert blank.status_code == 400
-    assert blank.json() == {"detail": "질문 내용을 입력해 주세요."}
+    assert blank.json() == {"detail": "질문 내용은 공백일 수 없습니다."}
     assert too_long.status_code == 422
 
 
@@ -126,7 +126,7 @@ async def test_chat_timeout_returns_504_and_logs_failure(
     monkeypatch,
 ):
     """AI 제한 시간 초과 시 504와 실패 로그를 반환하는지 검증합니다."""
-    async def raise_timeout(question: str) -> str:
+    async def raise_timeout(question: str, history: list) -> str:
         """AI 제한 시간 초과 예외를 발생시킵니다."""
         raise AITimeoutError("테스트 시간 초과")
 
@@ -174,4 +174,3 @@ async def test_db_failure_returns_500_without_stopping_server(
     assert response.json() == {"detail": "대화 기록을 저장하지 못했습니다."}
     assert health.status_code == 200
     assert error_log.call_args.args[0] == "db_save_failed user_id=%s error=%s"
-
