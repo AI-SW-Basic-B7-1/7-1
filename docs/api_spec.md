@@ -132,7 +132,7 @@
 ---
 
 ### 3.3 [POST] AI 챗봇 질문 전송 (`/api/chat`)
-로그인된 사용자가 질문을 전송하면, 백엔드는 최근 대화 문맥을 조합하여 AI API를 호출하고 응답과 응답 시간(latency_ms)을 반환하며 SQLite DB에 기록합니다.
+로그인된 사용자가 질문을 전송하면, 백엔드는 지정된 대화방의 최근 5개 질문과 답변을 문맥으로 조합하여 AI API를 호출하고 결과를 저장합니다. 대화방 번호가 없으면 새 대화방을 생성합니다.
 
 - **URL**: `/api/chat`
 - **Method**: `POST`
@@ -148,6 +148,7 @@ Content-Type: application/json; charset=utf-8
 | 필드명 | 타입 | 필수 여부 | 유효성 제약 | 설명 |
 | :--- | :---: | :---: | :--- | :--- |
 | `question` | `string` | **필수** | 1자 이상 500자 이하, 공백 불가 | 사용자가 질문할 내용 |
+| `conversation_id` | `integer` | 선택 | 1 이상, 현재 사용자 소유 | 이어갈 대화방 번호. 생략하면 새 대화방 생성 |
 
 ```json
 {
@@ -160,9 +161,11 @@ Content-Type: application/json; charset=utf-8
 | :--- | :---: | :--- |
 | `answer` | `string` | AI 모델이 생성한 답변 내용 |
 | `latency_ms` | `integer` | AI API 처리 및 응답 생성 소요 시간 (밀리초) |
+| `conversation_id` | `integer` | 응답이 저장된 대화방 번호 |
 
 ```json
 {
+  "conversation_id": 1,
   "answer": "이번 주 4일 프로토타입 프로젝트 일정은 Day 1 독립 모듈 세팅, Day 2 코어 로직 완성, Day 3 E2E 결합, Day 4 안정성 점검 및 배포 순서로 진행됩니다.",
   "latency_ms": 520
 }
@@ -187,6 +190,18 @@ Content-Type: application/json; charset=utf-8
     "detail": "질문은 최대 500자까지 입력 가능합니다."
   }
   ```
+- **404 Not Found** (대화방이 없거나 현재 사용자 소유가 아님):
+  ```json
+  {
+    "detail": "접근할 수 있는 대화방을 찾지 못했습니다."
+  }
+  ```
+- **502 Bad Gateway** (Gemini API 오류 또는 응답 형식 오류):
+  ```json
+  {
+    "detail": "AI 응답을 생성하지 못했습니다. 잠시 후 다시 시도해 주세요."
+  }
+  ```
 - **504 Gateway Timeout** (AI API 호출 8.0초 초과):
   ```json
   {
@@ -197,7 +212,7 @@ Content-Type: application/json; charset=utf-8
 ---
 
 ### 3.4 [GET] 내 대화 이력 목록 조회 (`/api/me/chats`)
-로그인한 본인의 대화 기록 목록을 최신순 또는 등록순으로 반환합니다.
+로그인한 본인의 대화 기록 목록을 최신순으로 반환합니다. 프론트엔드는 화면 표시 시 시간순으로 정렬할 수 있습니다.
 
 - **URL**: `/api/me/chats`
 - **Method**: `GET`
@@ -217,6 +232,8 @@ Authorization: Bearer eyJhbGciOiJIUzI1NiIsIn...
 [
   {
     "id": 1,
+    "conversation_id": 1,
+    "title": "안녕?",
     "question": "안녕?",
     "response": "안녕하세요! AI 어시스턴트입니다.",
     "latency_ms": 420,
@@ -224,6 +241,8 @@ Authorization: Bearer eyJhbGciOiJIUzI1NiIsIn...
   },
   {
     "id": 2,
+    "conversation_id": 1,
+    "title": "안녕?",
     "question": "너의 역할은 뭐야?",
     "response": "저는 사용자의 질문에 친절하고 정확하게 답변해 드리는 챗봇입니다.",
     "latency_ms": 610,
@@ -260,7 +279,7 @@ Authorization: Bearer eyJhbGciOiJIUzI1NiIsIn...
 
 ## 4. 프론트엔드 연동 가이드 (Frontend Integration Guide)
 
-프론트엔드 담당(이준혁)은 백엔드 완성 전이라도 아래 표준 통신 함수 패턴과 가짜 데이터(Mocking)를 사용하여 UI를 독립적으로 완성할 수 있습니다.
+프론트엔드 담당(이준혁)은 백엔드 완성 전이라도 아래 표준 통신 함수 패턴과 테스트 대역을 사용하여 UI를 독립적으로 검증할 수 있습니다.
 
 ### 4.1 인증 토큰 관리 및 공통 Fetch 래퍼 (예시)
 ```javascript
@@ -300,13 +319,13 @@ async function sendChatMessage(question) {
 }
 ```
 
-### 4.2 프론트엔드 Mock 테스트용 더미 응답 데이터
-백엔드 서버 연동 전 로컬 브라우저 단독 개발 시 아래 더미 데이터를 활용하여 채팅 버블 렌더링, 로딩 인디케이터 동작, 에러 토스트 피드백을 테스트할 수 있습니다:
+### 4.2 프론트엔드 계약 테스트용 예시 응답 데이터
+백엔드 서버 연동 전 로컬 브라우저 단독 테스트에서 아래 예시 데이터를 활용하여 채팅 버블 렌더링, 로딩 인디케이터 동작, 에러 토스트 피드백을 검증할 수 있습니다:
 
 ```javascript
-// 가짜(Mock) AI 응답 예시
-const MOCK_CHAT_RESPONSE = {
-  answer: "안녕하세요! [Mock] 프론트엔드 인터페이스 검증용 테스트 답변입니다.",
+// 계약 테스트용 응답 예시
+const TEST_CHAT_RESPONSE = {
+  answer: "안녕하세요! 계약 테스트용 예시 답변입니다.",
   latency_ms: 350
 };
 ```

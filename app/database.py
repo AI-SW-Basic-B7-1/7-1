@@ -201,6 +201,41 @@ async def create_conversation(
     return cursor.lastrowid
 
 
+async def conversation_belongs_to_user(
+    connection: aiosqlite.Connection,
+    conversation_id: int,
+    user_id: int,
+) -> bool:
+    """대화방이 현재 사용자 소유인지 확인합니다."""
+    cursor = await connection.execute(
+        """
+        SELECT 1 FROM conversations
+        WHERE conversation_id = ? AND user_id = ?;
+        """,
+        (conversation_id, user_id),
+    )
+    return await cursor.fetchone() is not None
+
+
+async def get_recent_chat_logs_by_conversation(
+    connection: aiosqlite.Connection,
+    conversation_id: int,
+    limit: int = 5,
+) -> list[aiosqlite.Row]:
+    """대화방의 최근 기록을 오래된 순서로 반환합니다."""
+    cursor = await connection.execute(
+        """
+        SELECT question, response
+        FROM chat_logs
+        WHERE conversation_id = ?
+        ORDER BY created_at DESC, chat_log_id DESC
+        LIMIT ?;
+        """,
+        (conversation_id, limit),
+    )
+    return list(reversed(await cursor.fetchall()))
+
+
 async def save_chat_log(
     connection: aiosqlite.Connection,
     user_id: int,
@@ -218,15 +253,9 @@ async def save_chat_log(
                 question,
             )
         else:
-            cursor = await connection.execute(
-                """
-                SELECT conversation_id
-                FROM conversations
-                WHERE conversation_id = ? AND user_id = ?;
-                """,
-                (conversation_id, user_id),
-            )
-            if await cursor.fetchone() is None:
+            if not await conversation_belongs_to_user(
+                connection, conversation_id, user_id
+            ):
                 raise ValueError("접근할 수 있는 대화방을 찾지 못했습니다.")
 
         cursor = await connection.execute(

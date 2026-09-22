@@ -2,88 +2,116 @@
 <html lang="ko">
   <head>
     <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <meta name="description" content="로그인 사용자를 위한 AI Assistant 채팅 서비스">
     <title>AI Assistant</title>
     <link rel="stylesheet" href="/static/css/style.css">
   </head>
   <body>
     <div class="app-shell">
-      <header class="app-header">
-        <div>
-          <p class="eyebrow">CODYSSEY B7-1</p>
-          <h1>AI Assistant</h1>
-        </div>
-        <div class="session-actions">
-          <span id="ai-mode-badge" class="mode-badge" hidden></span>
-          <button id="open-login-button" class="button button-secondary" type="button">
-            로그인
-          </button>
-          <button id="logout-button" class="button button-secondary" type="button" hidden>
-            로그아웃
+      <aside id="sidebar" class="sidebar" aria-label="대화 메뉴">
+        <div class="sidebar-top">
+          <div class="brand" aria-label="AI Assistant">
+            <span class="brand-mark" aria-hidden="true">✦</span>
+            <span><strong id="brand-name">AI Assistant</strong><small id="brand-tagline">생각을 정리하는 공간</small></span>
+          </div>
+          <button id="sidebar-close-button" class="sidebar-toggle sidebar-close" type="button" aria-label="사이드바 닫기">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M5 5l14 14M19 5 5 19"></path></svg>
           </button>
         </div>
-      </header>
-
-      <main class="chat-panel" aria-labelledby="chat-title">
-        <section class="chat-heading">
-          <div>
-            <p class="eyebrow">CURRENT CONVERSATION</p>
-            <h2 id="chat-title">무엇이든 물어보세요</h2>
-          </div>
-          <span
-            id="connection-status"
-            class="connection-status"
-            data-state="checking"
-            role="status"
-            aria-live="polite"
-            aria-atomic="true"
-            title="서버 연결 확인 중"
-          >
-            <span class="connection-dot" aria-hidden="true"></span>
-            <span id="connection-status-label" class="visually-hidden">서버 연결 확인 중</span>
-          </span>
-        </section>
-
-        <section
-          id="message-list"
-          class="message-list"
-          aria-label="대화 내용"
-          aria-live="polite"
-          aria-busy="false"
-        >
-          <div id="empty-state" class="empty-state">
-            <p class="empty-state-title">아직 대화가 없습니다.</p>
-            <p>로그인하면 내 이전 기록을 불러오고 새 질문을 보낼 수 있습니다.</p>
-          </div>
-        </section>
-
-        <div id="loading-indicator" class="loading-indicator" role="status" hidden>
-          <span class="loading-dot"></span>
-          <span class="loading-dot"></span>
-          <span class="loading-dot"></span>
-          <span id="loading-message">AI가 답변을 준비하고 있습니다.</span>
+        <button id="new-question-button" class="new-chat-link" type="button">
+          <span id="new-question-label">질문 입력으로 이동</span><span aria-hidden="true">＋</span>
+        </button>
+        <p id="sidebar-section-label" class="sidebar-label">대화</p>
+        <span id="sidebar-current-label" class="sidebar-current" aria-current="page">대화 기록</span>
+        <p id="sidebar-help" class="sidebar-help">질문과 답변을 이 화면에서 확인할 수 있어요.</p>
+        <div class="sidebar-spacer"></div>
+        <div class="sidebar-foot">
+          <span class="sidebar-avatar" aria-hidden="true">✦</span>
+          <span id="sidebar-foot-text">질문을 이어가 보세요</span>
         </div>
+      </aside>
+      <button id="sidebar-backdrop" class="sidebar-backdrop" type="button" aria-label="대화 메뉴 닫기" hidden></button>
 
-        <form id="chat-form" class="composer" aria-busy="false">
-          <label for="question-input">질문</label>
-          <textarea
-            id="question-input"
-            name="question"
-            rows="3"
-            placeholder="로그인 후 질문을 입력해 주세요."
-            aria-describedby="question-counter"
-            aria-invalid="false"
-            disabled
-          ></textarea>
-          <div class="composer-footer">
-            <span id="question-counter" class="question-counter">0 / 500</span>
-            <button id="send-button" class="button button-primary" type="submit" disabled>
-              전송
+      <div class="workspace">
+        <header class="app-header">
+          <div class="header-start">
+            <button id="sidebar-open-button" class="sidebar-toggle sidebar-open" type="button" aria-label="대화 메뉴 열기" aria-controls="sidebar" aria-expanded="false" hidden>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"></path></svg>
             </button>
+            <div class="breadcrumb"><span id="breadcrumb-workspace">내 워크스페이스</span><span aria-hidden="true">/</span><strong id="breadcrumb-current">대화</strong></div>
           </div>
-        </form>
-      </main>
+          <div class="session-actions">
+            <span id="ai-mode-badge" class="mode-badge" hidden></span>
+            <button id="open-login-button" class="button button-secondary" type="button">로그인</button>
+            <button id="logout-button" class="button button-secondary" type="button" hidden>로그아웃</button>
+          </div>
+        </header>
+
+        <main class="chat-panel" aria-labelledby="chat-title">
+          <section class="chat-heading">
+            <div class="chat-heading-inner">
+              <p id="hero-eyebrow" class="eyebrow">AI ASSISTANT</p>
+              <h1 id="chat-title">생각이 정리되는 대화.</h1>
+              <p id="chat-subtitle" class="chat-subtitle">궁금한 점을 질문하고 답변을 이어가세요.</p>
+            </div>
+            <span
+              id="connection-status"
+              class="connection-status"
+              data-state="checking"
+              role="status"
+              aria-live="polite"
+              aria-atomic="true"
+              title="서버 연결 확인 중"
+            >
+              <span class="connection-dot" aria-hidden="true"></span>
+              <span id="connection-status-label" class="visually-hidden">서버 연결 확인 중</span>
+            </span>
+          </section>
+
+          <section id="message-list" class="message-list" aria-label="대화 내용" aria-busy="false">
+            <div id="empty-state" class="empty-state">
+              <p class="empty-state-title">여기서 대화를 시작해 보세요.</p>
+              <p id="empty-state-description">로그인하면 이전 기록을 불러오고 새 질문을 보낼 수 있습니다.</p>
+            </div>
+          </section>
+
+          <div id="loading-indicator" class="loading-indicator" role="status" hidden>
+            <span class="loading-dot" aria-hidden="true"></span>
+            <span class="loading-dot" aria-hidden="true"></span>
+            <span class="loading-dot" aria-hidden="true"></span>
+            <span id="loading-message">이전 대화를 불러오고 있습니다.</span>
+          </div>
+
+          <button id="latest-button" class="latest-button" type="button" hidden>↓ 최신 답변으로</button>
+
+          <div class="composer-area">
+            <div id="suggestion-list" class="suggestion-list" aria-label="질문 제안"></div>
+            <form id="chat-form" class="composer" aria-busy="false">
+              <label class="visually-hidden" for="question-input">질문</label>
+              <div class="composer-field">
+                <textarea
+                  id="question-input"
+                  name="question"
+                  rows="2"
+                  placeholder="로그인 후 질문을 입력해 주세요."
+                  aria-describedby="question-counter"
+                  aria-invalid="false"
+                  disabled
+                ></textarea>
+                <button id="send-button" class="button button-primary send-button" type="submit" disabled aria-label="질문 전송">
+                  <span class="send-button-label">전송</span>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12 14-8-4 16-4-6-6-2Zm6 2 8-10"></path></svg>
+                </button>
+              </div>
+              <div class="composer-footer">
+                <span id="composer-hint">Enter로 전송 · Shift+Enter로 줄바꿈</span>
+                <span id="question-counter" class="question-counter">0 / 500</span>
+              </div>
+            </form>
+          </div>
+        </main>
+      </div>
     </div>
 
     <section
@@ -98,7 +126,7 @@
         <button id="close-auth-button" class="icon-button" type="button" aria-label="닫기">
           ×
         </button>
-        <p class="eyebrow">SECURE ACCESS</p>
+        <p class="eyebrow">계정으로 시작하기</p>
         <h2 id="auth-title">로그인</h2>
         <div id="auth-content" class="auth-content">
           <p id="auth-notice" class="form-notice" aria-live="polite" hidden></p>
@@ -169,5 +197,6 @@
     <div id="toast-region" class="toast-region" aria-live="assertive"></div>
     <script type="module" src="/static/js/auth.js"></script>
     <script type="module" src="/static/js/app.js"></script>
+    <script type="module" src="/static/js/shell.js"></script>
   </body>
 </html>

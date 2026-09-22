@@ -35,7 +35,7 @@ async def chat_client(tmp_path, monkeypatch) -> AsyncGenerator[AsyncClient, None
         finally:
             await test_connection.close()
 
-    async def mock_generate_chat_response(question: str) -> str:
+    async def mock_generate_chat_response(question: str, history: list) -> str:
         """외부 AI를 호출하지 않고 질문에 대응하는 테스트 답변을 반환합니다."""
         return f"테스트 답변: {question}"
 
