@@ -5,6 +5,7 @@
 AI 응답 영속 저장 및 사용자 간 대화 이력 격리(Multi-tenant Isolation)를 검증합니다.
 """
 
+from datetime import timedelta
 from typing import AsyncGenerator
 from unittest.mock import AsyncMock, patch
 import aiosqlite
@@ -12,6 +13,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from app.ai_service import AITimeoutError
+from app.auth import create_access_token
 from app.database import get_db, init_db
 from app.main import app
 
@@ -55,14 +57,17 @@ def mock_generate_chat_response() -> AsyncMock:
 
 async def register_and_login(client: AsyncClient, username: str, password: str = "pass1234") -> str:
     """테스트용 계정을 생성하고 로그인하여 액세스 토큰을 반환하는 헬퍼 함수."""
-    await client.post(
+    register_response = await client.post(
         "/api/auth/register",
         json={"username": username, "password": password},
     )
+    assert register_response.status_code == 201
+
     login_res = await client.post(
         "/api/auth/login",
         json={"username": username, "password": password},
     )
+    assert login_res.status_code == 200
     return login_res.json()["access_token"]
 
 
@@ -85,6 +90,22 @@ async def test_chat_unauthorized_invalid_token(test_client: AsyncClient):
         "/api/chat",
         json={"question": "위조 토큰 테스트 질문"},
         headers=headers,
+    )
+    assert response.status_code == 401
+    assert response.json()["detail"] == "인증 토큰이 유효하지 않거나 만료되었습니다."
+
+
+@pytest.mark.anyio
+async def test_chat_unauthorized_expired_token(test_client: AsyncClient):
+    """만료된 JWT로 POST /api/chat 요청 시 401 Unauthorized를 반환하는지 검증합니다."""
+    token = create_access_token(
+        {"sub": "expired_user"},
+        expires_delta=timedelta(seconds=-1),
+    )
+    response = await test_client.post(
+        "/api/chat",
+        json={"question": "만료 토큰 테스트 질문"},
+        headers={"Authorization": f"Bearer {token}"},
     )
     assert response.status_code == 401
     assert response.json()["detail"] == "인증 토큰이 유효하지 않거나 만료되었습니다."
@@ -160,6 +181,7 @@ async def test_chat_success_and_db_persistence(
     data = response.json()
     assert "answer" in data
     assert len(data["answer"]) > 0
+    assert isinstance(data["conversation_id"], int)
     assert "latency_ms" in data
     assert isinstance(data["latency_ms"], int)
 
