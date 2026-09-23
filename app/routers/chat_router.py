@@ -147,4 +147,4 @@ async def get_my_chat_history(
 ) -> list[ChatLogItem]:
     """현재 로그인한 사용자의 대화 이력만 반환합니다."""
     rows = await get_chat_logs_by_user(db, current_user.user_id)
-    return [ChatLogItem.model_validate(dict(row)) for row in rows]
+    return [ChatLogItem(**dict(row)) for row in rows]
