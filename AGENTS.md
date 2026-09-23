@@ -5,8 +5,10 @@
 ---
 
 ## 1. 프로젝트 기본 정보
-- **서비스명**: AI Assistant (7-1 웹 기반 AI 챗봇)
-- **프로젝트 목표**: 4일 내 핵심 컴포넌트(웹 UI ↔ 로그인/인증 ↔ FastAPI 백엔드 ↔ Gemini API ↔ SQLite DB ↔ AWS EC2 배포)가 100% 결합된 동작 가능한 프로토타입(MVP) 완성
+- **서비스명**: AI Assistant (반려동물 동반 국내여행 웹 AI 챗봇 기획)
+- **과제**: AI/SW 기초 · Term Project · 필수 · 학습시간 120시간. 아래 4일 일정은 초기 내부 MVP 마일스톤이며 과제 학습시간을 대체하지 않습니다.
+- **프로젝트 목표**: 반려동물 보호자의 국내여행 장소·동반 조건 탐색 지원. 기존 웹 UI ↔ 인증 ↔ FastAPI ↔ Gemini ↔ SQLite ↔ EC2 기반을 유지합니다. 관광공사 반려동물 데이터·지역별 관광 자원 수요·Google Maps는 후속 명세이며 아직 미구현입니다.
+- **기준 문서**: [프로젝트 계획](docs/project_plan.md), [현행 API](docs/api_spec.md), [여행 확장 명세](docs/pet_travel_spec.md), [미션 평가 가이드](docs/evaluation_guide.md). 현재 동작과 계획을 구분하고 과거 일정의 체크 표시를 완료 증빙으로 사용하지 않습니다.
 - **개발 환경**: Python 3.10+, FastAPI, SQLite, Vanilla HTML/CSS/JavaScript
 - **AI 연동**: Gemini API (`GEMINI_API_KEY`, `GEMINI_MODEL`) 기반 실제 응답 생성 및 테스트 대역 검증
 - **배포 인프라**: AWS EC2 프리티어 (t2.micro / Ubuntu 22.04 LTS), 2GB Swap 메모리, Nginx 리버스 프록시, Systemd 데몬
@@ -18,9 +20,9 @@
 | 팀원 | 담당 영역 | 세부 업무 내용 |
 | :--- | :--- | :--- |
 | **고준석**<br>(팀장) | **로그인 & 인증 (Auth)** | • 회원가입 API (POST /api/auth/register) 및 로그인 API (POST /api/auth/login)<br>• 비밀번호 bcrypt 해싱 및 JWT 토큰 발급/검증 유틸리티<br>• 미인증 사용자 401 차단용 FastAPI 의존성(get_current_user) 구현<br>• 전체 일정 관리 및 마일스톤 조율 (PM) |
-| **박범규** | **백엔드 코어 & DB** | • FastAPI 메인 애플리케이션 진입점 및 라우터 통합 (app/main.py)<br>• SQLite DB 연결 및 테이블 스키마 (users, chat_logs)<br>• 대화 로그 저장 함수 및 내 대화 조회 API (GET /api/me/chats)<br>• 과제 필수 표준 4대 이벤트 로깅 모듈 및 scripts/check_logs.sql 작성 |
+| **박범규** | **백엔드 코어 & DB** | • FastAPI 메인 애플리케이션 진입점 및 라우터 통합 (app/main.py)<br>• SQLite DB 연결 및 테이블 스키마 (users, conversations, chat_logs)<br>• 대화 로그 저장 함수 및 내 대화 조회 API (GET /api/me/chats)<br>• 과제 필수 표준 4대 이벤트 로깅 모듈 및 scripts/check_logs.sql 작성 |
 | **이준혁** | **프론트엔드 UI/UX** | • 반응형 단일 페이지 웹 챗봇 인터페이스 (static/index.html, style.css)<br>• 로그인 / 회원가입 모달 UI 및 JWT 로컬 스토리지 보관 처리 (auth.js)<br>• 실시간 질문 입력, 로딩 인디케이터, AI 응답 렌더링 스크립트 (app.js)<br>• 에러 알림 토스트 및 모바일/데스크탑 반응형 레이아웃 구성 |
-| **차종민** | **AI 파이프라인** | • Gemini API 연동 모듈 (app/ai_service.py) 구축<br>• 최근 대화 3~5쌍을 조합하는 슬라이딩 윈도우 문맥(Context) 유지 전략 구현<br>• 8.0초 타임아웃 예외 핸들링 및 서버 프로세스 다운 방지 로직<br>• Gemini 응답 형식과 오류 처리 검증 |
+| **차종민** | **AI 파이프라인** | • Gemini API 연동 모듈 (app/ai_service.py) 구축<br>• 같은 방의 최근 대화 5쌍을 조합하는 슬라이딩 윈도우 문맥(Context) 유지 전략 구현<br>• 8.0초 타임아웃 예외 핸들링 및 서버 프로세스 다운 방지 로직<br>• Gemini 응답 형식과 오류 처리 검증 |
 
 ---
 
@@ -30,7 +32,7 @@
   - 브랜치 생성 (feat/auth-ko, feat/backend-park, feat/ui-lee, feat/ai-cha)
   - [차종민] Gemini API 단독 호출 PoC 스크립트 작성 및 8초 타임아웃 검증
   - [고준석] bcrypt 암호화 및 JWT 토큰 생성 유틸 함수 작성
-  - [박범규] FastAPI 기본 서버 세팅 및 SQLite 스키마(users, chat_logs) 생성
+  - [박범규] FastAPI 기본 서버 세팅 및 SQLite 스키마(users, conversations, chat_logs) 생성
   - [이준혁] 반응형 채팅 웹 UI HTML/CSS 와이어프레임 작성
 - **Day 2 (코어 로직 & API 완성)**:
   - [고준석] 회원가입/로그인 엔드포인트 및 get_current_user 의존성 완성
@@ -83,7 +85,7 @@
 
 ## 6. 표준 로깅 규격 (과제 필수 요구사항 5항)
 
-서버 로그는 Python 표준 logging 모듈을 사용하며, 아래 4대 핵심 이벤트 규격 포맷을 반드시 준수합니다:
+서버 로그는 콘솔과 `logs/app.log`에 기록합니다(`app/config.py`, `app/logger.py`). DB 문맥 조회 실패는 `db_read_failed`로 별도 기록합니다. Python 표준 logging 모듈을 사용하며, 아래 4대 핵심 이벤트 규격 포맷을 반드시 준수합니다:
 ```text
 INFO request_received user_id={user_id} path={path}
 INFO ai_call_start user_id={user_id} request_id={request_id}
@@ -98,7 +100,7 @@ ERROR db_save_failed user_id={user_id} error={error_detail}
 ## 7. 예외 처리 및 안정성 규칙
 
 1. **AI API 호출 타임아웃**:
-   - Gemini API 호출 시 timeout=8.0초를 설정하여 무한 대기를 방지합니다.
+   - `AI_TIMEOUT_SECONDS`(기본 8.0초)를 httpx에 설정하여 네트워크 무한 대기를 방지합니다. 전체 요청의 정확한 8초 마감은 아닙니다.
    - 타임아웃은 504 Gateway Timeout, 그 외 Gemini API 오류는 502 Bad Gateway로 반환하며 FastAPI 프로세스를 유지합니다.
 2. **사용자 입력 검증**:
    - 빈 문자열 또는 공백만 있는 질문 차단 (400 Bad Request).
