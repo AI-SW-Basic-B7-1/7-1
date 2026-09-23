@@ -1,10 +1,10 @@
 # B7-1 웹 기반 AI 챗봇 4일 프로토타입 프로젝트 계획서
 
-> 참고: 아래 초기 일정의 코디세이·Mock AI 표기는 계획 당시의 기록입니다. 현재 구현 기준은 Gemini API이며 제품 실행 중 Mock AI fallback은 사용하지 않습니다.
+> **현재 구현 기준**: 서비스는 서버에서 실제 Gemini API를 호출하며, Mock은 자동 테스트에서 외부 호출을 대체할 때만 사용합니다. 아래 Day 1~4 일정의 코디세이·Mock 표기는 초기 계획 기록으로, 현재 서비스 동작 사양이 아닙니다. 실제 구현 DB 구조는 `users`·`conversations`·`chat_logs`입니다.
 
 > **프로젝트명**: AI Assistant (7-1 웹 기반 AI 챗봇 서비스)  
 > **개발 기간**: 4일 집중 완성 (Day 1 ~ Day 4)  
-> **목표**: 4일 내 핵심 컴포넌트(웹 UI ↔ 로그인/인증 ↔ FastAPI 백엔드 ↔ 코디세이 AI API ↔ SQLite DB ↔ AWS EC2 배포)가 100% 결합된 동작 가능한 프로토타입(MVP) 완성
+> **목표**: 4일 내 핵심 컴포넌트(웹 UI ↔ 로그인/인증 ↔ FastAPI 백엔드 ↔ Gemini API ↔ SQLite DB ↔ AWS EC2 배포)가 결합된 동작 가능한 프로토타입(MVP) 완성
 
 ---
 
@@ -15,8 +15,8 @@
 
 ### 1.2 핵심 개발 범위 (Scope)
 - **인증 및 접근 제어**: 회원가입, 로그인, bcrypt 단방향 암호화, JWT 토큰 발급 및 엔드포인트 인가
-- **AI 대화 파이프라인**: 코디세이 AI API(OpenAI 호환 GPT-4o-mini) 비동기 호출, 슬라이딩 윈도우(최근 3~5쌍) 문맥 조합, 8.0초 타임아웃 방어, Mock AI 엔진
-- **데이터베이스 및 로깅**: SQLite users/chat_logs 모델링, 대화 이력 저장/조회 API, 4대 핵심 이벤트 로깅
+- **AI 대화 파이프라인**: Gemini API 비동기 호출, 슬라이딩 윈도우(최근 최대 5쌍) 문맥 조합, 설정 가능한 타임아웃 방어, 자동 테스트의 외부 API 대역
+- **데이터베이스 및 로깅**: SQLite `users`·`conversations`·`chat_logs` 모델링, 대화 이력 저장/조회 API, 핵심 이벤트 로깅
 - **웹 인터페이스**: 반응형 단일 페이지 챗봇 UI, 로그인/회원가입 모달, 비동기 REST 통신
 - **인프라 및 배포**: AWS EC2 프리티어(t2.micro), 2GB Swap 메모리, Nginx 리버스 프록시, Systemd 상시 구동
 
@@ -27,9 +27,9 @@
 | 팀원 | 담당 역할 | 핵심 개발 영역 |
 | :--- | :--- | :--- |
 | **고준석** (팀장) | **로그인 & 인증 (Auth) / PM** | • 회원가입(POST /api/auth/register), 로그인(POST /api/auth/login), 내 정보 조회(GET /api/auth/me) API<br>• 비밀번호 bcrypt 단방향 해싱 및 JWT 액세스 토큰 발급/검증 로직<br>• 미인증 사용자 접근 차단용 FastAPI Dependency (get_current_user) 구현<br>• 인증 라우터 비동기 통합 테스트 스위트(tests/test_auth_router.py) 구축<br>• 프로젝트 전체 일정 조율 및 마일스톤 관리 |
-| **박범규** | **백엔드 코어 & DB (Chat Owner)** | • FastAPI 메인 애플리케이션 진입점 및 라우터 통합 (app/main.py)<br>• **POST /api/chat 엔드포인트 전체 흐름 최종 소유**: 요청 검증(공백/글자수), 인증 확인, ai_service 호출, 응답시간(latency_ms) 측정, DB 저장 및 에러 핸들링<br>• SQLite DB 연결 및 테이블 스키마 (users, chat_logs) 구축, 내 대화 이력 조회 API (GET /api/me/chats)<br>• 표준 4대 이벤트 로깅 모듈, DB 검증용 scripts/check_db_chats.sql 및 서버 로그 검증 스크립트 작성 |
+| **박범규** | **백엔드 코어 & DB (Chat Owner)** | • FastAPI 메인 애플리케이션 진입점 및 라우터 통합 (app/main.py)<br>• **POST /api/chat 엔드포인트 전체 흐름 최종 소유**: 요청 검증(공백/500자), 인증 확인, ai_service 호출, 응답시간(latency_ms) 측정, DB 저장 및 오류 처리<br>• SQLite `users`·`conversations`·`chat_logs` 스키마 및 내 대화 이력 조회 API(GET /api/me/chats)<br>• 핵심 이벤트 로깅과 DB 확인 SQL 작성 |
 | **이준혁** | **프론트엔드 UI/UX** | • 단일 페이지 반응형 웹 챗봇 인터페이스 (static/index.html, style.css)<br>• 로그인 및 회원가입 모달 UI, JWT 로컬 스토리지 보관 및 헤더 전송 (auth.js)<br>• 실시간 메시지 버블 렌더링, 로딩 인디케이터, 비동기 API 통신 (app.js)<br>• Day 1~2 Mock API 기반 조기 E2E 연동 및 에러 토스트 피드백 |
-| **차종민** | **AI 파이프라인 (Service Provider)** | • **웹/DB 의존성이 배제된 순수 비동기 함수 모듈**(app/ai_service.py: generate_chat_response) 제공<br>• 최근 대화 3~5쌍을 조합하는 슬라이딩 윈도우 문맥(Context) 유지 전략 구현<br>• 8.0초 타임아웃 예외 핸들링 및 서버 프로세스 다운 방지 로직 (504 반환 규격 준수)<br>• 외부 키 미설정 시에도 시연 및 평가가 가능한 내장 Mock AI 엔진 구현 |
+| **차종민** | **AI 파이프라인 (Service Provider)** | • 웹/DB 의존성이 배제된 비동기 모듈(`app/ai_service.py`) 제공<br>• 최근 대화 최대 5쌍을 이용하는 문맥 유지 및 Gemini 응답 처리<br>• 설정된 타임아웃과 API 실패 예외 처리(504/502) 구현<br>• 자동 테스트에서 Gemini HTTP 호출을 테스트 대역으로 대체 |
 
 ---
 
@@ -81,7 +81,7 @@
 | 리스크 요인 | 영향도 | 사전 예방 및 대응 방안 |
 | :--- | :---: | :--- |
 | **AWS EC2 t2.micro 메모리 부족 (OOM)** | 높음 | 1GB RAM 한계 극복을 위해 OS 설치 직후 **2GB Swap 메모리**를 즉시 생성하여 프로세스 강제 종료를 사전에 차단합니다. |
-| **코디세이 AI API 지연 및 무한 대기** | 높음 | 모든 외부 AI 호출에 timeout=8.0초를 강제 설정하고, 실패 시 504 안내 메시지를 반환하여 서버 프로세스가 다운되지 않도록 격리합니다. |
-| **프론트-백엔드 늦은 결합으로 인한 통합 병목** | 높음 | Day 3 대신 **Day 1~2에 Mock 엔드포인트 기반 E2E 연동(Walking Skeleton)을 선제 완료**하여 CORS, 토큰 전달, JSON 불일치를 조기에 제거합니다. |
-| **평가자 환경의 API 키 부재** | 중간 | CODESSEY_API_KEY가 설정되지 않았을 때도 서비스 시연이 가능하도록 내장 Mock AI 엔진을 기본 탑재합니다. |
+| **Gemini API 지연 및 실패** | 높음 | 설정된 요청 타임아웃과 오류 변환으로 실패 응답을 반환하고 FastAPI 프로세스를 유지합니다. 운영 환경에 유효한 Gemini API 키가 필요합니다. |
+| **프론트·백엔드 계약 불일치** | 높음 | API 계약 테스트와 통합 테스트로 요청·응답 필드, 인증 헤더, 대화방 ID 계약을 확인합니다. 테스트에서는 Gemini 호출을 대역 처리합니다. |
+| **운영 환경의 API 키 누락** | 중간 | 배포 전 `GEMINI_API_KEY`를 확인하고 누락 또는 예시값이면 배포를 중단합니다. 운영 중 Mock AI로 대체하지 않습니다. |
 | **브랜치 병합 시 코드 충돌 및 모듈 혼선** | 중간 | `POST /api/chat` 라우터 소유권(백엔드)과 AI 생성 로직(AI 담당자 순수 함수)의 책임을 엄격히 분리하여 독립 개발합니다. |
