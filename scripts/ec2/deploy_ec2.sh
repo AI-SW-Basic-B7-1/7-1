@@ -97,6 +97,10 @@ database_url="$(env_value DATABASE_URL)"
 [[ "${gemini_api_key}" != *'여기에_본인의_Gemini_API_Key'* ]] || fail 'GEMINI_API_KEY에 예시값이 남아 있습니다.'
 unset secret_key gemini_api_key database_url
 
+run_cmd 'EC2 시간대 설정' timedatectl set-timezone Asia/Seoul
+configured_timezone="$(timedatectl show --property=Timezone --value)"
+[[ "${configured_timezone}" == 'Asia/Seoul' ]] || fail "EC2 시간대 확인에 실패했습니다: ${configured_timezone}"
+
 export DEBIAN_FRONTEND=noninteractive
 run_cmd '패키지 목록 갱신' apt-get update
 run_cmd '기본 패키지 업그레이드' apt-get upgrade -y

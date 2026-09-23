@@ -61,7 +61,7 @@ def register_routers(app: FastAPI) -> None:
 
 def mount_static_files(app: FastAPI) -> None:
     """프론트엔드 정적 파일 디렉터리를 앱에 연결합니다."""
-    # Nginx가 정적 파일을 직접 서빙하도록 바꾸는 경우 배포 설정에 맞춰 수정
+    # 배포 환경에서도 Nginx가 이 경로를 FastAPI로 전달합니다.
     if STATIC_DIR.exists():
         app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
