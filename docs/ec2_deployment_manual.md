@@ -95,7 +95,7 @@ scripts/ec2/deploy_ec2.sh
 scripts/ec2/backup_db.sh
 ~~~
 
-현재 확인된 상태에서는 이 세 파일이 원격 develop에 아직 반영되지 않았으므로, 실제 배포 전에 별도로 커밋하고 원격 develop에 반영해야 합니다.
+현재 로컬의 `origin/develop`에는 이 세 파일이 확인되어 있습니다. 다만 배포 때 선택한 브랜치에 최신 코드가 반영되었는지는 위 명령으로 매번 확인하고, 누락된 경우 해당 브랜치에 먼저 커밋·병합해야 합니다.
 
 ### 3.4 SSM 연결 상태
 
@@ -224,10 +224,10 @@ deploy_ec2.sh가 SSM에서 root 권한으로 실행되면 다음 작업을 수�
 - 프로젝트와 SQLite 데이터 디렉터리 권한 설정
 - Python 가상환경 생성 및 requirements.txt 설치
 - 배포 전 pytest -q 실행
-- Nginx를 80번 포트의 reverse proxy로 설정
+- Nginx를 80번 포트의 reverse proxy로 설정하고 `/static/` 요청도 FastAPI로 전달
 - SQLite, .env, Git, 로그 파일 외부 접근 차단
 - chatbot.service Systemd 서비스 등록 및 재시작
-- /api/health 헬스체크
+- `/api/health` 헬스체크와 CSS·JavaScript 정적 파일 HTTP 응답 점검
 - SQLite 무결성 검사
 - SQLite 백업 Cron 등록
 

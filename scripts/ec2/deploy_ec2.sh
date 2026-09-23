@@ -164,7 +164,12 @@ server {
     }
 
     location /static/ {
-        alias ${PROJECT_DIR}/static/;
+        # FastAPI가 정적 파일을 제공하므로 Nginx의 홈 디렉터리 권한에 의존하지 않습니다.
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
         expires 1d;
         add_header Cache-Control "public, no-transform";
     }
@@ -256,6 +261,12 @@ done
     journalctl -u "${SERVICE_NAME}" --no-pager -n 50
     fail '로컬 헬스체크에 실패했습니다: http://127.0.0.1/api/health'
 }
+
+for static_path in /static/css/style.css /static/js/auth.js /static/js/app.js; do
+    if ! curl -fsS --max-time 5 "http://127.0.0.1${static_path}" -o /dev/null; then
+        fail "Nginx 정적 파일 점검에 실패했습니다: ${static_path}"
+    fi
+done
 
 db_block_status="$(curl -sS --max-time 5 -o /dev/null -w '%{http_code}' http://127.0.0.1/data/chatbot.db || true)"
 [[ "${db_block_status}" == '404' ]] || fail "Nginx의 DB 파일 차단 검증에 실패했습니다. HTTP 상태: ${db_block_status}"
