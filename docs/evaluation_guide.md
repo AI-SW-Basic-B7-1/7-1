@@ -22,7 +22,7 @@
 | 실행/환경 변수/민감정보 | `.env.example`, `.gitignore`, README | 실제 설정 키 7개 대조 | 기본 JWT 키·ignore 누락 보강, HTTPS 검토 |
 | 브랜치·기능 작업·PR 병합 | main/develop 및 기능 브랜치, 병합 PR | 전체 PR 목록과 대표 변경·Git 이력 확인 | 팀 최종 제출 기준 확인 |
 | 팀원별 유의미한 커밋 10회 이상 | 아래 author별 비머지 집계 | 종민 author 4개, 전원 달성 확인 불가 | 추가 실질 기여·별도 author 여부 확인 |
-| 역할·개인별 요약 | README·프로젝트 계획과 대표 PR | 실제 파일·병합 기록 대응 | 개인별 설명 및 최종 역할 확인 |
+| 역할·개인별 요약 | README·중기 프로젝트 계획과 대표 PR | 실제 파일·병합 기록 대응 | 개인별 설명 및 최종 역할 확인 |
 | 개요·아키텍처·API·DB·배포·DB 확인 패키지 | README에서 관련 문서 연결 | 문서·상대 링크·JSON/API 계약 점검 | 실 AI·외부 시연 증빙 추가 |
 
 반려동물 데이터·지역 수요·Google Maps는 팀 주제의 추가 기능입니다. 미션의 공통 필수 API인 것처럼 취급하지 않으며 세 기능 모두 현재 미구현입니다.
@@ -31,7 +31,7 @@
 
 | 이전 문서 주장/첨부 초안 | 코드·PR 근거 | 반영 |
 |---|---|---|
-| 4일이 전체 과제 기간, 코디세이·내장 Mock | 120시간 미션, #29 Gemini 전환 | README·계획·AGENTS에서 초기 일정과 현재 구현 분리 |
+| 4일이 전체 과제 기간, 코디세이·내장 Mock | 120시간 미션, #29 Gemini 전환 | 초기 계획 원문을 보존하고 README·중기 계획·AGENTS에서 현재 구현 분리 |
 | `logs/server.log`, 로그 검증 스크립트 사용 가능 | config/logger의 `logs/app.log`, #17 변수 누락 | README·배포·평가 가이드에 직접 로그 조회 |
 | 가입/채팅 422의 필드별 detail | `validation_exception_handler`의 고정 문자열 | API 명세의 오류 예시 수정 |
 | 사용자 이력도 최근 5건 | #37의 방 문맥 LIMIT 5, 전체 이력 쿼리에는 LIMIT 없음 | API·README에 전체 배열 계약 유지; #52는 미병합 종료 |
@@ -153,7 +153,7 @@ grep -E 'request_received|ai_call_start|ai_call_success|ai_call_failed|db_save_s
 
 ## 7. 협업 이력과 개인별 커밋
 
-현재 기본/통합 브랜치는 `develop`, 배포용 원칙은 `main`입니다. 기준 develop은 `755e7e2`, main은 `0be74ae1a07d5e70770f0617181ae131c8734879`로 서로 다릅니다. 기능 브랜치와 병합 PR의 근거는 [프로젝트 계획](project_plan.md)의 역할 표를 봅니다.
+현재 기본/통합 브랜치는 `develop`, 배포용 원칙은 `main`입니다. 기준 develop은 `755e7e2`, main은 `0be74ae1a07d5e70770f0617181ae131c8734879`로 서로 다릅니다. 기능 브랜치와 병합 PR의 근거는 [중기 프로젝트 계획](midterm_project_plan.md)의 역할 표를 봅니다. 프로젝트 시작 당시의 역할·일정은 [초기 프로젝트 계획](project_plan.md)에 별도로 보존합니다.
 
 기준 SHA에 도달 가능한 **비머지 커밋의 Git author 이름**으로 집계했습니다. 이는 커밋 개수이며 각 커밋의 의미나 개인 학습량을 자동 보장하지 않습니다. 이번 문서 브랜치의 새 커밋은 아래 기준 집계에 포함하지 않습니다.
 

@@ -8,7 +8,7 @@
 - **서비스명**: AI Assistant (반려동물 동반 국내여행 웹 AI 챗봇 기획)
 - **과제**: AI/SW 기초 · Term Project · 필수 · 학습시간 120시간. 아래 4일 일정은 초기 내부 MVP 마일스톤이며 과제 학습시간을 대체하지 않습니다.
 - **프로젝트 목표**: 반려동물 보호자의 국내여행 장소·동반 조건 탐색 지원. 기존 웹 UI ↔ 인증 ↔ FastAPI ↔ Gemini ↔ SQLite ↔ EC2 기반을 유지합니다. 관광공사 반려동물 데이터·지역별 관광 자원 수요·Google Maps는 후속 명세이며 아직 미구현입니다.
-- **기준 문서**: [프로젝트 계획](docs/project_plan.md), [현행 API](docs/api_spec.md), [여행 확장 명세](docs/pet_travel_spec.md), [미션 평가 가이드](docs/evaluation_guide.md). 현재 동작과 계획을 구분하고 과거 일정의 체크 표시를 완료 증빙으로 사용하지 않습니다.
+- **기준 문서**: [초기 4일 계획](docs/project_plan.md), [중기 프로젝트 계획](docs/midterm_project_plan.md), [현행 API](docs/api_spec.md), [여행 확장 명세](docs/pet_travel_spec.md), [미션 평가 가이드](docs/evaluation_guide.md). 초기 기록·현재 동작·후속 계획을 구분하고 과거 일정의 체크 표시를 완료 증빙으로 사용하지 않습니다.
 - **개발 환경**: Python 3.10+, FastAPI, SQLite, Vanilla HTML/CSS/JavaScript
 - **AI 연동**: Gemini API (`GEMINI_API_KEY`, `GEMINI_MODEL`) 기반 실제 응답 생성 및 테스트 대역 검증
 - **배포 인프라**: AWS EC2 프리티어 (t2.micro / Ubuntu 22.04 LTS), 2GB Swap 메모리, Nginx 리버스 프록시, Systemd 데몬

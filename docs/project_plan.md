@@ -1,67 +1,91 @@
-# AI Assistant — 반려동물 국내여행 챗봇 프로젝트 계획
+# B7-1 웹 기반 AI 챗봇 4일 프로토타입 초기 프로젝트 계획서
 
-> AI/SW 기초 · Term Project · 필수 · 학습시간 **120시간**
-> 현행 구현 기준: `develop`의 `755e7e2` (2026-09-23). 120시간은 과제 학습시간이며 아래 초기 4일 내부 계획과 별개입니다. 실제 투입시간이나 전체 기능 완료를 뜻하지 않습니다.
+> 문서 성격: 프로젝트 시작 당시의 4일 MVP 계획을 보존한 기록입니다. 현재 구현 상태와 반려동물 여행 확장 계획은 [중기 프로젝트 계획](midterm_project_plan.md)을 따릅니다.
+>
+> 참고: 아래 초기 일정의 코디세이·Mock AI 표기는 계획 당시의 기록입니다. 현재 구현 기준은 Gemini API이며 제품 실행 중 Mock AI fallback은 사용하지 않습니다.
 
-## 1. 문제와 핵심 시나리오
+> **프로젝트명**: AI Assistant (7-1 웹 기반 AI 챗봇 서비스)
+>
+> **개발 기간**: 4일 집중 완성 (Day 1 ~ Day 4)
+>
+> **목표**: 4일 내 핵심 컴포넌트(웹 UI ↔ 로그인/인증 ↔ FastAPI 백엔드 ↔ 코디세이 AI API ↔ SQLite DB ↔ AWS EC2 배포)가 100% 결합된 동작 가능한 프로토타입(MVP) 완성
 
-반려동물을 기르는 전 연령 사용자가 국내여행을 준비할 때, 장소와 동반 조건을 여러 곳에서 찾아야 하는 수고를 줄이는 것이 목표입니다. 첫 시연은 지역·일정·반려동물 종/크기가 명확한 보호자 사례로 구성합니다.
+---
 
-로그인 → “5kg 강아지와 강릉에서 하루 여행하고 싶어요” 질문 → 출처가 있는 장소·동반 조건 안내 → 같은 방에서 후속 질문 → 재로그인 후 대화 복원이 목표 흐름입니다. **현재는 범용 Gemini 대화·인증·DB 저장 기반만 구현되어 있으며 여행 정보 조회는 미구현**입니다. 전 연령 대상이라는 기획은 접근성 검증 완료나 모든 동물의 입장 보장을 뜻하지 않습니다.
+## 1. 프로젝트 개요 및 범위
 
-## 2. 현재 구현과 후속 범위
+### 1.1 프로젝트 개요
+본 프로젝트는 사용자가 웹 브라우저에서 로그인 후 실시간으로 AI 챗봇과 대화를 나누고, 이전 대화의 문맥(Context)을 유지하며 응답을 제공받는 웹 기반 AI 서비스입니다. 모든 대화 기록은 SQLite DB에 영속적으로 저장되며, 표준화된 4대 핵심 서버 로깅과 AI 호출 타임아웃 방어 체계를 갖추어 안정적인 운영을 보장합니다.
 
-| 영역 | 현재 구현 | 다음 작업 |
-|---|---|---|
-| 인증 | JSON 가입·로그인, bcrypt, JWT, 사용자 확인 | 만료 토큰 검증 보강 [#55](https://github.com/AI-SW-Basic-B7-1/7-1/issues/55), 운영 보안 점검 |
-| 채팅 | FastAPI, 서버 Gemini 호출, 같은 방 최근 5쌍, 502/504 처리 | 조회한 여행 근거와 모델 입력 결합 |
-| DB | SQLite `users → conversations → chat_logs`, 본인 전체 이력 | 장소·출처 등 확장 결과의 저장/복원 계약 결정 |
-| UI | Vanilla HTML/CSS/JS, 방 선택, 계정 전환, textContent 렌더링 | 장소 정보와 지도·마커, 정보 누락/지도 장애 대안 |
-| 운영 | 콘솔·`logs/app.log`, EC2 SSM/Nginx/Systemd/백업 스크립트 | 실제 AI·브라우저·재접속 시연, 로그 스크립트 [#17](https://github.com/AI-SW-Basic-B7-1/7-1/issues/17) |
-| 여행 데이터 | 미구현 | 관광공사 반려동물 동반여행 서비스의 승인·조회 PoC 및 서버 연결 |
-| 지역 수요 | 미구현 | 지역별 관광 자원 수요의 지역/기간/단위 확인과 비교 보조 설명 |
-| 지도 | 미구현 | Google Maps 제품 선택·좌표 계약·SDK·제한된 키 설정 검증 |
+### 1.2 핵심 개발 범위 (Scope)
+- **인증 및 접근 제어**: 회원가입, 로그인, bcrypt 단방향 암호화, JWT 토큰 발급 및 엔드포인트 인가
+- **AI 대화 파이프라인**: 코디세이 AI API(OpenAI 호환 GPT-4o-mini) 비동기 호출, 슬라이딩 윈도우(최근 3~5쌍) 문맥 조합, 8.0초 타임아웃 방어, Mock AI 엔진
+- **데이터베이스 및 로깅**: SQLite users/chat_logs 모델링, 대화 이력 저장/조회 API, 4대 핵심 이벤트 로깅
+- **웹 인터페이스**: 반응형 단일 페이지 챗봇 UI, 로그인/회원가입 모달, 비동기 REST 통신
+- **인프라 및 배포**: AWS EC2 프리티어(t2.micro), 2GB Swap 메모리, Nginx 리버스 프록시, Systemd 상시 구동
 
-예약·결제, 실시간 입장 보장, 실시간 혼잡도, 국내 경로·이동시간 보장은 초기 범위에 포함하지 않습니다. 지역 수요와 지도는 팀이 선택한 추가 범위이며 미션 공통 필수 API가 아닙니다. 현재 런타임은 Gemini를 사용하고 Mock fallback이 없습니다. 대역은 테스트에서만 사용합니다.
+---
 
-현재 구조·DB·실행 방법은 [README](../README.md), API는 [현행 계약](api_spec.md), 확장은 [여행 서비스 명세](pet_travel_spec.md)를 따릅니다.
+## 2. 팀 구성원 및 역할 분담 (R&R)
 
-## 3. 역할과 실제 작업 요약
+| 팀원 | 담당 역할 | 핵심 개발 영역 |
+| :--- | :--- | :--- |
+| **고준석** (팀장) | **로그인 & 인증 (Auth) / PM** | • 회원가입(POST /api/auth/register), 로그인(POST /api/auth/login), 내 정보 조회(GET /api/auth/me) API<br>• 비밀번호 bcrypt 단방향 해싱 및 JWT 액세스 토큰 발급/검증 로직<br>• 미인증 사용자 접근 차단용 FastAPI Dependency (get_current_user) 구현<br>• 인증 라우터 비동기 통합 테스트 스위트(tests/test_auth_router.py) 구축<br>• 프로젝트 전체 일정 조율 및 마일스톤 관리 |
+| **박범규** | **백엔드 코어 & DB (Chat Owner)** | • FastAPI 메인 애플리케이션 진입점 및 라우터 통합 (app/main.py)<br>• **POST /api/chat 엔드포인트 전체 흐름 최종 소유**: 요청 검증(공백/글자수), 인증 확인, ai_service 호출, 응답시간(latency_ms) 측정, DB 저장 및 에러 핸들링<br>• SQLite DB 연결 및 테이블 스키마 (users, chat_logs) 구축, 내 대화 이력 조회 API (GET /api/me/chats)<br>• 표준 4대 이벤트 로깅 모듈, DB 검증용 scripts/check_db_chats.sql 및 서버 로그 검증 스크립트 작성 |
+| **이준혁** | **프론트엔드 UI/UX** | • 단일 페이지 반응형 웹 챗봇 인터페이스 (static/index.html, style.css)<br>• 로그인 및 회원가입 모달 UI, JWT 로컬 스토리지 보관 및 헤더 전송 (auth.js)<br>• 실시간 메시지 버블 렌더링, 로딩 인디케이터, 비동기 API 통신 (app.js)<br>• Day 1~2 Mock API 기반 조기 E2E 연동 및 에러 토스트 피드백 |
+| **차종민** | **AI 파이프라인 (Service Provider)** | • **웹/DB 의존성이 배제된 순수 비동기 함수 모듈**(app/ai_service.py: generate_chat_response) 제공<br>• 최근 대화 3~5쌍을 조합하는 슬라이딩 윈도우 문맥(Context) 유지 전략 구현<br>• 8.0초 타임아웃 예외 핸들링 및 서버 프로세스 다운 방지 로직 (504 반환 규격 준수)<br>• 외부 키 미설정 시에도 시연 및 평가가 가능한 내장 Mock AI 엔진 구현 |
 
-| 팀원 | 현재 책임·기여 | 후속 작업의 담당 접점 | 병합 근거 |
-|---|---|---|---|
-| 고준석 (`kjs83036`) | 인증, JWT/bcrypt, 인증 통합 테스트, EC2 배포 자동화·PM | 외부 설정/배포·접근 제어 검수와 시연 조율 | [#8](https://github.com/AI-SW-Basic-B7-1/7-1/pull/8), [#22](https://github.com/AI-SW-Basic-B7-1/7-1/pull/22), [#44](https://github.com/AI-SW-Basic-B7-1/7-1/pull/44), [#54](https://github.com/AI-SW-Basic-B7-1/7-1/pull/54) |
-| 박범규 (`pbk98`) | FastAPI 통합, `POST /api/chat` 흐름, DB/방/마이그레이션, 로거 | 관광 조회 모듈과 라우터 접합, 지역 매핑, 결과 저장/복원 계약 | [#9](https://github.com/AI-SW-Basic-B7-1/7-1/pull/9), [#37](https://github.com/AI-SW-Basic-B7-1/7-1/pull/37), [#49](https://github.com/AI-SW-Basic-B7-1/7-1/pull/49), [#51](https://github.com/AI-SW-Basic-B7-1/7-1/pull/51) |
-| 이준혁 (`Cerhovah`) | 반응형 UI, 인증·방·계정 상태, API 계약 테스트와 프론트 문서 | 장소/출처 UI, Google Maps와 계정/방 전환 상태 격리 | [#11](https://github.com/AI-SW-Basic-B7-1/7-1/pull/11), [#32](https://github.com/AI-SW-Basic-B7-1/7-1/pull/32), [#39](https://github.com/AI-SW-Basic-B7-1/7-1/pull/39), [#46](https://github.com/AI-SW-Basic-B7-1/7-1/pull/46) |
-| 차종민 (`whdals006`, author `jongmin`) | Gemini 연결, Q/A 문맥 조립, AI 타임아웃·예외 | 여행 근거 기반 입력/응답, 출처 없는 조건 생성 방지, 데이터 누락 안내 | [#29](https://github.com/AI-SW-Basic-B7-1/7-1/pull/29), [#35](https://github.com/AI-SW-Basic-B7-1/7-1/pull/35), [#41](https://github.com/AI-SW-Basic-B7-1/7-1/pull/41) |
+---
 
-후속 열은 기존 담당 영역의 협업 접점이며 새 구현 완료나 이슈 담당자 확정을 의미하지 않습니다. 채팅 라우터는 박범규, `generate_chat_response(question, history)`는 차종민의 접점입니다. 함수 인자가 바뀌면 호출부·대역·계약 테스트를 같은 기능 PR에서 갱신합니다.
+## 3. 4일간의 일자별 상세 마일스톤
 
-## 4. 초기 4일 내부 마일스톤
+```text
+[Day 1] 독립 모듈 & Mock API 세팅 ──> [Day 2] 코어 로직 & 조기 Mock E2E ──> [Day 3] 실제 AI/DB 결합 ──> [Day 4] 안정성 & 시연 점검
+```
 
-기존 일정을 계획 기록으로 유지합니다. 체크박스 대신 단계별 목표를 나타내며, 현재 구현 여부는 2절 및 평가 가이드의 증빙으로 판단합니다.
+### Day 1: 독립 컴포넌트 뼈대 세팅 & 조기 Mock 통신 준비
+- **공통 목표**: 개인별 작업 브랜치 생성 및 각자 영역의 베이스라인 구축, Day 2 조기 연동을 위한 Mock 엔드포인트 선행 오픈
+- **작업 브랜치**: feat/auth-ko, feat/backend-park, feat/ui-lee, feat/ai-cha
+- **세부 태스크**:
+  - [고준석] 비밀번호 bcrypt 해싱 및 JWT 토큰 생성 유틸리티 함수 작성 (app/auth.py)
+  - [박범규] FastAPI 기본 골격 생성, SQLite 스키마(users, chat_logs) 세팅, **조기 연동용 Mock 응답 엔드포인트(POST /api/chat 더미 응답, GET /api/health) 우선 배포**
+  - [이준혁] 반응형 채팅 인터페이스 HTML/CSS 와이어프레임 작성 및 백엔드 Mock 엔드포인트 비동기 fetch 통신 준비 (static/index.html, static/css/style.css, static/js/app.js)
+  - [차종민] 코디세이 AI API 단독 호출 PoC 스크립트 작성 및 8초 타임아웃 사전 검증 (app/ai_service.py)
 
-| 단계 | 당시 목표 | 담당 접점 |
-|---|---|---|
-| Day 1 | 개인 기능 브랜치, 인증 유틸·FastAPI·DB·UI 골격, AI PoC와 API 계약 합의 | 각 담당 독립 모듈 |
-| Day 2 | 가입/로그인·채팅·로깅·프론트 통신 구현, 대역을 활용한 조기 연동 | 인증 ↔ 채팅 ↔ UI, AI 함수 계약 |
-| Day 3 | 실제 Gemini·SQLite 결합, PR 리뷰 후 develop 통합 | 팀 전체 사용자 흐름 |
-| Day 4 | 입력·타임아웃·DB·서버 로그 검증, EC2 배포와 외부 시연 | 팀 전체, #16~#19 및 #26 |
+### Day 2: 각자 담당 코어 완성 & [조기 Mock E2E 관통]
+- **공통 목표**: 컴포넌트 핵심 로직 완성 및 **프론트↔백엔드 간 조기 Mock E2E 연동(Walking Skeleton)을 완통하여 통합 리스크 조기 제거**
+- **세부 태스크**:
+  - **[조기 E2E 통합]**: 프론트엔드 UI에서 질문 입력 시 백엔드 Mock 엔드포인트로 전송되어 화면에 답변 말풍선과 지연시간이 렌더링되는 전 과정을 Day 2에 선제적으로 확인 (CORS, 헤더, JSON 파싱 오류 사전 차단)
+  - [고준석] 회원가입/로그인/내 정보 조회 엔드포인트 및 get_current_user 인증 의존성 완성 (app/routers/auth_router.py), 인증 라우터 비동기 통합 테스트 스위트 작성 (tests/test_auth_router.py)
+  - [박범규] POST /api/chat 메인 라우터 로직(유효성 검사, latency 측정, DB 저장), GET /api/me/chats 구현, 표준 4대 로깅 포맷터 적용 (app/logger.py, app/routers/chat_router.py)
+  - [이준혁] 로그인/회원가입 모달 UI 완성, 토큰 로컬스토리지 저장 및 백엔드 비동기 통신 연동 (static/js/auth.js)
+  - [차종민] 웹/DB와 분리된 순수 비동기 함수 형태의 AI 생성기 완성(문맥 조립, 8초 타임아웃 방어, Mock AI 엔진) (app/ai_service.py)
 
-당시 코디세이/OpenAI 호환 API·내장 Mock 계획은 [#29](https://github.com/AI-SW-Basic-B7-1/7-1/pull/29)의 Gemini 전환으로 현행 실행 방법이 아닙니다. 기존 4일 계획을 120시간의 완료 증빙으로 환산하지 않습니다.
+### Day 3: 실제 백엔드-프론트엔드-AI 전체 결합 (Alpha Release)
+- **공통 목표**: Day 2에 이미 검증된 E2E 파이프라인 상의 Mock 응답을 **실제 코디세이 AI API 및 SQLite DB 영속 저장으로 교체 결합**
+- **세부 태스크**:
+  - [박범규 + 차종민] POST /api/chat 라우터 내부에서 차종민의 ai_service.generate_chat_response 비동기 함수를 호출하고 응답 결과를 SQLite chat_logs 테이블에 자동 저장
+  - [고준석 + 박범규] POST /api/chat 및 GET /api/me/chats에 get_current_user 인증 의존성(current_user: UserInDB = Depends(get_current_user))을 결합하여 실제 로그인한 사용자 식별자(user_id) 기반 대화 저장 연동
+  - [이준혁 + 팀 전원] 브라우저 UI에서 실제 로그인 -> 질문 전송 -> 실제 AI 답변 수신 -> DB 저장 -> 대화 이력(GET /api/me/chats) 갱신 전 과정 실데이터 E2E 검증
+  - [공통] 통합 PR 생성, 상호 코드 리뷰 후 develop 브랜치에 머지
 
-## 5. 후속 개발 순서와 완료 기준
+### Day 4: 안정성 강화, 입력 검증 & 프로토타입 최종 점검
+- **공통 목표**: 예외 방어 및 인프라 배포를 완료하고 시연 준비 완료
+- **세부 태스크**:
+  - [고준석] 비로그인 사용자 및 만료된 토큰 요청 시 401 차단 동작 자동화 테스트(pytest) 검증 완료
+  - [박범규] 공백 입력(400) 및 500자 초과 비정상 입력(422) 차단 검증, **SQLite DB 검증(scripts/check_db_chats.sql)** 및 **서버 텍스트 로그 검증(scripts/check_server_logs.sh)** 수행
+  - [차종민] AI 타임아웃 발생 시 504 안내 메시지 UI 연동 및 Mock AI 정상 구동 테스트
+  - [이준혁] 에러 토스트 피드백, 로딩 스피너 및 반응형 UI 최종 디테일 보완
+  - [팀 전원] AWS EC2 인프라 세팅(Nginx, 2GB Swap, Systemd) 및 외부 접속 시연 점검
 
-1. **미션 기반 검증**: 실 AI 응답·같은 방 문맥·재접속 이력·오류 후 정상 요청을 외부 URL에서 확인하고 배포 SHA를 남깁니다. 자동 테스트 통과만으로 평가 완료로 표시하지 않습니다.
-2. **반려동물 여행 데이터**: 승인된 목록/상세 조회 PoC, 실제 필드 매핑, 서버 조회와 근거 결합을 구현합니다. 출처·조회시점과 확인되지 않은 조건을 구분합니다.
-3. **지역 수요 확장**: 별도 PoC로 지역 코드·기간·지표 정의·단위를 확인합니다. 비교 불가 값은 0이나 순위로 만들지 않고, 장소/동반 조건을 먼저 만족한 후보 설명에만 보조 사용합니다.
-4. **Google Maps 확장**: 지도 표시 제품과 구조화된 좌표 응답·저장 계약을 정하고, SDK·키 제한·오류 대안·계정 격리를 확인합니다. 외부 링크만 제공한 상태를 API 연동으로 표시하지 않습니다.
-5. **평가 패키지**: README부터 API·DB·설정·외부 URL·역할·Git 이력까지 연결하고 미확인 항목을 남깁니다.
+---
 
-관광·수요·지도는 각각 기능 PR로 검증합니다. 세부 계약·실패 사례·추적 이슈는 [후속 명세](pet_travel_spec.md), 미션 필수 7개 영역과 산출물 대조는 [평가 가이드](evaluation_guide.md)에 있습니다.
+## 4. 리스크 관리 및 대응 방안
 
-## 6. 협업 규칙
-
-개인 기능 브랜치 → PR·리뷰 → `develop` 통합 → 배포용 `main` 반영 원칙을 유지합니다. 직접 main push를 하지 않습니다. 현재 기본 브랜치는 `develop`이며 EC2 wrapper의 **코드 기본값은 `main`**, 매뉴얼은 `--branch develop`을 명시합니다.
-
-팀원별 유의미한 커밋 10회 이상은 요구사항이며 전원 달성으로 확인되지 않았습니다. author 집계와 역할 근거는 [평가 가이드](evaluation_guide.md)에 기록합니다. 수를 맞추기 위한 빈 커밋, 타인의 커밋 재귀속, 미병합 PR의 완료 표시는 하지 않습니다. 실제 키·토큰·DB·대화 내용은 공개 이슈/PR 증빙에 올리지 않습니다.
+| 리스크 요인 | 영향도 | 사전 예방 및 대응 방안 |
+| :--- | :---: | :--- |
+| **AWS EC2 t2.micro 메모리 부족 (OOM)** | 높음 | 1GB RAM 한계 극복을 위해 OS 설치 직후 **2GB Swap 메모리**를 즉시 생성하여 프로세스 강제 종료를 사전에 차단합니다. |
+| **코디세이 AI API 지연 및 무한 대기** | 높음 | 모든 외부 AI 호출에 timeout=8.0초를 강제 설정하고, 실패 시 504 안내 메시지를 반환하여 서버 프로세스가 다운되지 않도록 격리합니다. |
+| **프론트-백엔드 늦은 결합으로 인한 통합 병목** | 높음 | Day 3 대신 **Day 1~2에 Mock 엔드포인트 기반 E2E 연동(Walking Skeleton)을 선제 완료**하여 CORS, 토큰 전달, JSON 불일치를 조기에 제거합니다. |
+| **평가자 환경의 API 키 부재** | 중간 | CODESSEY_API_KEY가 설정되지 않았을 때도 서비스 시연이 가능하도록 내장 Mock AI 엔진을 기본 탑재합니다. |
+| **브랜치 병합 시 코드 충돌 및 모듈 혼선** | 중간 | `POST /api/chat` 라우터 소유권(백엔드)과 AI 생성 로직(AI 담당자 순수 함수)의 책임을 엄격히 분리하여 독립 개발합니다. |

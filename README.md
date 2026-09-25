@@ -49,7 +49,8 @@ Google Maps는 지도 표시와 경로 계산을 구분합니다. 2026-09-23 [�
 | 평가용 서비스 주소 | [http://15.164.49.77/](http://15.164.49.77/) — 기존 배포 문서에 등록된 주소, 평가 직전 재확인 필요 |
 | 상태 확인 | [배포 헬스체크](http://15.164.49.77/api/health) — 확인 범위·시각은 평가 가이드 참조 |
 | 실행 중 API 문서 | 로컬 [Swagger UI](http://127.0.0.1:8000/docs), [ReDoc](http://127.0.0.1:8000/redoc) |
-| 기획·역할·협업 | [프로젝트 계획](docs/project_plan.md) |
+| 현재 기획·역할·후속 순서 | [중기 프로젝트 계획](docs/midterm_project_plan.md) |
+| 프로젝트 시작 기록 | [4일 프로토타입 초기 프로젝트 계획](docs/project_plan.md) |
 | 공공데이터 후속 명세 | [반려동물 여행 서비스 명세](docs/pet_travel_spec.md) |
 | 현재 API 계약 | [API 명세](docs/api_spec.md) |
 | UI 동작·검증 경계 | [프론트엔드 가이드](docs/FRONTEND_GUIDE.md) |
