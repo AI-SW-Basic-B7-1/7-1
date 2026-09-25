@@ -4,12 +4,14 @@
 
 이 문서는 Windows 개발 환경에서 AWS Systems Manager(SSM)를 사용해 B7-1 애플리케이션을 EC2에 배포하는 절차를 설명합니다.
 
-기본 배포 대상은 다음과 같습니다.
+아래는 기존 팀 시연 배포 대상입니다. 스크립트는 develop에 병합되어 있으나 이 문서 정비에서는 배포를 실행하지 않았습니다. 공개 GET 확인과 미실행 범위는 [평가 가이드](evaluation_guide.md)를 봅니다.
+
+**주의: wrapper의 `DEPLOY_BRANCH` 코드 기본값은 `main`입니다.** 이 매뉴얼은 통합본 시연을 위해 `--branch develop`을 명시합니다. 기본 브랜치(develop)와 스크립트 기본값(main)은 다르며 main에 최신 앱이 있다고 가정하지 않습니다.
 
 | 항목 | 값 |
 | --- | --- |
 | AWS 리전 | ap-northeast-2 |
-| 배포 브랜치 | develop |
+| 이 매뉴얼의 배포 브랜치 | develop (`--branch develop` 명시) |
 | EC2 인스턴스 ID | i-0b0b18a5347d8a96d |
 | EC2 공개 주소 | 15.164.49.77 |
 | EC2 사용자 | ubuntu |
@@ -95,7 +97,7 @@ scripts/ec2/deploy_ec2.sh
 scripts/ec2/backup_db.sh
 ~~~
 
-현재 확인된 상태에서는 이 세 파일이 원격 develop에 아직 반영되지 않았으므로, 실제 배포 전에 별도로 커밋하고 원격 develop에 반영해야 합니다.
+2026-09-23 `develop`의 `755e7e2`에서 세 파일을 확인했습니다. [#44](https://github.com/AI-SW-Basic-B7-1/7-1/pull/44), [#48](https://github.com/AI-SW-Basic-B7-1/7-1/pull/48)은 병합되었습니다. 이후 배포 전에는 `git fetch origin` 후 다시 확인합니다.
 
 ### 3.4 SSM 연결 상태
 
@@ -141,7 +143,7 @@ cp .env.example .env
 | DATABASE_URL | 기본값 sqlite:///./data/chatbot.db |
 | GEMINI_API_KEY | 실제 Gemini API 키 |
 | GEMINI_MODEL | 사용할 Gemini 모델명 |
-| AI_TIMEOUT_SECONDS | AI 호출 제한 시간(초) |
+| AI_TIMEOUT_SECONDS | httpx 네트워크 타임아웃(기본 8.0초). 전체 요청의 정확한 마감시간은 아님 |
 
 SECRET_KEY를 SSH로 생성하려면 다음처럼 실행하고 출력된 값을 로컬 .env의 SECRET_KEY에 입력합니다.
 
@@ -151,7 +153,9 @@ ssh -i <PRIVATE_KEY_PATH> ubuntu@15.164.49.77 "openssl rand -hex 32"
 
 .env는 --env-file .env로 SSM 명령에 포함되어 EC2의 /home/ubuntu/app/B7-1/7-1/.env로 저장됩니다. 원격 배포 스크립트는 SECRET_KEY, GEMINI_API_KEY, DATABASE_URL이 비어 있거나 예시값인지 확인하고, EC2에서 .env 권한을 600으로 설정합니다.
 
-.env는 .gitignore에 포함되어 있으므로 Git에 커밋하지 않습니다.
+.env는 .gitignore에 포함되어 있으므로 Git에 커밋하지 않습니다. 현재 `.env.*` 전체와 SQLite `-wal`/`-shm` 파일은 모두 제외되어 있지 않으므로 업로드 전 상태를 확인합니다. 관광공사·지도 설정은 [후속 명세](pet_travel_spec.md)의 후보이며 현재 배포 필수값이 아닙니다.
+
+앱은 DATABASE_URL을 읽지만 현재 deploy_ec2.sh의 DB 권한·무결성 검사 대상은 프로젝트의 `data/chatbot.db`로 고정되어 있습니다. 백업 스크립트도 기본값이 같은 파일이며 별도 DB_PATH를 지원합니다. 배포 매뉴얼에서는 기본 DATABASE_URL을 사용하고, 사용자 지정 DB 경로의 운영/백업 일치는 별도 점검해야 합니다.
 
 ## 5. 배포 전 점검 순서
 
@@ -284,7 +288,21 @@ ssh -i <PRIVATE_KEY_PATH> ubuntu@15.164.49.77 "sudo systemctl --no-pager --full 
 active
 ~~~
 
-### 8.3 백업 예약
+### 8.3 애플리케이션 로그와 실제 시연
+
+배포 로그와 별도로 앱 이벤트는 프로젝트 기준 `logs/app.log` 및 Systemd journal에 남습니다. 프로젝트 루트에서 다음 명령으로 확인합니다.
+
+~~~bash
+grep -E 'request_received|ai_call_start|ai_call_success|ai_call_failed|db_save_success|db_save_failed|db_read_failed' logs/app.log
+sudo journalctl -u chatbot.service --no-pager -n 100
+git rev-parse HEAD
+~~~
+
+`scripts/check_server_logs.sh`와 `.ps1`은 변수 누락으로 [#17](https://github.com/AI-SW-Basic-B7-1/7-1/issues/17)에서 보강해야 합니다. 현재 위 직접 조회를 사용합니다. 실제 키·토큰·사용자 대화가 포함된 출력은 공개 증빙으로 올리지 않습니다.
+
+헬스체크 200은 AI·DB 저장 완료 증빙이 아닙니다. 외부 브라우저에서 가입/로그인 → 실제 AI 답변 → 같은 방 문맥 유지 → 재로그인 후 이력 복원 및 사용자 분리를 확인합니다. 배포 SHA와 검증 시각을 [평가 가이드](evaluation_guide.md)에 기록합니다.
+
+### 8.4 백업 예약
 
 백업 예약과 최근 백업 파일을 확인합니다.
 
@@ -315,3 +333,5 @@ aws ssm describe-instance-information --region ap-northeast-2
 - [AWS CLI describe-instance-information](https://docs.aws.amazon.com/cli/latest/reference/ssm/describe-instance-information.html)
 - [AWS CLI send-command](https://docs.aws.amazon.com/cli/latest/reference/ssm/send-command.html)
 - [Linux 인스턴스 SSH 연결](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/connect-to-linux-instance.html)
+
+현재 HTTP 시연 구성에는 HTTPS 자동 설정이 없습니다. 프리티어 적용 여부와 실제 AWS 사용량/과금은 계정에서 확인해야 하며 이 문서가 무과금을 보장하지 않습니다.
