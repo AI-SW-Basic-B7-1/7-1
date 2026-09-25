@@ -4,8 +4,24 @@
 """
 
 import logging
+from contextvars import ContextVar
 from logging.handlers import RotatingFileHandler
 from app.config import LOG_DIR, LOG_FILE
+
+request_id_context: ContextVar[str | None] = ContextVar("request_id", default=None)
+
+
+class RequestContextFilter(logging.Filter):
+    """동시 요청의 로그에 해당 요청의 추적 번호를 추가합니다."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        request_id = request_id_context.get()
+        record.request_suffix = (
+            f" request_id={request_id}"
+            if request_id and "request_id=" not in record.getMessage()
+            else ""
+        )
+        return True
 
 
 def get_app_logger() -> logging.Logger:
@@ -16,12 +32,13 @@ def get_app_logger() -> logging.Logger:
 
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     formatter = logging.Formatter(
-        "%(asctime)s %(levelname)s %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
+        "%(asctime)s %(levelname)s %(message)s%(request_suffix)s",
+        datefmt="%Y-%m-%d %H:%M:%S%z",
     )
 
     console_handler = logging.StreamHandler()
     console_handler.setFormatter(formatter)
+    console_handler.addFilter(RequestContextFilter())
 
     file_handler = RotatingFileHandler(
         LOG_FILE,
@@ -30,6 +47,7 @@ def get_app_logger() -> logging.Logger:
         encoding="utf-8",
     )
     file_handler.setFormatter(formatter)
+    file_handler.addFilter(RequestContextFilter())
 
     logger.setLevel(logging.INFO)
     logger.addHandler(console_handler)

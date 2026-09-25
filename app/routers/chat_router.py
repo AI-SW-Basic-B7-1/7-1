@@ -1,7 +1,6 @@
 """인증된 사용자의 AI 채팅 및 대화 이력 조회 API 라우터 모듈."""
 
 from time import perf_counter
-from uuid import uuid4
 
 import aiosqlite
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -62,7 +61,7 @@ async def send_chat_message(
 
     user_id = current_user.user_id
     conversation_id = chat_request.conversation_id
-    request_id = str(uuid4())
+    log_request_id = request.state.request_id
     chat_logger.info("request_received user_id=%s path=%s", user_id, request.url.path)
 
     try:
@@ -78,24 +77,24 @@ async def send_chat_message(
     except HTTPException:
         raise
     except Exception as exc:
-        chat_logger.error("db_read_failed user_id=%s error=%s", user_id, exc)
+        chat_logger.error("db_read_failed user_id=%s error=%s", user_id, exc, exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="대화 기록을 불러오지 못했습니다.",
         ) from exc
 
-    chat_logger.info("ai_call_start user_id=%s request_id=%s", user_id, request_id)
+    chat_logger.info("ai_call_start user_id=%s request_id=%s", user_id, log_request_id)
     started_at = perf_counter()
     try:
         answer = await generate_chat_response(question, history)
     except AITimeoutError as exc:
-        chat_logger.error("ai_call_failed request_id=%s error=%s", request_id, exc)
+        chat_logger.error("ai_call_failed request_id=%s error=%s", log_request_id, exc, exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_504_GATEWAY_TIMEOUT,
             detail="현재 AI 응답이 지연되고 있습니다. 잠시 후 다시 시도해 주세요.",
         ) from exc
     except Exception as exc:
-        chat_logger.error("ai_call_failed request_id=%s error=%s", request_id, exc)
+        chat_logger.error("ai_call_failed request_id=%s error=%s", log_request_id, exc, exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="AI 응답을 생성하지 못했습니다. 잠시 후 다시 시도해 주세요.",
@@ -103,7 +102,7 @@ async def send_chat_message(
 
     latency_ms = max(0, round((perf_counter() - started_at) * 1000))
     chat_logger.info(
-        "ai_call_success request_id=%s latency_ms=%s", request_id, latency_ms
+        "ai_call_success request_id=%s latency_ms=%s", log_request_id, latency_ms
     )
 
     try:
@@ -116,7 +115,7 @@ async def send_chat_message(
             detail=str(exc),
         ) from exc
     except Exception as exc:
-        chat_logger.error("db_save_failed user_id=%s error=%s", user_id, exc)
+        chat_logger.error("db_save_failed user_id=%s error=%s", user_id, exc, exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="대화 기록을 저장하지 못했습니다.",
