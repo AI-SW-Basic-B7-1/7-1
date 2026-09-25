@@ -118,6 +118,13 @@ async def test_chat_save_logs_and_user_history_isolation(
     assert "ai_call_start user_id=%s request_id=%s" in formats
     assert "ai_call_success request_id=%s latency_ms=%s" in formats
     assert "db_save_success user_id=%s chat_id=%s" in formats
+    start_call = next(
+        call for call in info_log.call_args_list if call.args[0].startswith("ai_call_start ")
+    )
+    success_call = next(
+        call for call in info_log.call_args_list if call.args[0].startswith("ai_call_success ")
+    )
+    assert start_call.args[2] == success_call.args[1] == response.headers["X-Request-ID"]
 
 
 @pytest.mark.anyio
@@ -147,6 +154,7 @@ async def test_chat_timeout_returns_504_and_logs_failure(
     assert error_log.call_args.args[0] == (
         "ai_call_failed request_id=%s error=%s"
     )
+    assert error_log.call_args.args[1] == response.headers["X-Request-ID"]
 
 
 @pytest.mark.anyio

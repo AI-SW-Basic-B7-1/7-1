@@ -15,6 +15,7 @@ from app.lifespan import app_lifespan
 from app.routers.auth_router import router as auth_router
 from app.routers.chat_router import router as chat_router
 from app.schemas import HealthResponse
+from app.request_logging import RequestLoggingMiddleware
 
 
 def create_app() -> FastAPI:
@@ -27,6 +28,7 @@ def create_app() -> FastAPI:
     )
 
     configure_cors(fastapi_app)
+    fastapi_app.add_middleware(RequestLoggingMiddleware)
     register_exception_handlers(fastapi_app)
     register_routers(fastapi_app)
     mount_static_files(fastapi_app)
@@ -49,6 +51,7 @@ def configure_cors(app: FastAPI) -> None:
         allow_credentials=True,
         allow_methods=["GET", "POST", "OPTIONS"],
         allow_headers=["Authorization", "Content-Type"],
+        expose_headers=["X-Request-ID"],
     )
 
 

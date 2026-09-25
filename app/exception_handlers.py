@@ -64,15 +64,18 @@ class ExceptionHandlerRegistrar:
         exc: Exception,
     ) -> JSONResponse:
         """처리되지 않은 서버 예외를 공통 오류 응답 형식으로 반환합니다."""
-        app_logger.exception(
-            "unhandled_exception method=%s path=%s error=%s",
-            request.method,
-            request.url.path,
-            exc,
-        )
+        if not getattr(request.state, "request_error_logged", False):
+            app_logger.exception(
+                "unhandled_exception method=%s path=%s error=%s",
+                request.method,
+                request.url.path,
+                exc,
+            )
         return self._build_error_response(
             status_code=500,
             detail="서버 내부 오류가 발생했습니다.",
+            headers={"X-Request-ID": request.state.request_id}
+            if hasattr(request.state, "request_id") else None,
         )
 
     def _build_error_response(
