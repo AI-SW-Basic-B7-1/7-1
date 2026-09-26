@@ -80,16 +80,18 @@ aws sts get-caller-identity --region ap-northeast-2
 
 임시 인증 세션이 만료되면 배포 전에 aws login을 다시 실행해야 합니다. 운영 환경에서는 root 자격증명보다 필요한 권한만 부여한 IAM 사용자 또는 IAM Identity Center 사용을 권장합니다.
 
-### 3.3 원격 develop 브랜치
+### 3.3 원격 배포 브랜치
 
-run_ec2_deploy.sh는 로컬 파일을 EC2로 복사하는 방식이 아니라 Git 원격 저장소의 지정 브랜치를 EC2에서 clone 또는 pull합니다. 따라서 배포에 필요한 세 스크립트와 애플리케이션 코드가 원격 develop 브랜치에 먼저 존재해야 합니다.
+`run_ec2_deploy.sh`는 로컬 파일을 EC2로 복사하지 않고 Git 원격 저장소의 지정 브랜치에서 코드를 clone 또는 pull합니다. 배포 전에 실제 사용할 브랜치를 정하고, 해당 브랜치의 원격 ref에 배포 스크립트 세 개가 있는지 확인합니다.
 
 ~~~bash
-git ls-remote --heads origin develop
-git ls-tree -r --name-only origin/develop -- scripts/ec2
+DEPLOY_BRANCH=develop
+git fetch origin
+git ls-remote --heads origin "$DEPLOY_BRANCH"
+git ls-tree -r --name-only "origin/$DEPLOY_BRANCH" -- scripts/ec2
 ~~~
 
-두 번째 명령의 결과에 다음 세 파일이 모두 포함되어야 합니다.
+`DEPLOY_BRANCH`는 실제 배포할 브랜치로 설정합니다. `develop`이 아닌 브랜치를 배포한다면 그 브랜치 이름을 지정합니다. 마지막 명령의 결과에 다음 세 파일이 모두 포함되어야 합니다.
 
 ~~~text
 scripts/ec2/run_ec2_deploy.sh
@@ -97,7 +99,7 @@ scripts/ec2/deploy_ec2.sh
 scripts/ec2/backup_db.sh
 ~~~
 
-2026-09-23 `develop`의 `755e7e2`에서 세 파일을 확인했습니다. [#44](https://github.com/AI-SW-Basic-B7-1/7-1/pull/44), [#48](https://github.com/AI-SW-Basic-B7-1/7-1/pull/48)은 병합되었습니다. 이후 배포 전에는 `git fetch origin` 후 다시 확인합니다.
+이 확인은 선택한 원격 브랜치에 필요한 파일이 있는지 검사합니다. 파일이 누락되면 해당 브랜치에 먼저 커밋·병합한 뒤 배포합니다. 파일 존재 확인만으로 애플리케이션의 실행 상태가 보장되지는 않습니다.
 
 ### 3.4 SSM 연결 상태
 
@@ -228,10 +230,10 @@ deploy_ec2.sh가 SSM에서 root 권한으로 실행되면 다음 작업을 수�
 - 프로젝트와 SQLite 데이터 디렉터리 권한 설정
 - Python 가상환경 생성 및 requirements.txt 설치
 - 배포 전 pytest -q 실행
-- Nginx를 80번 포트의 reverse proxy로 설정
+- Nginx를 80번 포트의 reverse proxy로 설정하고 `/static/` 요청도 FastAPI로 전달
 - SQLite, .env, Git, 로그 파일 외부 접근 차단
 - chatbot.service Systemd 서비스 등록 및 재시작
-- /api/health 헬스체크
+- `/api/health` 헬스체크와 CSS·JavaScript 정적 파일 HTTP 응답 점검
 - SQLite 무결성 검사
 - SQLite 백업 Cron 등록
 
