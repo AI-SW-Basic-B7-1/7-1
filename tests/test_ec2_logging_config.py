@@ -92,11 +92,18 @@ def script_environment(tmp_path):
                 property_name = args[args.index("-p") + 1]
                 if property_name == "WorkingDirectory":
                     print(project)
+                elif property_name == "MainPID":
+                    print("12345")
                 else:
                     prefix = property_name + "="
                     for line in dropin.read_text().splitlines():
                         if line.startswith(prefix):
-                            print(line[len(prefix):])
+                            value = line[len(prefix):]
+                            if property_name == "StandardOutput":
+                                value = value.split(":", 1)[0]
+                            print(value)
+        elif command == "readlink":
+            print(logs / ("wrong.log" if mode == "wrong_output_path" else "server.log"))
         elif command == "nginx":
             candidate = (root / "site.conf").read_text()
             if mode == "invalid_config" and "log_format" in candidate:
@@ -142,7 +149,7 @@ def script_environment(tmp_path):
             sys.exit(2)
     '''), encoding="utf-8")
     driver.chmod(0o755)
-    for name in ("nginx", "systemctl", "curl", "realpath", "sleep", "chmod"):
+    for name in ("nginx", "systemctl", "curl", "realpath", "readlink", "sleep", "chmod"):
         (commands / name).symlink_to(driver)
 
     def run(mode="success"):
@@ -184,7 +191,7 @@ def test_script_applies_and_reapplies_with_distinct_probes(script_environment):
 @pytest.mark.parametrize("mode", [
     "query_leak", "referer_leak", "access_mismatch", "app_mismatch",
     "prefixed_id", "app_incomplete", "invalid_nginx_id", "invalid_header",
-    "logs_exposed", "redirect", "invalid_config",
+    "logs_exposed", "redirect", "invalid_config", "wrong_output_path",
 ])
 @pytest.mark.parametrize("existing_dropin", [False, True])
 def test_failed_verification_restores_settings(script_environment, mode, existing_dropin):
