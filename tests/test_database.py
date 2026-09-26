@@ -3,7 +3,7 @@
 import aiosqlite
 import pytest
 
-from app.database import get_db_connection, init_db, save_chat_log
+from app.database import ConversationAccessError, get_db_connection, init_db, save_chat_log
 
 
 async def get_column_names(
@@ -113,7 +113,7 @@ async def test_save_chat_log_rejects_another_users_conversation(tmp_path):
             50,
         )
 
-        with pytest.raises(ValueError):
+        with pytest.raises(ConversationAccessError):
             await save_chat_log(
                 connection,
                 intruder_id,
