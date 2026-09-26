@@ -101,8 +101,8 @@ test("선택 AI 헤더 없이 로그인 계약을 처리한다", async () => {
   assert.equal(calls, 1);
 });
 
-test("서버 detail과 400·422·500·504 상태를 보존한다", async () => {
-  for (const status of [400, 422, 500, 504]) {
+test("서버 detail과 인증·조회·검증·서버 오류 상태를 보존한다", async () => {
+  for (const status of [400, 401, 404, 422, 500, 502, 504]) {
     globalThis.fetch = async () => jsonResponse(status, { detail: `safe-${status}` });
     await assert.rejects(
       api.request("/contract-error"),
@@ -112,6 +112,30 @@ test("서버 detail과 400·422·500·504 상태를 보존한다", async () => {
         && error.message === `safe-${status}`
       ),
     );
+  }
+});
+
+test("채팅 오류는 상태별 안내를 반환하고 자동 재전송하지 않는다", async () => {
+  const messages = {
+    401: "인증이 필요합니다.",
+    404: "요청한 기능을 찾을 수 없습니다.",
+    422: "입력 형식을 확인해 주세요.",
+    500: "서버 처리 중 오류가 발생했습니다.",
+    502: "AI 응답을 생성하지 못했습니다. 잠시 후 다시 시도해 주세요.",
+    504: "현재 AI 응답이 지연되고 있습니다. 잠시 후 다시 시도해 주세요.",
+  };
+  for (const [status, message] of Object.entries(messages)) {
+    let calls = 0;
+    globalThis.fetch = async () => {
+      calls += 1;
+      return jsonResponse(Number(status), {});
+    };
+    await assert.rejects(api.sendChat("보존할 질문", "token"), (error) => (
+      error instanceof api.ApiError
+      && error.status === Number(status)
+      && error.message === message
+    ));
+    assert.equal(calls, 1);
   }
 });
 
