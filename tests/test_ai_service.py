@@ -4,7 +4,7 @@ import httpx
 import pytest
 
 from app import ai_service
-from app.ai_service import AITimeoutError, generate_chat_response
+from app.ai_service import AIServiceError, AITimeoutError, generate_chat_response
 
 
 class FakeResponse:
@@ -101,5 +101,41 @@ async def test_generate_chat_response_rejects_invalid_payload(monkeypatch):
     fake_client = FakeAsyncClient(response=FakeResponse({"candidates": []}))
     monkeypatch.setattr(ai_service.httpx, "AsyncClient", lambda **kwargs: fake_client)
 
-    with pytest.raises(ValueError, match="Gemini 응답 형식"):
+    with pytest.raises(AIServiceError, match="Gemini 응답 형식"):
         await generate_chat_response("잘못된 응답 질문", [])
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("answer", [None, 123, {}, [], "", "   "])
+async def test_invalid_answer_is_service_error(monkeypatch, answer):
+    """문자열이 아니거나 빈 외부 응답을 AI 서비스 오류로 분류합니다."""
+    client = FakeAsyncClient(response=FakeResponse({
+        "candidates": [{"content": {"parts": [{"text": answer}]}}]
+    }))
+    monkeypatch.setattr(ai_service.httpx, "AsyncClient", lambda **kwargs: client)
+    with pytest.raises(AIServiceError):
+        await generate_chat_response("질문", [])
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("kind", ["network", "http", "json", "internal"])
+async def test_service_error_boundaries(monkeypatch, kind):
+    """외부 통신·JSON 오류만 변환하고 내부 오류는 그대로 전달합니다."""
+    request = httpx.Request("POST", "https://example.test")
+    errors = {
+        "network": httpx.ConnectError("연결 실패", request=request),
+        "http": httpx.HTTPStatusError(
+            "외부 오류", request=request, response=httpx.Response(503, request=request)
+        ),
+        "internal": RuntimeError("내부 오류"),
+    }
+    response = FakeResponse({})
+    if kind == "json":
+        def invalid_json():
+            """잘못된 JSON 응답을 재현합니다."""
+            raise ValueError("JSON 해석 실패")
+        monkeypatch.setattr(response, "json", invalid_json)
+    client = FakeAsyncClient(response=response, error=errors.get(kind))
+    monkeypatch.setattr(ai_service.httpx, "AsyncClient", lambda **kwargs: client)
+    with pytest.raises(RuntimeError if kind == "internal" else AIServiceError):
+        await generate_chat_response("질문", [])

@@ -10,6 +10,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from app.database import init_db
+from app.logger import app_logger
 
 
 class AppLifespanManager:
@@ -21,7 +22,12 @@ class AppLifespanManager:
 
     async def startup(self) -> None:
         """애플리케이션 시작 시 SQLite DB를 초기화합니다."""
-        await init_db()
+        self.is_database_initialized = False
+        try:
+            await init_db()
+        except Exception:
+            app_logger.exception("database_initialization_failed")
+            raise
         self.is_database_initialized = True
 
     async def shutdown(self) -> None:

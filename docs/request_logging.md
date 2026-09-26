@@ -37,9 +37,45 @@ HTTP·AI·DB 로그의 번호가 같습니다. 로그 필터는 비동기 요청
 스택 트레이스에는 예외 메시지가 포함되므로 로그 파일 접근 권한도 제한해야 합니다.
 Uvicorn·Nginx 접근 로그는 별도 설정이며 이 정책으로 자동 변경되지 않습니다.
 
+애플리케이션 로거는 콘솔·파일 출력 직전에 설정된 `SECRET_KEY`,
+`GEMINI_API_KEY`, Bearer 토큰과 이름이 명시된 비밀번호·토큰 값을
+`[REDACTED]`로 치환합니다. 예외 체인과 스택 트레이스에도 적용됩니다.
+임의의 질문·답변이나 이름 없이 포함된 민감정보까지 탐지하는 기능은 아닙니다.
+Uvicorn 자체의 오류 출력과 Nginx 로그에는 이 포맷터가 적용되지 않습니다.
+따라서 모든 서버 로그의 비밀값 비노출을 보장하지 않으며, 배포 검증이 필요합니다.
+
+DB 초기화 실패는 `database_initialization_failed`와 스택 트레이스로 기록하고
+예외를 다시 전달해 애플리케이션 시작을 중단합니다. 이 이벤트는 HTTP 요청이
+아니므로 요청 ID가 없습니다.
+
 ```bash
 venv/bin/python -m pytest tests/test_request_logging.py tests/test_chat_router.py -q
 tail -f logs/app.log
 ```
 
 운영체제별 로그 검증 스크립트 정비는 이슈 #17의 별도 작업으로 남습니다.
+
+## EC2 점검
+
+프로젝트 루트에서 다음 명령을 실행합니다. 서비스 설정 변경·재시작·고의 장애는
+발생시키지 않으며, 정상 헬스체크 요청 한 번과 로그 읽기만 수행합니다.
+
+```bash
+sudo bash scripts/ec2/check_error_logging.sh
+```
+
+스크립트는 활성 서비스, 실제 표준 출력 설정, 헬스체크 응답 ID와 `app.log`의
+완료 이벤트 연결을 확인합니다. `server.log`, `nginx_access.log`는 존재 여부만
+확인하므로 통과 메시지가 모든 장애 로그 검증 완료를 의미하지는 않습니다.
+`PROJECT_DIR`, `LOG_DIR`, `BASE_URL`, `SERVICE_NAME`으로 환경을 지정할 수 있습니다.
+
+현재 저장소의 `deploy_ec2.sh`는 표준 출력을 journal로 설정합니다.
+서버에 별도 적용한 설정이 있다면 스크립트가 출력한 `StandardOutput`과
+`StandardError`를 기준으로 판단합니다. 로그가 journal에만 있다고 장애는 아닙니다.
+
+실제 장애가 재발하면 발생 시각과 `X-Request-ID`를 확보한 뒤 제한된 터미널에서
+`logs/app.log`와 회전 로그를 확인합니다. 같은 요청의 오류 이벤트 바로 다음에
+호출 경로·예외 종류가 있는지 확인하고, 민감값은 공유 전에 삭제합니다.
+서비스 출력이 journal이면 `sudo journalctl -u chatbot.service -n 100 --no-pager`로,
+파일이면 `logs/server.log`로 확인합니다. 운영 서버에서 DB 잠금이나 권한 변경으로
+고의 장애를 만들지 않습니다.
