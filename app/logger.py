@@ -4,11 +4,33 @@
 """
 
 import logging
+import re
 from contextvars import ContextVar
 from logging.handlers import RotatingFileHandler
-from app.config import LOG_DIR, LOG_FILE
+from app.config import LOG_DIR, LOG_FILE, settings
 
 request_id_context: ContextVar[str | None] = ContextVar("request_id", default=None)
+
+
+class SensitiveDataFormatter(logging.Formatter):
+    """메시지와 예외 체인을 포맷한 뒤 알려진 비밀값을 출력에서 가립니다."""
+
+    def format(self, record: logging.LogRecord) -> str:
+        output = super().format(record)
+        secrets = (settings.SECRET_KEY, settings.GEMINI_API_KEY)
+        for secret in sorted(filter(None, secrets), key=len, reverse=True):
+            output = output.replace(secret, "[REDACTED]")
+        output = re.sub(
+            r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]+",
+            "Bearer [REDACTED]",
+            output,
+        )
+        output = re.sub(
+            r'''(?i)(["']?\b(?:password|hashed_password|access_token|api_key|x-goog-api-key|secret_key)["']?\s*[:=]\s*)("[^"]*"|'[^']*'|[^\s&,;]+)''',
+            r"\1[REDACTED]",
+            output,
+        )
+        return output
 
 
 class RequestContextFilter(logging.Filter):
@@ -31,7 +53,7 @@ def get_app_logger() -> logging.Logger:
         return logger
 
     LOG_DIR.mkdir(parents=True, exist_ok=True)
-    formatter = logging.Formatter(
+    formatter = SensitiveDataFormatter(
         "%(asctime)s %(levelname)s %(message)s%(request_suffix)s",
         datefmt="%Y-%m-%d %H:%M:%S%z",
     )
