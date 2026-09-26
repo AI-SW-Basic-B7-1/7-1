@@ -6,6 +6,82 @@ import pytest
 from app.database import ConversationAccessError, get_db_connection, init_db, save_chat_log
 
 
+@pytest.mark.anyio
+@pytest.mark.parametrize("existing_conversation", [False, True])
+async def test_sql_failure_rolls_back_partial_save(tmp_path, existing_conversation):
+    """실제 SQL 실패 시 새 대화방과 기록을 롤백하고 기존 데이터를 보존합니다."""
+    database_path = tmp_path / "rollback.db"
+    await init_db(database_path)
+    connection = await get_db_connection(database_path)
+    try:
+        cursor = await connection.execute(
+            "INSERT INTO users (username, hashed_password) VALUES (?, ?);",
+            ("owner", "테스트 해시"),
+        )
+        user_id = cursor.lastrowid
+        await connection.commit()
+        conversation_id = None
+        if existing_conversation:
+            _, conversation_id = await save_chat_log(
+                connection, user_id, "기존 질문", "기존 답변", 1,
+            )
+
+        # 기록 삽입 이후 갱신 단계에서 실패시켜 전체 저장의 원자성을 확인합니다.
+        await connection.execute("""
+            CREATE TRIGGER fail_conversation_update BEFORE UPDATE ON conversations
+            BEGIN SELECT RAISE(ABORT, '테스트 갱신 실패'); END;
+        """)
+        await connection.commit()
+        async with connection.execute("SELECT * FROM conversations;") as cursor:
+            original_conversations = [tuple(row) for row in await cursor.fetchall()]
+        async with connection.execute("SELECT * FROM chat_logs;") as cursor:
+            original_chats = [tuple(row) for row in await cursor.fetchall()]
+
+        with pytest.raises(aiosqlite.IntegrityError, match="테스트 갱신 실패"):
+            await save_chat_log(
+                connection, user_id, "실패 질문", "실패 답변", 2, conversation_id,
+            )
+
+        assert not connection.in_transaction
+        async with connection.execute("SELECT * FROM conversations;") as cursor:
+            assert [tuple(row) for row in await cursor.fetchall()] == original_conversations
+        async with connection.execute("SELECT * FROM chat_logs;") as cursor:
+            assert [tuple(row) for row in await cursor.fetchall()] == original_chats
+        await connection.execute("DROP TRIGGER fail_conversation_update;")
+        await connection.commit()
+        await save_chat_log(connection, user_id, "복구 질문", "복구 답변", 3, conversation_id)
+    finally:
+        await connection.close()
+
+
+@pytest.mark.anyio
+async def test_locked_database_recovers_after_writer_releases_lock(tmp_path):
+    """실제 쓰기 잠금 오류 이후 롤백과 잠금 해제 후 재시도를 검증합니다."""
+    database_path = tmp_path / "locked.db"
+    await init_db(database_path)
+    connection = await get_db_connection(database_path)
+    blocker = await get_db_connection(database_path)
+    try:
+        cursor = await connection.execute(
+            "INSERT INTO users (username, hashed_password) VALUES (?, ?);",
+            ("owner", "테스트 해시"),
+        )
+        user_id = cursor.lastrowid
+        await connection.commit()
+        await connection.execute("PRAGMA busy_timeout = 0;")
+        await blocker.execute("BEGIN IMMEDIATE;")
+        with pytest.raises(aiosqlite.OperationalError, match="locked"):
+            await save_chat_log(connection, user_id, "질문", "답변", 1)
+        assert not connection.in_transaction
+        async with connection.execute("SELECT COUNT(*) FROM conversations;") as cursor:
+            assert (await cursor.fetchone())[0] == 0
+        await blocker.rollback()
+        await save_chat_log(connection, user_id, "복구 질문", "복구 답변", 1)
+    finally:
+        await blocker.close()
+        await connection.close()
+
+
 async def get_column_names(
     connection: aiosqlite.Connection,
     table_name: str,
