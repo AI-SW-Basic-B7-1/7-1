@@ -12,7 +12,7 @@ import aiosqlite
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from app.ai_service import AITimeoutError
+from app.ai_service import AIServiceError, AITimeoutError
 from app.auth import create_access_token
 from app.database import get_db, init_db
 from app.main import app
@@ -157,6 +157,7 @@ async def test_chat_length_exceeded_validation_error(test_client: AsyncClient):
         headers=headers,
     )
     assert response.status_code == 422
+    assert response.json() == {"detail": "질문은 최대 500자까지 입력할 수 있습니다."}
 
 
 @pytest.mark.anyio
@@ -287,7 +288,7 @@ async def test_chat_ai_failure_502(
     token = await register_and_login(test_client, "user_failure_test")
     headers = {"Authorization": f"Bearer {token}"}
 
-    mock_generate_chat_response.side_effect = RuntimeError("Gemini API 오류")
+    mock_generate_chat_response.side_effect = AIServiceError("Gemini API 오류")
     response = await test_client.post(
         "/api/chat",
         json={"question": "일반 오류 테스트"},
