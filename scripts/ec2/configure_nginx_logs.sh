@@ -28,7 +28,7 @@ if [[ "${1:-}" == '--help' ]]; then
 fi
 [[ $# -eq 0 ]] || { printf '%s\n' '지원하지 않는 인자입니다.' >&2; exit 1; }
 [[ $EUID -eq 0 ]] || { printf '%s\n' 'sudo로 실행해 주세요.' >&2; exit 1; }
-for command in nginx systemctl realpath awk mktemp curl openssl; do
+for command in nginx systemctl realpath readlink awk mktemp curl openssl; do
     command -v "${command}" >/dev/null || exit 1
 done
 [[ -f "${SITE_CONFIG}" ]] || { printf '%s\n' '사이트 설정 파일이 없습니다.' >&2; exit 1; }
@@ -154,11 +154,29 @@ printf '[Service]\nStandardOutput=append:%s/server.log\nStandardError=inherit\n'
 chmod 644 "${DROPIN_FILE}"
 systemctl daemon-reload
 # 더 뒤에 로드되는 설정이 덮어쓰는 경우 재시작 전에 중단합니다.
-[[ "$(systemctl show "${SERVICE}" -p StandardOutput --value)" == "append:${LOG_DIR}/server.log" ]]
-[[ "$(systemctl show "${SERVICE}" -p StandardError --value)" == 'inherit' ]]
+[[ "$(systemctl show "${SERVICE}" -p StandardOutput --value)" == 'append' ]] || {
+    printf '%s\n' '서비스 표준 출력이 append 모드가 아닙니다.' >&2
+    exit 1
+}
+[[ "$(systemctl show "${SERVICE}" -p StandardError --value)" == 'inherit' ]] || {
+    printf '%s\n' '서비스 표준 오류가 표준 출력을 상속하지 않습니다.' >&2
+    exit 1
+}
 systemctl reload nginx
 systemctl restart "${SERVICE}"
 systemctl is-active --quiet "${SERVICE}"
+# 출력 경로는 실행 중인 프로세스의 파일 디스크립터로 확인합니다.
+SERVICE_PID="$(systemctl show "${SERVICE}" -p MainPID --value)"
+[[ "${SERVICE_PID}" =~ ^[1-9][0-9]*$ ]] || {
+    printf '%s\n' '서비스 프로세스 ID를 확인하지 못했습니다.' >&2
+    exit 1
+}
+for descriptor in 1 2; do
+    [[ "$(readlink -f "/proc/${SERVICE_PID}/fd/${descriptor}")" == "${LOG_DIR}/server.log" ]] || {
+        printf '서비스 출력 경로가 server.log와 다릅니다: fd=%s\n' "${descriptor}" >&2
+        exit 1
+    }
+done
 
 # 실제 Nginx 요청으로 쿼리 비기록, 요청 ID 연결과 로그 경로 차단을 확인합니다.
 QUERY_PROBE="b7_1_query_probe_$(openssl rand -hex 16)"
