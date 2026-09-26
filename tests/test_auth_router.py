@@ -82,6 +82,7 @@ async def test_register_validation_errors(test_client: AsyncClient):
         json={"username": "ab", "password": "validpassword"},
     )
     assert res1.status_code == 422
+    assert res1.json() == {"detail": "아이디는 최소 3자 이상이어야 합니다."}
 
     # 2. 4자 미만 짧은 비밀번호
     res2 = await test_client.post(
@@ -89,6 +90,7 @@ async def test_register_validation_errors(test_client: AsyncClient):
         json={"username": "validuser", "password": "123"},
     )
     assert res2.status_code == 422
+    assert res2.json() == {"detail": "비밀번호는 최소 4자 이상이어야 합니다."}
 
     # 3. 공백 아이디
     res3 = await test_client.post(
@@ -96,6 +98,15 @@ async def test_register_validation_errors(test_client: AsyncClient):
         json={"username": "   ", "password": "validpassword"},
     )
     assert res3.status_code == 422
+    assert res3.json() == {"detail": "아이디는 공백일 수 없습니다."}
+
+    # 4. 필수 비밀번호 누락
+    res4 = await test_client.post(
+        "/api/auth/register",
+        json={"username": "validuser"},
+    )
+    assert res4.status_code == 422
+    assert res4.json() == {"detail": "비밀번호를 입력해 주세요."}
 
 
 @pytest.mark.anyio
