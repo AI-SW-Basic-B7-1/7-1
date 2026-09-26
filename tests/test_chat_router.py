@@ -14,6 +14,58 @@ from app.main import app
 from app.routers import chat_router
 
 
+@pytest.mark.anyio
+@pytest.mark.parametrize("path", ["/api/chat", "/api/me/chats"])
+async def test_database_connection_failure_returns_safe_500(chat_client, tmp_path, path):
+    """열 수 없는 DB 경로의 연결 실패가 안전한 오류 응답으로 변환됩니다."""
+    original_dependency = app.dependency_overrides[get_db]
+
+    async def unavailable_database():
+        """파일 대신 디렉터리를 열어 운영체제와 무관하게 연결 실패를 재현합니다."""
+        connection = await get_db_connection(tmp_path)
+        try:
+            yield connection
+        finally:
+            await connection.close()
+
+    app.dependency_overrides[get_db] = unavailable_database
+    try:
+        kwargs = {"json": {"question": "질문"}} if path == "/api/chat" else {}
+        response = await chat_client.request(
+            "POST" if path == "/api/chat" else "GET", path,
+            headers=authorization_header("user_one"), **kwargs,
+        )
+        assert response.status_code == 500
+        assert response.json() == {"detail": "서버 내부 오류가 발생했습니다."}
+        assert response.headers["X-Request-ID"]
+    finally:
+        app.dependency_overrides[get_db] = original_dependency
+
+    assert (await chat_client.get(
+        "/api/me/chats", headers=authorization_header("user_one"),
+    )).status_code == 200
+
+
+@pytest.mark.anyio
+async def test_history_query_failure_returns_safe_500(chat_client, monkeypatch):
+    """대화 이력 조회 실패를 숨김없이 기록하되 응답에 내부 정보를 노출하지 않습니다."""
+    async def fail_query(*args, **kwargs):
+        """조회 중 발생한 DB 오류를 재현합니다."""
+        raise aiosqlite.OperationalError("노출 금지 테이블 정보")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(chat_router, "get_chat_logs_by_user", fail_query)
+        response = await chat_client.get(
+            "/api/me/chats", headers=authorization_header("user_one"),
+        )
+    assert response.status_code == 500
+    assert response.json() == {"detail": "서버 내부 오류가 발생했습니다."}
+    assert response.headers["X-Request-ID"]
+    assert (await chat_client.get(
+        "/api/me/chats", headers=authorization_header("user_one"),
+    )).status_code == 200
+
+
 @pytest.fixture
 async def chat_client(tmp_path, monkeypatch) -> AsyncGenerator[AsyncClient, None]:
     """사용자 두 명이 저장된 임시 DB 기반 API 클라이언트를 제공합니다."""
