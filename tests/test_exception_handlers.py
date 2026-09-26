@@ -7,6 +7,7 @@ from unittest.mock import Mock
 
 import pytest
 from fastapi import FastAPI
+from fastapi.exceptions import RequestValidationError
 from starlette.requests import Request
 
 from app.exception_handlers import ExceptionHandlerRegistrar
@@ -19,6 +20,39 @@ def test_standard_logger_has_console_and_file_handlers():
     assert any(type(handler) is logging.StreamHandler for handler in app_logger.handlers)
     assert any(isinstance(handler, RotatingFileHandler) for handler in app_logger.handlers)
     assert chat_logger.parent is app_logger
+
+
+@pytest.mark.parametrize(
+    "error,expected",
+    [
+        (
+            {"type": "string_too_short", "loc": ("body", "username")},
+            "아이디는 최소 3자 이상이어야 합니다.",
+        ),
+        (
+            {
+                "type": "value_error",
+                "loc": ("body", "username"),
+                "ctx": {"error": ValueError("아이디는 공백일 수 없습니다.")},
+            },
+            "아이디는 공백일 수 없습니다.",
+        ),
+        (
+            {
+                "type": "value_error",
+                "loc": ("body", "unknown"),
+                "ctx": {"error": ValueError("외부에 노출하면 안 되는 입력값")},
+            },
+            "요청 데이터 형식이 올바르지 않습니다.",
+        ),
+    ],
+)
+def test_validation_detail_uses_only_allowed_messages(error, expected):
+    """알려진 검증 오류만 구체화하고 임의 오류 내용은 외부에 노출하지 않습니다."""
+    registrar = ExceptionHandlerRegistrar(FastAPI())
+    validation_error = RequestValidationError([error])
+
+    assert registrar._get_validation_detail(validation_error) == expected
 
 
 def test_formatter_redacts_message_and_chained_traceback(monkeypatch):
