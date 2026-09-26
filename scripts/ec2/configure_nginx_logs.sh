@@ -28,7 +28,7 @@ if [[ "${1:-}" == '--help' ]]; then
 fi
 [[ $# -eq 0 ]] || { printf '%s\n' '지원하지 않는 인자입니다.' >&2; exit 1; }
 [[ $EUID -eq 0 ]] || { printf '%s\n' 'sudo로 실행해 주세요.' >&2; exit 1; }
-for command in nginx systemctl realpath awk mktemp curl grep; do
+for command in nginx systemctl realpath awk mktemp curl openssl; do
     command -v "${command}" >/dev/null || exit 1
 done
 [[ -f "${SITE_CONFIG}" ]] || { printf '%s\n' '사이트 설정 파일이 없습니다.' >&2; exit 1; }
@@ -161,12 +161,13 @@ systemctl restart "${SERVICE}"
 systemctl is-active --quiet "${SERVICE}"
 
 # 실제 Nginx 요청으로 쿼리 비기록, 요청 ID 연결과 로그 경로 차단을 확인합니다.
-QUERY_PROBE="b7_1_query_probe_$$"
+QUERY_PROBE="b7_1_query_probe_$(openssl rand -hex 16)"
 HEADERS_FILE="${WORK_DIR}/health_headers"
 HEALTH_READY=0
 for ((attempt=1; attempt<=30; attempt++)); do
-    if curl -fsS --max-time 3 -D "${HEADERS_FILE}" -o /dev/null \
-        "${VERIFY_BASE_URL}/api/health?probe=${QUERY_PROBE}"; then
+    if health_status="$(curl -fsS --max-time 3 -D "${HEADERS_FILE}" -o /dev/null \
+        -H "Referer: ${VERIFY_BASE_URL}/?ref=${QUERY_PROBE}" -w '%{http_code}' \
+        "${VERIFY_BASE_URL}/api/health?probe=${QUERY_PROBE}")" && [[ "${health_status}" == '200' ]]; then
         HEALTH_READY=1
         break
     fi
@@ -186,8 +187,11 @@ APP_REQUEST_ID="$(awk 'tolower($1) == "x-request-id:" {gsub("\r", "", $2); print
 ACCESS_ENTRY=''
 APP_LOG_FOUND=0
 for ((attempt=1; attempt<=5; attempt++)); do
-    ACCESS_ENTRY="$(awk -v id="request_id=${APP_REQUEST_ID}" 'index($0, id) {line=$0} END {print line}' "${LOG_DIR}/nginx_access.log")"
-    if [[ -n "${ACCESS_ENTRY}" ]] && grep -Fq "request_id=${APP_REQUEST_ID}" "${LOG_DIR}/app.log"; then
+    ACCESS_ENTRY="$(awk -v id="request_id=${APP_REQUEST_ID}" '{for (i=1; i<=NF; i++) if ($i == id) print}' "${LOG_DIR}/nginx_access.log")"
+    if [[ -n "${ACCESS_ENTRY}" ]] && awk -v id="request_id=${APP_REQUEST_ID}" '
+        /http_request_completed / {for (i=1; i<=NF; i++) if ($i == id) found=1}
+        END {exit !found}
+    ' "${LOG_DIR}/app.log"; then
         APP_LOG_FOUND=1
         break
     fi
@@ -197,12 +201,13 @@ done
     printf '%s\n' '응답·Nginx·앱 로그의 요청 ID 연결을 확인하지 못했습니다.' >&2
     exit 1
 }
-[[ "${ACCESS_ENTRY}" =~ nginx_request_id=[[:xdigit:]]{32} ]] || {
+[[ "${ACCESS_ENTRY}" =~ (^|[[:space:]])nginx_request_id=[[:xdigit:]]{32}([[:space:]]|$) ]] || {
     printf '%s\n' 'Nginx 요청 ID가 접근 로그에 기록되지 않았습니다.' >&2
     exit 1
 }
-if grep -Fq "${QUERY_PROBE}" "${LOG_DIR}/nginx_access.log"; then
-    printf '%s\n' '접근 로그에 쿼리 문자열이 기록되었습니다.' >&2
+# 과거 실행과 다른 요청의 로그는 이번 설정의 판정에 사용하지 않습니다.
+if [[ "${ACCESS_ENTRY}" == *"${QUERY_PROBE}"* ]]; then
+    printf '%s\n' '이번 요청의 접근 로그에 쿼리 또는 Referer 값이 기록되었습니다.' >&2
     exit 1
 fi
 
