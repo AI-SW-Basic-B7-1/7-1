@@ -157,6 +157,7 @@ async def test_chat_length_exceeded_validation_error(test_client: AsyncClient):
         headers=headers,
     )
     assert response.status_code == 422
+    assert response.json() == {"detail": "질문은 최대 500자까지 입력할 수 있습니다."}
 
 
 @pytest.mark.anyio
