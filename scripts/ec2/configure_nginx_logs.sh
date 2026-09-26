@@ -7,6 +7,7 @@ umask 077
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd -- "${SCRIPT_DIR}/../.." && pwd)"
 SITE_CONFIG="${SITE_CONFIG:-/etc/nginx/sites-enabled/chatbot}"
+VERIFY_BASE_URL="${VERIFY_BASE_URL:-http://127.0.0.1}"
 LOG_DIR="${PROJECT_DIR}/logs"
 SERVICE='chatbot.service'
 DROPIN_DIR="/etc/systemd/system/${SERVICE}.d"
@@ -19,6 +20,7 @@ FORMAT_END='# END B7-1 ACCESS FORMAT'
 if [[ "${1:-}" == '--help' ]]; then
     printf '%s\n' '사용법: sudo bash scripts/ec2/configure_nginx_logs.sh' \
         '선택 설정: SITE_CONFIG (기본값: /etc/nginx/sites-enabled/chatbot)' \
+        '선택 설정: VERIFY_BASE_URL (기본값: http://127.0.0.1)' \
         '단일 server 블록 사이트만 지원합니다. 기존 로그는 이동하지 않습니다.' \
         'chatbot.service의 출력 경로를 설정하고 서비스를 재시작합니다.' \
         '주의: 재시작 중 요청이 중단될 수 있습니다. 로그 회전은 별도 설정입니다.'
@@ -26,10 +28,15 @@ if [[ "${1:-}" == '--help' ]]; then
 fi
 [[ $# -eq 0 ]] || { printf '%s\n' '지원하지 않는 인자입니다.' >&2; exit 1; }
 [[ $EUID -eq 0 ]] || { printf '%s\n' 'sudo로 실행해 주세요.' >&2; exit 1; }
-for command in nginx systemctl realpath awk mktemp; do
+for command in nginx systemctl realpath awk mktemp curl grep; do
     command -v "${command}" >/dev/null || exit 1
 done
 [[ -f "${SITE_CONFIG}" ]] || { printf '%s\n' '사이트 설정 파일이 없습니다.' >&2; exit 1; }
+VERIFY_BASE_URL="${VERIFY_BASE_URL%/}"
+[[ "${VERIFY_BASE_URL}" =~ ^https?://[a-zA-Z0-9._:-]+$ ]] || {
+    printf '%s\n' '검증 주소는 경로가 없는 HTTP 또는 HTTPS 주소여야 합니다.' >&2
+    exit 1
+}
 # 경로를 설정에 삽입하므로 특수문자와 디렉터리 심볼릭 링크는 허용하지 않습니다.
 [[ "${LOG_DIR}" =~ ^/[a-zA-Z0-9_./-]+$ && ! -L "${LOG_DIR}" ]] || {
     printf '%s\n' '로그 경로에 지원하지 않는 문자 또는 심볼릭 링크가 있습니다.' >&2
@@ -106,7 +113,7 @@ awk -v dir="${LOG_DIR}" -v begin="${BEGIN_MARKER}" -v end="${END_MARKER}" \
     -v format_begin="${FORMAT_BEGIN}" -v format_end="${FORMAT_END}" '
     BEGIN {
         print format_begin
-        print "log_format b7_1_request_trace \047$remote_addr - $remote_user [$time_local] \042$request\042 $status $body_bytes_sent \042$http_referer\042 \042$http_user_agent\042 request_id=$upstream_http_x_request_id nginx_request_id=$request_id\047;"
+        print "log_format b7_1_request_trace \047$remote_addr [$time_local] method=$request_method path=$uri protocol=$server_protocol status=$status bytes=$body_bytes_sent request_id=$upstream_http_x_request_id nginx_request_id=$request_id\047;"
         print format_end
     }
     { print }
@@ -152,10 +159,68 @@ systemctl daemon-reload
 systemctl reload nginx
 systemctl restart "${SERVICE}"
 systemctl is-active --quiet "${SERVICE}"
+
+# 실제 Nginx 요청으로 쿼리 비기록, 요청 ID 연결과 로그 경로 차단을 확인합니다.
+QUERY_PROBE="b7_1_query_probe_$$"
+HEADERS_FILE="${WORK_DIR}/health_headers"
+HEALTH_READY=0
+for ((attempt=1; attempt<=30; attempt++)); do
+    if curl -fsS --max-time 3 -D "${HEADERS_FILE}" -o /dev/null \
+        "${VERIFY_BASE_URL}/api/health?probe=${QUERY_PROBE}"; then
+        HEALTH_READY=1
+        break
+    fi
+    sleep 1
+done
+[[ "${HEALTH_READY}" -eq 1 ]] || {
+    printf '%s\n' 'Nginx 경유 헬스체크에 실패했습니다.' >&2
+    exit 1
+}
+
+APP_REQUEST_ID="$(awk 'tolower($1) == "x-request-id:" {gsub("\r", "", $2); print $2; exit}' "${HEADERS_FILE}")"
+[[ "${APP_REQUEST_ID}" =~ ^[[:xdigit:]]{8}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{12}$ ]] || {
+    printf '%s\n' '응답에서 유효한 앱 요청 ID를 확인하지 못했습니다.' >&2
+    exit 1
+}
+
+ACCESS_ENTRY=''
+APP_LOG_FOUND=0
+for ((attempt=1; attempt<=5; attempt++)); do
+    ACCESS_ENTRY="$(awk -v id="request_id=${APP_REQUEST_ID}" 'index($0, id) {line=$0} END {print line}' "${LOG_DIR}/nginx_access.log")"
+    if [[ -n "${ACCESS_ENTRY}" ]] && grep -Fq "request_id=${APP_REQUEST_ID}" "${LOG_DIR}/app.log"; then
+        APP_LOG_FOUND=1
+        break
+    fi
+    sleep 1
+done
+[[ "${APP_LOG_FOUND}" -eq 1 ]] || {
+    printf '%s\n' '응답·Nginx·앱 로그의 요청 ID 연결을 확인하지 못했습니다.' >&2
+    exit 1
+}
+[[ "${ACCESS_ENTRY}" =~ nginx_request_id=[[:xdigit:]]{32} ]] || {
+    printf '%s\n' 'Nginx 요청 ID가 접근 로그에 기록되지 않았습니다.' >&2
+    exit 1
+}
+if grep -Fq "${QUERY_PROBE}" "${LOG_DIR}/nginx_access.log"; then
+    printf '%s\n' '접근 로그에 쿼리 문자열이 기록되었습니다.' >&2
+    exit 1
+fi
+
+for blocked_path in /logs /logs/ /logs/app.log /logs/app.log.1 /logs/server.log /logs/nginx_access.log; do
+    blocked_status="$(curl -sS --max-time 5 -o /dev/null -w '%{http_code}' \
+        "${VERIFY_BASE_URL}${blocked_path}" || true)"
+    [[ "${blocked_status}" == '404' ]] || {
+        printf '로그 경로 외부 차단 검증 실패: %s (HTTP %s)\n' \
+            "${blocked_path}" "${blocked_status}" >&2
+        exit 1
+    }
+done
+
 CHANGED=0
 SERVICE_CHANGED=0
 printf '설정 완료. 백업: %s\n로그: %s/nginx_access.log, nginx_error.log, server.log\n' "${BACKUP}" "${LOG_DIR}"
 printf '%s\n' '서비스 출력은 journal 대신 server.log에 기록됩니다. 기존 journal 기록은 이동하지 않습니다.' \
     '접근 로그의 request_id는 앱 응답 헤더이며, 앱을 거치지 않은 요청은 -로 표시됩니다. nginx_request_id는 별도 Nginx 추적 번호입니다.' \
+    '검증 완료: 쿼리 문자열 비기록, 앱·Nginx 요청 ID 연결, /logs 하위 경로 HTTP 404' \
     '애플리케이션 콘솔 로그는 app.log와 server.log에 중복 기록될 수 있습니다.' \
     '주의: 새 로그는 별도 회전 정책이 필요합니다. 서비스 활성 상태 확인은 API 준비 완료 검증을 대신하지 않습니다.'
