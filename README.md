@@ -63,7 +63,7 @@ Google Maps는 지도 표시와 경로 계산을 구분합니다. 2026-09-23 [�
 
 ```mermaid
 flowchart TD
-    Browser["브라우저: HTML/CSS/JavaScript"] --> Nginx["Nginx: 정적 파일·프록시"]
+    Browser["브라우저: HTML/CSS/JavaScript"] --> Nginx["Nginx: FastAPI 요청 프록시 (/static/ 포함)"]
     Nginx --> API["FastAPI: 인증·입력 검증·채팅"]
     API --> DB["SQLite: 사용자·대화방·로그"]
     API --> AI["ai_service: Gemini 호출"]
@@ -71,7 +71,7 @@ flowchart TD
     API --> Log["콘솔·logs/app.log"]
 ```
 
-로컬에서는 Uvicorn/FastAPI가 `/`와 `/static/`도 제공합니다. EC2 배포 스크립트는 Nginx가 정적 자원을 제공하고 나머지 요청을 내부 FastAPI로 전달하도록 구성합니다. 관광공사 데이터 조회와 Google Maps 연동은 위 현재 구조에 아직 포함되지 않습니다.
+로컬에서는 Uvicorn/FastAPI가 `/`와 `/static/`을 제공합니다. EC2에서는 Nginx가 `/`와 `/static/` 요청을 내부 FastAPI로 전달하고, FastAPI가 정적 파일을 제공합니다. 관광공사 데이터 조회와 Google Maps 연동은 위 현재 구조에 아직 포함되지 않습니다.
 
 `POST /api/chat`은 JWT와 DB 사용자 확인 → 질문 검증 → 대화방 소유권 확인 → 해당 방 최근 **5쌍** Q/A 조회 → Gemini 호출 → 응답과 대화방을 SQLite에 저장 → 화면에 답변 반환 순서로 처리합니다. 첫 질문은 `conversation_id`를 생략하며, AI 성공 후 DB 저장 시 새 방이 생성됩니다. 후속 질문은 응답받은 방 ID를 보냅니다. 최근 5쌍은 **AI에 넣는 문맥의 범위**이며, DB 저장 및 내 이력 조회를 5건으로 제한하지 않습니다.
 
