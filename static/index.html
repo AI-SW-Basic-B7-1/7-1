@@ -3,17 +3,19 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-    <meta name="description" content="로그인 사용자를 위한 AI Assistant 채팅 서비스">
-    <title>AI Assistant</title>
+    <meta name="description" content="반려동물과 국내여행을 준비하는 사용자를 위한 AI 채팅 서비스">
+    <title>AI Assistant | 반려동물 국내여행</title>
     <link rel="stylesheet" href="/static/css/style.css">
   </head>
-  <body>
+  <body class="pet-travel">
     <div class="app-shell">
       <aside id="sidebar" class="sidebar" aria-label="대화 메뉴">
         <div class="sidebar-top">
           <div class="brand" aria-label="AI Assistant">
-            <span class="brand-mark" aria-hidden="true">✦</span>
-            <span><strong id="brand-name">AI Assistant</strong><small id="brand-tagline">생각을 정리하는 공간</small></span>
+            <span class="brand-mark" aria-hidden="true">
+              <svg viewBox="0 0 32 32" fill="currentColor"><circle cx="8" cy="11" r="2.4"/><circle cx="14" cy="7" r="2.4"/><circle cx="21" cy="8" r="2.4"/><circle cx="26" cy="14" r="2.4"/><path d="M16 13c-3 0-4 2.7-6.5 5.3C7 21 8.3 26 12.3 26c1.4 0 2.2-.7 3.7-.7s2.3.7 3.7.7c4 0 5.3-5 2.8-7.7C20 15.7 19 13 16 13Z"/></svg>
+            </span>
+            <span><strong id="brand-name">AI Assistant</strong><small id="brand-tagline">반려동물과 함께하는 국내여행</small></span>
           </div>
           <button id="sidebar-close-button" class="sidebar-toggle sidebar-close" type="button" aria-label="사이드바 닫기">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M5 5l14 14M19 5 5 19"></path></svg>
@@ -27,8 +29,8 @@
         <p id="conversation-list-empty" class="conversation-list-empty" aria-live="polite">저장된 대화방이 없습니다.</p>
         <div class="sidebar-spacer"></div>
         <div class="sidebar-foot">
-          <span class="sidebar-avatar" aria-hidden="true">✦</span>
-          <span id="sidebar-foot-text">질문을 이어가 보세요</span>
+          <span class="sidebar-avatar" aria-hidden="true">↗</span>
+          <span id="sidebar-foot-text">여행 계획을 이어가 보세요</span>
         </div>
       </aside>
       <button id="sidebar-backdrop" class="sidebar-backdrop" type="button" aria-label="대화 메뉴 닫기" hidden></button>
@@ -39,7 +41,7 @@
             <button id="sidebar-open-button" class="sidebar-toggle sidebar-open" type="button" aria-label="대화 메뉴 열기" aria-controls="sidebar" aria-expanded="false" hidden>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"></path></svg>
             </button>
-            <div class="breadcrumb"><span id="breadcrumb-workspace">내 워크스페이스</span><span aria-hidden="true">/</span><strong id="breadcrumb-current">대화</strong></div>
+            <div class="breadcrumb"><span id="breadcrumb-workspace">나의 여행</span><span aria-hidden="true">/</span><strong id="breadcrumb-current">여행 상담</strong></div>
           </div>
           <div class="session-actions">
             <span id="ai-mode-badge" class="mode-badge" hidden></span>
@@ -51,9 +53,9 @@
         <main class="chat-panel" aria-labelledby="chat-title">
           <section class="chat-heading">
             <div class="chat-heading-inner">
-              <p id="hero-eyebrow" class="eyebrow">AI ASSISTANT</p>
-              <h1 id="chat-title">생각이 정리되는 대화.</h1>
-              <p id="chat-subtitle" class="chat-subtitle">궁금한 점을 질문하고 답변을 이어가세요.</p>
+              <p id="hero-eyebrow" class="eyebrow">PET TRAVEL · 국내여행</p>
+              <h1 id="chat-title">함께 떠날 여행을 준비해요.</h1>
+              <p id="chat-subtitle" class="chat-subtitle">지역과 일정, 반려동물의 조건을 알려주면 여행 계획을 함께 정리할 수 있어요.</p>
             </div>
             <span
               id="connection-status"
@@ -71,8 +73,14 @@
 
           <section id="message-list" class="message-list" aria-label="대화 내용" aria-busy="false">
             <div id="empty-state" class="empty-state">
-              <p class="empty-state-title">여기서 대화를 시작해 보세요.</p>
-              <p id="empty-state-description">로그인하면 이전 기록을 불러오고 새 질문을 보낼 수 있습니다.</p>
+              <p id="trip-start-eyebrow" class="trip-start-eyebrow">여행 준비의 첫 단계</p>
+              <p class="empty-state-title">어떤 여행을 꿈꾸고 있나요?</p>
+              <p id="empty-state-description">로그인하면 여행 질문을 남기고 대화방에서 이어갈 수 있습니다.</p>
+              <ol class="trip-start-steps" role="list" aria-label="질문에 담으면 좋은 정보">
+                <li><span aria-hidden="true">01</span><div><strong id="trip-step-region">여행할 지역</strong><small id="trip-step-region-help">어느 지역으로 떠나나요?</small></div></li>
+                <li><span aria-hidden="true">02</span><div><strong id="trip-step-schedule">일정과 이동</strong><small id="trip-step-schedule-help">언제, 얼마나 머무나요?</small></div></li>
+                <li><span aria-hidden="true">03</span><div><strong id="trip-step-pet">반려동물 조건</strong><small id="trip-step-pet-help">종류와 크기, 필요한 배려를 알려주세요.</small></div></li>
+              </ol>
             </div>
           </section>
 
@@ -87,6 +95,7 @@
 
           <div class="composer-area">
             <div id="suggestion-list" class="suggestion-list" aria-label="질문 제안"></div>
+            <p id="travel-data-notice" class="travel-data-notice">현재 관광공사 여행 데이터는 연결되지 않았습니다. 답변은 일반 AI 지식에 기반하며, 장소별 동반 조건은 방문 전 확인해 주세요.</p>
             <form id="chat-form" class="composer" aria-busy="false">
               <label class="visually-hidden" for="question-input">질문</label>
               <div class="composer-field">

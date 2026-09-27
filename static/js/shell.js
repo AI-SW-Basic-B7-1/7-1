@@ -23,6 +23,14 @@ const copy = {
   "#hero-eyebrow": CHAT_CONTENT.heroEyebrow,
   "#chat-title": CHAT_CONTENT.heroTitle,
   "#chat-subtitle": CHAT_CONTENT.heroSubtitle,
+  "#trip-start-eyebrow": CHAT_CONTENT.tripStartEyebrow,
+  "#trip-step-region": CHAT_CONTENT.tripStepRegion,
+  "#trip-step-region-help": CHAT_CONTENT.tripStepRegionHelp,
+  "#trip-step-schedule": CHAT_CONTENT.tripStepSchedule,
+  "#trip-step-schedule-help": CHAT_CONTENT.tripStepScheduleHelp,
+  "#trip-step-pet": CHAT_CONTENT.tripStepPet,
+  "#trip-step-pet-help": CHAT_CONTENT.tripStepPetHelp,
+  "#travel-data-notice": CHAT_CONTENT.travelDataNotice,
   "#composer-hint": CHAT_CONTENT.composerHint,
 };
 
@@ -32,7 +40,7 @@ for (const [selector, value] of Object.entries(copy)) {
     element.textContent = value;
   }
 }
-document.title = CHAT_CONTENT.assistantName;
+document.title = CHAT_CONTENT.pageTitle;
 document.querySelector(".brand").setAttribute("aria-label", CHAT_CONTENT.assistantName);
 
 function renderSidebar() {
