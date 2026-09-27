@@ -10,6 +10,7 @@ from httpx import ASGITransport, AsyncClient
 from app.ai_service import AIServiceError, AITimeoutError
 from app.auth import create_access_token
 from app.database import ConversationAccessError, get_db, get_db_connection, init_db
+from app.jev_service import JevDecision, JevServiceError
 from app.main import app
 from app.routers import chat_router
 
@@ -112,6 +113,39 @@ def authorization_header(username: str) -> dict[str, str]:
     """지정한 테스트 사용자의 Bearer 인증 헤더를 생성합니다."""
     token = create_access_token({"sub": username})
     return {"Authorization": f"Bearer {token}"}
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("mode,failed", [("off", False), ("shadow", False), ("shadow", True)])
+async def test_jev_shadow_never_changes_chat_response_or_history(
+    chat_client: AsyncClient, monkeypatch, mode, failed,
+):
+    """관찰 모드와 Jev 실패가 Gemini 답변·기존 저장 계약을 바꾸지 않습니다."""
+    calls = []
+
+    async def fake_judge(question, history, answer):
+        """Jev 호출 여부와 실패 시 통과 동작을 확인합니다."""
+        calls.append((question, history, answer))
+        if failed:
+            raise JevServiceError("timeout")
+        return JevDecision("retry", 0.91, "jev-1.13.0")
+
+    monkeypatch.setattr(chat_router.settings, "JEV_MODE", mode)
+    monkeypatch.setattr(chat_router, "judge_answer", fake_judge)
+    response = await chat_client.post(
+        "/api/chat",
+        headers=authorization_header("user_one"),
+        json={"question": "강릉 여행 질문"},
+    )
+    history = await chat_client.get(
+        "/api/me/chats", headers=authorization_header("user_one"),
+    )
+
+    assert response.status_code == 200
+    assert set(response.json()) == {"conversation_id", "answer", "latency_ms"}
+    assert response.json()["answer"] == "테스트 답변: 강릉 여행 질문"
+    assert history.json()[0]["response"] == response.json()["answer"]
+    assert len(calls) == (1 if mode == "shadow" else 0)
 
 
 @pytest.mark.anyio
