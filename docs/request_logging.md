@@ -47,18 +47,55 @@ tail -f logs/app.log
 ## EC2 배포와 로그 설정
 
 `scripts/ec2/deploy_ec2.sh`는 기본 사이트와 서비스 설정을 작성한 뒤
-`configure_nginx_logs.sh --prepare`로 로그 설정을 추가합니다. 이후 서비스를
+`configure_nginx_logs.sh --prepare`로 로그 설정을 추가하고
+`configure_log_rotation.sh`로 회전 정책을 설치합니다. 이후 서비스를
 재시작하고 `--verify`로 응답 헤더, 앱·Nginx 요청 ID 연결, 쿼리·Referer 비기록,
 로그 경로 차단 및 프로세스의 표준 출력·오류 경로를 검증합니다.
 사이트 경로와 서비스 이름은 배포 설정에서 함께 전달하므로 재배포 시에도 유지됩니다.
 
 설정 구간 이후 배포가 실패하면 이전 사이트·서비스·로그 드롭인 설정과 사이트 링크를
-복원하고, 서비스 재시작 단계에 도달했다면 이전 실행 여부에 맞춰 재시작하거나 중지합니다.
+복원합니다. 로그 회전 정책과 예약 파일도 복원하며, 서비스 재시작 단계에 도달했다면
+이전 실행 여부에 맞춰 재시작하거나 중지합니다.
 이는 앱 코드·DB·패키지·자동 시작 등록·백업 예약까지 되돌리는 전체 배포 롤백은 아닙니다.
 
 이미 실행 중인 서버에서는 인자 없이 로그 설정 스크립트를 단독 실행할 수도 있습니다.
 `--prepare`는 서비스 재시작과 실행 검증을 하지 않으므로 단독 적용 완료로 간주하지 않습니다.
 
-`app.log`의 기존 Python 회전 정책은 유지합니다. `nginx_access.log`,
-`nginx_error.log`, `server.log`의 자동 회전 정책 설치는 아직 별도 후속 작업입니다.
 이번 변경에는 UFW 설정이 포함되지 않습니다.
+
+## 운영 로그 회전
+
+`scripts/ec2/configure_log_rotation.sh`는 Nginx 접근·오류 로그와 `server.log`만
+관리합니다. `app.log`는 기존 Python 회전(5MiB, 백업 3개)을 유지합니다.
+
+- 매시간 17분에 검사하며 하루가 지났거나 5MiB를 초과한 비어 있지 않은 파일을 회전합니다.
+- 백업은 파일별 7개입니다. 7일 보관을 보장하는 정책은 아닙니다.
+- 최근 백업 `.1`은 압축을 유예하고 이전 백업은 `.2.gz`부터 압축합니다.
+- 검사 사이에는 5MiB를 초과할 수 있으므로 엄격한 디스크 사용량 상한이 아닙니다.
+- Nginx는 파일 이름 변경 후 마스터에 USR1 신호를 보내 새 파일을 열게 합니다.
+- `server.log`는 `copytruncate`로 기존 파일을 유지하므로 앱 재시작이 필요 없습니다.
+  단, 복사와 비우기 사이 기록이 유실될 수 있어 무손실 감사 로그 용도로는 적합하지 않습니다.
+- 새 Nginx 로그 권한은 0640이며 서버 로그는 기존 권한을 유지합니다.
+
+정책은 `/etc` 아래 `b7-1/logrotate.conf`, 예약은 `cron.d/b7-1-logrotate`에
+설치합니다. 상태는 `/var/lib` 아래 `b7-1-logrotate/status`로 분리합니다.
+시스템의 기본 `logrotate.d`에 중복 등록하지 않습니다. 기존에 수동으로 등록한
+동일 파일 대상 정책이 있다면 운영자가 중복을 제거해야 합니다.
+설치 과정은 디버그 검사만 수행하며 운영 로그를 강제로 회전하지 않습니다.
+설치 실패 시 정책·예약 파일을 복원합니다. cron 활성화와 회전 상태 이력은 유지합니다.
+
+기존 서버에는 `logrotate`와 `cron` 패키지를 준비한 뒤 별도로 설치할 수 있습니다.
+
+```bash
+sudo apt-get install -y logrotate cron
+sudo bash scripts/ec2/configure_log_rotation.sh
+venv/bin/python -m pytest tests/test_ec2_logging_config.py -q
+```
+
+실제 회전 도구 테스트는 `logrotate`가 없으면 건너뜁니다. 설치된 환경에서는 임시
+로그만 대상으로 강제 회전하여 압축·백업 7개·열린 서버 로그 핸들의 기록 지속을 확인합니다.
+이 테스트의 Nginx 신호 수신자는 대역이므로 EC2에서 실제 회전 후 새 요청이
+현재 `nginx_access.log`에 남는지, `server.log` 기록이 계속되는지는 추가 확인해야 합니다.
+
+참고: [Nginx 로그 재열기](https://nginx.org/en/docs/control.html),
+[logrotate 공식 매뉴얼](https://github.com/logrotate/logrotate/blob/main/logrotate.8.in).
