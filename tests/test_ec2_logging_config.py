@@ -61,7 +61,7 @@ def script_environment(tmp_path):
     source = source.replace(guard, ":")
     source = source.replace(
         'DROPIN_DIR="/etc/systemd/system/${SERVICE}.d"',
-        f'DROPIN_DIR="{dropin_dir}"',
+        f'DROPIN_DIR="{tmp_path}/systemd/${{SERVICE}}.d"',
     ).replace("/var/backups/b7-1-nginx", str(backups))
     assert "/etc/systemd/system/" not in source
     assert "/var/backups/" not in source
@@ -72,6 +72,7 @@ def script_environment(tmp_path):
     driver = commands / "driver"
     driver.write_text(f"#!{sys.executable}\n" + textwrap.dedent(r'''
         import os
+        import shutil
         import sys
         import uuid
         from pathlib import Path
@@ -83,11 +84,20 @@ def script_environment(tmp_path):
         project = root / "project"
         logs = project / "logs"
         mode = os.environ["TEST_MODE"]
-        dropin = root / "systemd/chatbot.service.d/90-b7-1-logging.conf"
+        service = os.environ.get("SERVICE_NAME", "chatbot.service")
+        dropin = root / ("systemd/" + service + ".d/90-b7-1-logging.conf")
         with (root / "calls").open("a") as output:
             output.write(command + " " + " ".join(args) + "\n")
 
         if command == "systemctl":
+            if args[0] in ("restart", "stop"):
+                state = root / (args[-1] + ".active")
+                if args[0] == "restart":
+                    state.touch()
+                else:
+                    state.unlink(missing_ok=True)
+            if args[0] == "is-active" and (mode == "fresh" or os.environ.get("TEST_INIT_INACTIVE") == "1"):
+                sys.exit(0 if (root / (args[-1] + ".active")).exists() else 3)
             if args[0] == "show":
                 property_name = args[args.index("-p") + 1]
                 if property_name == "WorkingDirectory":
@@ -105,7 +115,7 @@ def script_environment(tmp_path):
         elif command == "readlink":
             print(logs / ("wrong.log" if mode == "wrong_output_path" else "server.log"))
         elif command == "nginx":
-            candidate = (root / "site.conf").read_text()
+            candidate = Path(os.environ["SITE_CONFIG"]).read_text()
             if mode == "invalid_config" and "log_format" in candidate:
                 sys.exit(1)
         elif command == "realpath":
@@ -115,6 +125,9 @@ def script_environment(tmp_path):
             values = [value for value in args if value != "--"]
             for filename in values[1:]:
                 Path(filename).chmod(int(values[0], 8))
+        elif command == "install":
+            shutil.copyfile(args[-2], args[-1])
+            Path(args[-1]).chmod(int(args[args.index("-m") + 1], 8))
         elif command == "curl":
             url = urlsplit(args[-1])
             if url.path == "/api/health":
@@ -149,10 +162,10 @@ def script_environment(tmp_path):
             sys.exit(2)
     '''), encoding="utf-8")
     driver.chmod(0o755)
-    for name in ("nginx", "systemctl", "curl", "realpath", "readlink", "sleep", "chmod"):
+    for name in ("nginx", "systemctl", "curl", "realpath", "readlink", "sleep", "chmod", "install"):
         (commands / name).symlink_to(driver)
 
-    def run(mode="success"):
+    def run(mode="success", action=None):
         """실제 파일 편집·백업·복원은 임시 디렉터리에서 수행합니다."""
         env = dict(os.environ)
         env.update(
@@ -164,10 +177,89 @@ def script_environment(tmp_path):
             TMPDIR=str(tmp_path),
         )
         return subprocess.run(
-            [bash, str(script)], env=env, text=True, capture_output=True, timeout=30,
+            [bash, str(script)] + ([action] if action else []),
+            env=env, text=True, capture_output=True, timeout=30,
         )
 
     return run, tmp_path, site, original_site, dropin
+
+
+def test_prepare_and_verify_do_not_restart_services(script_environment):
+    """설정 준비와 검증은 서비스를 재시작하지 않으며 검증은 설정을 변경하지 않습니다."""
+    run, root, site, _, dropin = script_environment
+    result = run("fresh", "--prepare")
+    assert result.returncode == 0, result.stderr
+    before = (site.read_bytes(), dropin.read_bytes())
+    result = run(action="--verify")
+    assert result.returncode == 0, result.stderr
+    assert before == (site.read_bytes(), dropin.read_bytes())
+    calls = (root / "calls").read_text()
+    assert "systemctl restart" not in calls
+    assert "systemctl reload" not in calls
+    assert "systemctl daemon-reload" not in calls
+
+
+@pytest.mark.parametrize("site_name,service", [("chatbot", "chatbot.service"), ("travel", "travel.service")])
+@pytest.mark.parametrize("failure", ["none", "reapply", "first"])
+def test_deploy_configuration_sequence(script_environment, site_name, service, failure):
+    """배포의 실제 설정 구간을 실행해 최초 배포·재배포·실패 복원을 확인합니다."""
+    _, root, _, _, _ = script_environment
+    project = root / "project"
+    nginx = root / "nginx"
+    for directory in (nginx / "sites-available", nginx / "sites-enabled", root / "systemd"):
+        directory.mkdir(parents=True, exist_ok=True)
+    source = (SCRIPT_PATH.parent / "deploy_ec2.sh").read_text(encoding="utf-8")
+    # 패키지 설치와 DB 작업은 제외하고 설정 트랜잭션 구간을 그대로 실행합니다.
+    section = source[source.index('NGINX_AVAILABLE='):source.index("run_cmd 'DB 백업 디렉터리 생성'")]
+    section = section.replace("/etc/nginx", str(nginx)).replace("/etc/systemd/system", str(root / "systemd"))
+    wrapper = root / "deploy-config.sh"
+    wrapper.write_text(
+        'set -Eeuo pipefail\nrun_cmd() { shift; "$@"; }\nfail() { exit 1; }\n'
+        + section + '\nCONFIG_COMMITTED=1\n', encoding="utf-8",
+    )
+    site = nginx / "sites-available" / site_name
+    unit = root / "systemd" / service
+    dropin = root / "systemd" / (service + ".d") / "90-b7-1-logging.conf"
+    env = dict(os.environ)
+    env.update(
+        PATH=str(root / "commands") + os.pathsep + env.get("PATH", ""),
+        PROJECT_DIR=str(project), APP_USER="ubuntu", ENV_FILE=str(project / ".env"),
+        SERVICE_NAME=service, NGINX_SITE_NAME=site_name,
+        SITE_CONFIG=str(site), TEST_ROOT=str(root), TEST_MODE="fresh",
+        LOGGING_SCRIPT=str(project / "scripts/ec2/configure_nginx_logs.sh"),
+        VERIFY_BASE_URL="http://test.local", TMPDIR=str(root),
+    )
+    def execute():
+        """대역 명령으로 배포 설정 구간을 실행합니다."""
+        return subprocess.run([shutil.which("bash"), str(wrapper)], env=env,
+                              text=True, capture_output=True, timeout=30)
+
+    if failure == "first":
+        env.update(TEST_MODE="query_leak", TEST_INIT_INACTIVE="1")
+        result = execute()
+        assert result.returncode != 0
+        for path in (site, unit, dropin, nginx / "sites-enabled" / site_name):
+            assert not path.exists() and not path.is_symlink()
+        assert not (root / (service + ".active")).exists()
+        assert not (root / "nginx.active").exists()
+        return
+
+    for _ in range(2):
+        result = execute()
+        assert result.returncode == 0, result.stderr
+        assert site.read_text().count("log_format b7_1_request_trace") == 1
+        assert "location ^~ /logs/" in site.read_text()
+    calls = (root / "calls").read_text()
+    assert calls.count("systemctl restart " + service) == 2
+    assert calls.count("systemctl restart nginx") == 2
+    assert "systemctl reload nginx" not in calls
+    if failure == "reapply":
+        before = [path.read_bytes() for path in (site, unit, dropin)]
+        env["TEST_MODE"] = "query_leak"
+        result = execute()
+        assert result.returncode != 0
+        assert "이전 Nginx·systemd 설정으로 복원" in result.stderr
+        assert before == [path.read_bytes() for path in (site, unit, dropin)]
 
 
 def test_script_applies_and_reapplies_with_distinct_probes(script_environment):
