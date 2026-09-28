@@ -31,6 +31,11 @@ id "${APP_USER}" >/dev/null 2>&1 || fail "애플리케이션 사용자 계정을
 [[ -d "${PROJECT_DIR}" ]] || fail "프로젝트 디렉터리를 찾을 수 없습니다: ${PROJECT_DIR}"
 [[ -f "${PROJECT_DIR}/requirements.txt" ]] || fail "requirements.txt를 찾을 수 없습니다: ${PROJECT_DIR}"
 [[ -f "${ENV_FILE}" ]] || fail '.env 파일이 없습니다. SSM 실행 시 --env-file을 사용하거나 서버에 먼저 배치해야 합니다.'
+LOGGING_SCRIPT="${PROJECT_DIR}/scripts/ec2/configure_nginx_logs.sh"
+[[ -f "${LOGGING_SCRIPT}" ]] || fail '로그 설정 스크립트가 없습니다.'
+[[ "${SERVICE_NAME}" =~ ^[a-zA-Z0-9_-]+\.service$ ]] || fail '지원하지 않는 서비스 이름입니다.'
+[[ "${NGINX_SITE_NAME}" =~ ^[a-zA-Z0-9_-]+$ ]] || fail '지원하지 않는 사이트 이름입니다.'
+[[ "${NGINX_SITE_NAME}" != 'default' ]] || fail '기본 사이트와 다른 이름을 사용해야 합니다.'
 
 APP_HOME="$(getent passwd "${APP_USER}" | cut -d: -f6)"
 [[ -n "${APP_HOME}" ]] || fail "사용자의 홈 디렉터리를 확인할 수 없습니다: ${APP_USER}"
@@ -100,7 +105,7 @@ unset secret_key gemini_api_key database_url
 export DEBIAN_FRONTEND=noninteractive
 run_cmd '패키지 목록 갱신' apt-get update
 run_cmd '기본 패키지 업그레이드' apt-get upgrade -y
-run_cmd '배포 필수 패키지 설치' apt-get install -y ca-certificates curl cron git nginx python3 python3-pip python3-venv sqlite3
+run_cmd '배포 필수 패키지 설치' apt-get install -y ca-certificates curl cron git nginx openssl python3 python3-pip python3-venv sqlite3
 
 log_step '2GB Swap 구성'
 if swapon --show=NAME --noheadings | awk '{print $1}' | grep -Fxq "${SWAP_FILE}"; then
@@ -143,6 +148,57 @@ fi
 
 NGINX_AVAILABLE="/etc/nginx/sites-available/${NGINX_SITE_NAME}"
 NGINX_ENABLED="/etc/nginx/sites-enabled/${NGINX_SITE_NAME}"
+SYSTEMD_UNIT="/etc/systemd/system/${SERVICE_NAME}"
+LOGGING_DROPIN="/etc/systemd/system/${SERVICE_NAME}.d/90-b7-1-logging.conf"
+
+# 검증 완료 전까지 설정 원본을 보존합니다. 앱 코드와 DB는 복원 대상이 아닙니다.
+CONFIG_BACKUP="$(mktemp -d)"
+CONFIG_PATHS=("${NGINX_AVAILABLE}" "${NGINX_ENABLED}" /etc/nginx/sites-enabled/default "${SYSTEMD_UNIT}" "${LOGGING_DROPIN}")
+CONFIG_COMMITTED=0
+SERVICES_CHANGED=0
+NGINX_WAS_ACTIVE=0
+APP_WAS_ACTIVE=0
+systemctl is-active --quiet nginx && NGINX_WAS_ACTIVE=1
+systemctl is-active --quiet "${SERVICE_NAME}" && APP_WAS_ACTIVE=1
+for index in "${!CONFIG_PATHS[@]}"; do
+    path="${CONFIG_PATHS[$index]}"
+    if [[ -e "${path}" || -L "${path}" ]]; then
+        cp -a -- "${path}" "${CONFIG_BACKUP}/${index}"
+    fi
+done
+restore_deploy_config() {
+    local result=$?
+    trap - EXIT
+    set +e
+    if [[ "${CONFIG_COMMITTED}" -eq 0 ]]; then
+        for index in "${!CONFIG_PATHS[@]}"; do
+            path="${CONFIG_PATHS[$index]}"
+            rm -f -- "${path}"
+            if [[ -e "${CONFIG_BACKUP}/${index}" || -L "${CONFIG_BACKUP}/${index}" ]]; then
+                cp -a -- "${CONFIG_BACKUP}/${index}" "${path}"
+            fi
+        done
+        systemctl daemon-reload
+        if [[ "${SERVICES_CHANGED}" -eq 1 ]]; then
+            if [[ "${APP_WAS_ACTIVE}" -eq 1 ]]; then
+                systemctl restart "${SERVICE_NAME}" || printf '%s\n' '앱 서비스 복구 실패' >&2
+            else
+                systemctl stop "${SERVICE_NAME}"
+            fi
+            if [[ "${NGINX_WAS_ACTIVE}" -eq 1 ]]; then
+                nginx -t && systemctl restart nginx || printf '%s\n' 'Nginx 복구 실패' >&2
+            else
+                systemctl stop nginx
+            fi
+        fi
+        printf '%s\n' '배포 검증 실패: 이전 Nginx·systemd 설정으로 복원했습니다.' >&2
+    fi
+    rm -rf -- "${CONFIG_BACKUP}"
+    exit "${result}"
+}
+trap restore_deploy_config EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 nginx_temp_file="$(mktemp)"
 cat > "${nginx_temp_file}" <<EOF
 server {
@@ -188,11 +244,6 @@ run_cmd 'Nginx 사이트 설정 설치' install -o root -g root -m 644 "${nginx_
 rm -f "${nginx_temp_file}"
 run_cmd '기본 Nginx 사이트 비활성화' rm -f /etc/nginx/sites-enabled/default
 run_cmd '챗봇 Nginx 사이트 활성화' ln -sfn "${NGINX_AVAILABLE}" "${NGINX_ENABLED}"
-run_cmd 'Nginx 문법 검사' nginx -t
-run_cmd 'Nginx 부팅 자동 시작 설정' systemctl enable nginx
-run_cmd 'Nginx 재시작' systemctl restart nginx
-
-SYSTEMD_UNIT="/etc/systemd/system/${SERVICE_NAME}"
 systemd_temp_file="$(mktemp)"
 cat > "${systemd_temp_file}" <<EOF
 [Unit]
@@ -216,9 +267,17 @@ WantedBy=multi-user.target
 EOF
 run_cmd 'Systemd 서비스 파일 설치' install -o root -g root -m 644 "${systemd_temp_file}" "${SYSTEMD_UNIT}"
 rm -f "${systemd_temp_file}"
+run_cmd 'Nginx·서비스 로그 설정 준비' env SITE_CONFIG="${NGINX_AVAILABLE}" SERVICE_NAME="${SERVICE_NAME}" \
+    bash "${LOGGING_SCRIPT}" --prepare
+run_cmd '최종 Nginx 문법 검사' nginx -t
 run_cmd 'Systemd 설정 다시 읽기' systemctl daemon-reload
+run_cmd 'Nginx 부팅 자동 시작 설정' systemctl enable nginx
 run_cmd '챗봇 서비스 부팅 자동 시작 설정' systemctl enable "${SERVICE_NAME}"
+SERVICES_CHANGED=1
 run_cmd '챗봇 서비스 재시작' systemctl restart "${SERVICE_NAME}"
+run_cmd 'Nginx 재시작' systemctl restart nginx
+run_cmd '로그 기록·요청 추적·외부 경로 차단 검증' env SITE_CONFIG="${NGINX_AVAILABLE}" SERVICE_NAME="${SERVICE_NAME}" \
+    bash "${LOGGING_SCRIPT}" --verify
 
 if ! systemctl is-active --quiet "${SERVICE_NAME}"; then
     journalctl -u "${SERVICE_NAME}" --no-pager -n 50
@@ -263,6 +322,7 @@ db_block_status="$(curl -sS --max-time 5 -o /dev/null -w '%{http_code}' http://1
 [[ -f "${DB_PATH}" ]] || fail "헬스체크 이후에도 SQLite 파일이 생성되지 않았습니다: ${DB_PATH}"
 run_cmd 'SQLite 무결성 확인' sqlite3 "${DB_PATH}" 'PRAGMA integrity_check;'
 run_cmd '챗봇 서비스 상태 기록' systemctl --no-pager --full status "${SERVICE_NAME}"
+CONFIG_COMMITTED=1
 
 log_step 'EC2 배포 완료'
 printf '배포 로그: %s\n' "${LOG_FILE}"
