@@ -1,6 +1,5 @@
 """인증된 사용자의 AI 채팅 및 대화 이력 조회 API 라우터 모듈."""
 
-import asyncio
 from time import perf_counter
 
 import aiosqlite
@@ -30,12 +29,7 @@ async def log_jev_decision(question: str, history: list, answer: str, request_id
     """저장된 Gemini 답변을 응답과 독립적으로 판정하고 결과만 기록합니다."""
     started_at = perf_counter()
     try:
-        decision = await asyncio.wait_for(
-            judge_answer(question, history, answer),
-            timeout=settings.JEV_TIMEOUT_SECONDS,
-        )
-    except asyncio.TimeoutError:
-        error_type = "timeout"
+        decision = await judge_answer(question, history, answer)
     except JevServiceError as exc:
         error_type = exc.error_type
     except Exception:

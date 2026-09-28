@@ -1,5 +1,6 @@
 """Gemini 답변을 변경하지 않고 Jev의 구조화된 판정을 조회하는 모듈."""
 
+import asyncio
 from dataclasses import dataclass
 from math import isfinite
 from re import fullmatch
@@ -39,6 +40,21 @@ class JevDecision:
     model: str
 
 
+async def _request_jev(payload: dict) -> dict:
+    """연결부터 응답 본문 해석까지 한 번의 Jev 호출로 처리합니다."""
+    async with httpx.AsyncClient(timeout=settings.JEV_TIMEOUT_SECONDS) as client:
+        response = await client.post(
+            JEV_ENDPOINT,
+            headers={
+                "Authorization": f"Bearer {settings.TYPESAFE_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            json=payload,
+        )
+        response.raise_for_status()
+        return response.json()
+
+
 async def judge_answer(question: str, history: list, answer: str) -> JevDecision:
     """현재 질문과 최근 문맥, Gemini 답변을 Jev Choice 한 개로 평가합니다."""
     if not settings.TYPESAFE_API_KEY:
@@ -58,25 +74,19 @@ async def judge_answer(question: str, history: list, answer: str) -> JevDecision
         "questions": {"action": ACTION_QUESTION},
     }
     try:
-        async with httpx.AsyncClient(timeout=settings.JEV_TIMEOUT_SECONDS) as client:
-            response = await client.post(
-                JEV_ENDPOINT,
-                headers={
-                    "Authorization": f"Bearer {settings.TYPESAFE_API_KEY}",
-                    "Content-Type": "application/json",
-                },
-                json=payload,
-            )
-            response.raise_for_status()
-    except httpx.TimeoutException as exc:
+        data = await asyncio.wait_for(
+            _request_jev(payload), timeout=settings.JEV_TIMEOUT_SECONDS
+        )
+    except (asyncio.TimeoutError, httpx.TimeoutException) as exc:
         raise JevServiceError("timeout") from exc
     except httpx.HTTPStatusError as exc:
         raise JevServiceError(f"http_{exc.response.status_code}") from exc
     except httpx.RequestError as exc:
         raise JevServiceError("network") from exc
+    except (ValueError, TypeError) as exc:
+        raise JevServiceError("invalid_response") from exc
 
     try:
-        data = response.json()
         decision = data["answers"]["action"]
         action = decision["choice"]
         confidence = decision["confidence"]

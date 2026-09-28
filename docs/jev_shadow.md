@@ -33,6 +33,8 @@ python scripts/check_jev.py
 
 정상 응답에는 요청·응답 모델, 판정, confidence, 호출 시간이 표시됩니다. 키가 없으면 외부 호출 없이 종료합니다. 연결 오류에는 HTTP 응답 본문이나 키를 출력하지 않습니다. 공식 문서상 엔드포인트는 `POST /v1/systemone`, 인증 방식은 Bearer이고 Choice 응답에는 `choice`와 `confidence`가 포함됩니다.
 
+채팅의 shadow 판정, 연결 점검, 비교 도구는 모두 `JEV_TIMEOUT_SECONDS`의 같은 전체 호출 시간 제한을 사용합니다. 시간 초과는 세 경로에서 모두 `timeout` 실패로 처리됩니다.
+
 ## 같은 사례로 비교
 
 ```powershell

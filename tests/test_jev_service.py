@@ -1,5 +1,6 @@
 """Jev 요청 계약과 실패 시 정보 노출 방지를 확인합니다."""
 
+import asyncio
 from unittest.mock import Mock
 
 import httpx
@@ -8,6 +9,8 @@ import pytest
 from app import jev_service
 from app.config import settings
 from app.jev_service import JevServiceError, judge_answer
+from app.routers import chat_router
+from scripts import benchmark_jev, check_jev
 
 
 class StubClient:
@@ -33,6 +36,15 @@ class StubClient:
         response = Mock()
         response.json.return_value = self.payload
         return response
+
+
+class DelayedClient(StubClient):
+    """단계별 HTTP 제한을 넘지 않는 느린 전체 호출을 재현합니다."""
+
+    async def post(self, endpoint, *, headers, json):
+        """전체 시간 제한이 취소할 때까지 응답을 지연합니다."""
+        await asyncio.sleep(1)
+        return await super().post(endpoint, headers=headers, json=json)
 
 
 @pytest.mark.anyio
@@ -86,6 +98,59 @@ async def test_judge_answer_classifies_timeout(monkeypatch):
     with pytest.raises(JevServiceError) as result:
         await judge_answer("질문", [], "답변")
     assert result.value.error_type == "timeout"
+
+
+@pytest.mark.anyio
+async def test_judge_answer_classifies_malformed_json(monkeypatch):
+    """응답 본문을 해석하지 못해도 원문을 노출하지 않습니다."""
+    monkeypatch.setattr(settings, "TYPESAFE_API_KEY", "test-jev-secret")
+
+    class MalformedClient(StubClient):
+        """잘못된 JSON 응답을 돌려주는 테스트 클라이언트입니다."""
+
+        async def post(self, endpoint, *, headers, json):
+            """응답 본문 해석 오류를 재현합니다."""
+            response = Mock()
+            response.json.side_effect = ValueError("노출 금지 본문")
+            return response
+
+    monkeypatch.setattr(jev_service.httpx, "AsyncClient", lambda **kwargs: MalformedClient())
+    with pytest.raises(JevServiceError) as result:
+        await judge_answer("질문", [], "답변")
+    assert result.value.error_type == "invalid_response"
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("entrypoint", ["service", "chat", "check", "benchmark"])
+async def test_total_timeout_applies_to_every_jev_entrypoint(
+    monkeypatch, capsys, entrypoint,
+):
+    """느린 Jev 호출을 공통 계층에서 제한하고 각 경로가 실패로 기록합니다."""
+    monkeypatch.setattr(settings, "TYPESAFE_API_KEY", "test-jev-secret")
+    monkeypatch.setattr(settings, "JEV_TIMEOUT_SECONDS", 0.01)
+    monkeypatch.setattr(jev_service.httpx, "AsyncClient", lambda **kwargs: DelayedClient())
+
+    if entrypoint == "service":
+        with pytest.raises(JevServiceError) as result:
+            await judge_answer("질문", [], "답변")
+        assert result.value.error_type == "timeout"
+    elif entrypoint == "chat":
+        warning = Mock()
+        monkeypatch.setattr(chat_router.chat_logger, "warning", warning)
+        await chat_router.log_jev_decision("질문", [], "답변", "test-request")
+        assert warning.call_args.args[0].startswith("jev_failed ")
+        assert warning.call_args.args[2] == "timeout"
+    elif entrypoint == "check":
+        assert await check_jev.main() == 1
+        assert "FAILED (timeout)" in capsys.readouterr().out
+    else:
+        await benchmark_jev.run_benchmark([
+            {"question": "질문", "answer": "답변", "expected_action": "retry"}
+        ], 1)
+        output = capsys.readouterr().out
+        assert "effective" in output
+        assert "model    " not in output
+        assert output.split("effective", 1)[1].splitlines()[0].strip().endswith("1")
 
 
 @pytest.mark.anyio
