@@ -27,7 +27,7 @@ if [[ "${1:-}" == '--help' ]]; then
         '선택 설정: VERIFY_BASE_URL (기본값: http://127.0.0.1)' \
         '단일 server 블록 사이트만 지원합니다. 기존 로그는 이동하지 않습니다.' \
         'chatbot.service의 출력 경로를 설정하고 서비스를 재시작합니다.' \
-        '주의: 재시작 중 요청이 중단될 수 있습니다. 로그 회전은 별도 설정입니다.'
+        '주의: 재시작 중 요청이 중단될 수 있습니다. 회전 정책은 configure_log_rotation.sh가 설치합니다.'
     exit 0
 fi
 [[ $# -le 1 && "${MODE}" =~ ^--(apply|prepare|verify)$ ]] || { printf '%s\n' '지원하지 않는 인자입니다.' >&2; exit 1; }
@@ -276,4 +276,4 @@ printf '%s\n' '서비스 출력은 journal 대신 server.log에 기록됩니다.
     '접근 로그의 request_id는 앱 응답 헤더이며, 앱을 거치지 않은 요청은 -로 표시됩니다. nginx_request_id는 별도 Nginx 추적 번호입니다.' \
     '검증 완료: 쿼리 문자열 비기록, 앱·Nginx 요청 ID 연결, /logs 하위 경로 HTTP 404' \
     '애플리케이션 콘솔 로그는 app.log와 server.log에 중복 기록될 수 있습니다.' \
-    '주의: 새 로그는 별도 회전 정책이 필요합니다. 서비스 활성 상태 확인은 API 준비 완료 검증을 대신하지 않습니다.'
+    '회전 정책은 configure_log_rotation.sh가 설치하며 deploy_ec2.sh에서 자동 호출합니다.'
