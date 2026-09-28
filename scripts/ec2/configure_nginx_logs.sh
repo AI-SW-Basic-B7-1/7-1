@@ -9,7 +9,8 @@ PROJECT_DIR="$(cd -- "${SCRIPT_DIR}/../.." && pwd)"
 SITE_CONFIG="${SITE_CONFIG:-/etc/nginx/sites-enabled/chatbot}"
 VERIFY_BASE_URL="${VERIFY_BASE_URL:-http://127.0.0.1}"
 LOG_DIR="${PROJECT_DIR}/logs"
-SERVICE='chatbot.service'
+SERVICE="${SERVICE_NAME:-chatbot.service}"
+MODE="${1:---apply}"
 DROPIN_DIR="/etc/systemd/system/${SERVICE}.d"
 DROPIN_FILE="${DROPIN_DIR}/90-b7-1-logging.conf"
 BEGIN_MARKER='# BEGIN B7-1 MANAGED LOGGING'
@@ -18,7 +19,10 @@ FORMAT_BEGIN='# BEGIN B7-1 ACCESS FORMAT'
 FORMAT_END='# END B7-1 ACCESS FORMAT'
 
 if [[ "${1:-}" == '--help' ]]; then
-    printf '%s\n' '사용법: sudo bash scripts/ec2/configure_nginx_logs.sh' \
+    printf '%s\n' '사용법: sudo bash scripts/ec2/configure_nginx_logs.sh [--apply|--prepare|--verify]' \
+        '--prepare: 설정만 설치합니다. 서비스 활성화와 실패 시 복원은 배포 호출자가 담당합니다.' \
+        '--verify: 실행 중인 서비스와 로그를 검사합니다. 설정을 변경하지 않습니다.' \
+        '선택 설정: SERVICE_NAME (기본값: chatbot.service)' \
         '선택 설정: SITE_CONFIG (기본값: /etc/nginx/sites-enabled/chatbot)' \
         '선택 설정: VERIFY_BASE_URL (기본값: http://127.0.0.1)' \
         '단일 server 블록 사이트만 지원합니다. 기존 로그는 이동하지 않습니다.' \
@@ -26,7 +30,8 @@ if [[ "${1:-}" == '--help' ]]; then
         '주의: 재시작 중 요청이 중단될 수 있습니다. 로그 회전은 별도 설정입니다.'
     exit 0
 fi
-[[ $# -eq 0 ]] || { printf '%s\n' '지원하지 않는 인자입니다.' >&2; exit 1; }
+[[ $# -le 1 && "${MODE}" =~ ^--(apply|prepare|verify)$ ]] || { printf '%s\n' '지원하지 않는 인자입니다.' >&2; exit 1; }
+[[ "${SERVICE}" =~ ^[a-zA-Z0-9_-]+\.service$ ]] || exit 1
 [[ $EUID -eq 0 ]] || { printf '%s\n' 'sudo로 실행해 주세요.' >&2; exit 1; }
 for command in nginx systemctl realpath readlink awk mktemp curl openssl; do
     command -v "${command}" >/dev/null || exit 1
@@ -43,17 +48,21 @@ VERIFY_BASE_URL="${VERIFY_BASE_URL%/}"
     exit 1
 }
 SITE_CONFIG="$(realpath -- "${SITE_CONFIG}")"
-nginx -t
-systemctl is-active --quiet nginx
-systemctl is-active --quiet "${SERVICE}"
-SERVICE_PROJECT="$(systemctl show "${SERVICE}" -p WorkingDirectory --value)"
-[[ "$(realpath -- "${SERVICE_PROJECT}")" == "${PROJECT_DIR}" ]] || {
-    printf '%s\n' '챗봇 서비스의 작업 경로와 스크립트 프로젝트 경로가 다릅니다.' >&2
-    exit 1
-}
+if [[ "${MODE}" != '--prepare' ]]; then
+    nginx -t
+    systemctl is-active --quiet nginx
+    systemctl is-active --quiet "${SERVICE}"
+    SERVICE_PROJECT="$(systemctl show "${SERVICE}" -p WorkingDirectory --value)"
+    [[ "$(realpath -- "${SERVICE_PROJECT}")" == "${PROJECT_DIR}" ]] || {
+        printf '%s\n' '챗봇 서비스의 작업 경로와 스크립트 프로젝트 경로가 다릅니다.' >&2
+        exit 1
+    }
+fi
 [[ ! -L "${DROPIN_DIR}" && ! -L "${DROPIN_FILE}" ]] || exit 1
 [[ ! -e "${DROPIN_FILE}" || -f "${DROPIN_FILE}" ]] || exit 1
-printf '%s\n' '주의: 로그 설정 적용 과정에서 chatbot.service를 재시작합니다.'
+if [[ "${MODE}" == '--apply' ]]; then
+    printf '주의: 로그 설정 적용 과정에서 %s를 재시작합니다.\n' "${SERVICE}"
+fi
 
 WORK_DIR="$(mktemp -d)"
 BACKUP=''
@@ -71,14 +80,18 @@ cleanup() {
         else
             rm -f -- "${DROPIN_FILE}"
         fi
-        systemctl daemon-reload
-        systemctl restart "${SERVICE}" || printf '%s\n' '서비스 복구 실패: journalctl로 확인해 주세요.' >&2
+        if [[ "${MODE}" == '--apply' ]]; then
+            systemctl daemon-reload
+            systemctl restart "${SERVICE}" || printf '%s\n' '서비스 복구 실패: journalctl로 확인해 주세요.' >&2
+        fi
         printf '%s\n' '서비스 로그 설정을 이전 상태로 복원했습니다.' >&2
     fi
     if [[ $result -ne 0 && $CHANGED -eq 1 ]]; then
         cp -p -- "${BACKUP}" "${SITE_CONFIG}"
         printf '설정을 복원했습니다. 백업: %s\n' "${BACKUP}" >&2
-        nginx -t && systemctl reload nginx || true
+        if [[ "${MODE}" == '--apply' ]]; then
+            nginx -t && systemctl reload nginx || true
+        fi
     fi
     rm -rf -- "${WORK_DIR}"
     exit "$result"
@@ -87,6 +100,7 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
+if [[ "${MODE}" != '--verify' ]]; then
 # 직접 관리하는 블록만 제거하여 반복 실행 시 중복 삽입을 방지합니다.
 awk -v begin="${BEGIN_MARKER}" -v end="${END_MARKER}" \
     -v format_begin="${FORMAT_BEGIN}" -v format_end="${FORMAT_END}" '
@@ -152,8 +166,19 @@ SERVICE_CHANGED=1
 printf '[Service]\nStandardOutput=append:%s/server.log\nStandardError=inherit\n' \
     "${LOG_DIR}" > "${DROPIN_FILE}"
 chmod 644 "${DROPIN_FILE}"
-systemctl daemon-reload
-# 더 뒤에 로드되는 설정이 덮어쓰는 경우 재시작 전에 중단합니다.
+fi
+
+if [[ "${MODE}" == '--prepare' ]]; then
+    CHANGED=0
+    SERVICE_CHANGED=0
+    printf '%s\n' '로그 설정 준비 완료. 서비스 재시작 후 --verify 검증이 필요합니다.'
+    exit 0
+fi
+
+if [[ "${MODE}" == '--apply' ]]; then
+    systemctl daemon-reload
+fi
+# 다른 설정에 의해 출력 방식이 덮어써졌는지 확인합니다.
 [[ "$(systemctl show "${SERVICE}" -p StandardOutput --value)" == 'append' ]] || {
     printf '%s\n' '서비스 표준 출력이 append 모드가 아닙니다.' >&2
     exit 1
@@ -162,8 +187,10 @@ systemctl daemon-reload
     printf '%s\n' '서비스 표준 오류가 표준 출력을 상속하지 않습니다.' >&2
     exit 1
 }
-systemctl reload nginx
-systemctl restart "${SERVICE}"
+if [[ "${MODE}" == '--apply' ]]; then
+    systemctl reload nginx
+    systemctl restart "${SERVICE}"
+fi
 systemctl is-active --quiet "${SERVICE}"
 # 출력 경로는 실행 중인 프로세스의 파일 디스크립터로 확인합니다.
 SERVICE_PID="$(systemctl show "${SERVICE}" -p MainPID --value)"
@@ -241,7 +268,10 @@ done
 
 CHANGED=0
 SERVICE_CHANGED=0
-printf '설정 완료. 백업: %s\n로그: %s/nginx_access.log, nginx_error.log, server.log\n' "${BACKUP}" "${LOG_DIR}"
+if [[ "${MODE}" == '--apply' ]]; then
+    printf '설정 완료. 백업: %s\n' "${BACKUP}"
+fi
+printf '로그: %s/nginx_access.log, nginx_error.log, server.log\n' "${LOG_DIR}"
 printf '%s\n' '서비스 출력은 journal 대신 server.log에 기록됩니다. 기존 journal 기록은 이동하지 않습니다.' \
     '접근 로그의 request_id는 앱 응답 헤더이며, 앱을 거치지 않은 요청은 -로 표시됩니다. nginx_request_id는 별도 Nginx 추적 번호입니다.' \
     '검증 완료: 쿼리 문자열 비기록, 앱·Nginx 요청 ID 연결, /logs 하위 경로 HTTP 404' \
