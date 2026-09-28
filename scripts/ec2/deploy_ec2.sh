@@ -33,6 +33,8 @@ id "${APP_USER}" >/dev/null 2>&1 || fail "애플리케이션 사용자 계정을
 [[ -f "${ENV_FILE}" ]] || fail '.env 파일이 없습니다. SSM 실행 시 --env-file을 사용하거나 서버에 먼저 배치해야 합니다.'
 LOGGING_SCRIPT="${PROJECT_DIR}/scripts/ec2/configure_nginx_logs.sh"
 [[ -f "${LOGGING_SCRIPT}" ]] || fail '로그 설정 스크립트가 없습니다.'
+ROTATION_SCRIPT="${PROJECT_DIR}/scripts/ec2/configure_log_rotation.sh"
+[[ -f "${ROTATION_SCRIPT}" ]] || fail '로그 회전 설치 스크립트가 없습니다.'
 [[ "${SERVICE_NAME}" =~ ^[a-zA-Z0-9_-]+\.service$ ]] || fail '지원하지 않는 서비스 이름입니다.'
 [[ "${NGINX_SITE_NAME}" =~ ^[a-zA-Z0-9_-]+$ ]] || fail '지원하지 않는 사이트 이름입니다.'
 [[ "${NGINX_SITE_NAME}" != 'default' ]] || fail '기본 사이트와 다른 이름을 사용해야 합니다.'
@@ -105,7 +107,7 @@ unset secret_key gemini_api_key database_url
 export DEBIAN_FRONTEND=noninteractive
 run_cmd '패키지 목록 갱신' apt-get update
 run_cmd '기본 패키지 업그레이드' apt-get upgrade -y
-run_cmd '배포 필수 패키지 설치' apt-get install -y ca-certificates curl cron git nginx openssl python3 python3-pip python3-venv sqlite3
+run_cmd '배포 필수 패키지 설치' apt-get install -y ca-certificates curl cron git logrotate nginx openssl python3 python3-pip python3-venv sqlite3
 
 log_step '2GB Swap 구성'
 if swapon --show=NAME --noheadings | awk '{print $1}' | grep -Fxq "${SWAP_FILE}"; then
@@ -153,7 +155,7 @@ LOGGING_DROPIN="/etc/systemd/system/${SERVICE_NAME}.d/90-b7-1-logging.conf"
 
 # 검증 완료 전까지 설정 원본을 보존합니다. 앱 코드와 DB는 복원 대상이 아닙니다.
 CONFIG_BACKUP="$(mktemp -d)"
-CONFIG_PATHS=("${NGINX_AVAILABLE}" "${NGINX_ENABLED}" /etc/nginx/sites-enabled/default "${SYSTEMD_UNIT}" "${LOGGING_DROPIN}")
+CONFIG_PATHS=("${NGINX_AVAILABLE}" "${NGINX_ENABLED}" /etc/nginx/sites-enabled/default "${SYSTEMD_UNIT}" "${LOGGING_DROPIN}" /etc/b7-1/logrotate.conf /etc/cron.d/b7-1-logrotate)
 CONFIG_COMMITTED=0
 SERVICES_CHANGED=0
 NGINX_WAS_ACTIVE=0
@@ -269,6 +271,7 @@ run_cmd 'Systemd 서비스 파일 설치' install -o root -g root -m 644 "${syst
 rm -f "${systemd_temp_file}"
 run_cmd 'Nginx·서비스 로그 설정 준비' env SITE_CONFIG="${NGINX_AVAILABLE}" SERVICE_NAME="${SERVICE_NAME}" \
     bash "${LOGGING_SCRIPT}" --prepare
+run_cmd '운영 로그 회전 정책 설치' bash "${ROTATION_SCRIPT}"
 run_cmd '최종 Nginx 문법 검사' nginx -t
 run_cmd 'Systemd 설정 다시 읽기' systemctl daemon-reload
 run_cmd 'Nginx 부팅 자동 시작 설정' systemctl enable nginx
