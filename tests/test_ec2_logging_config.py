@@ -66,6 +66,14 @@ def script_environment(tmp_path):
     assert "/etc/systemd/system/" not in source
     assert "/var/backups/" not in source
     script.write_text(source, encoding="utf-8")
+    rotation_source = (SCRIPT_PATH.parent / "configure_log_rotation.sh").read_text(encoding="utf-8")
+    rotation_source = rotation_source.replace(guard, ":").replace(
+        "/etc/b7-1", str(tmp_path / "rotation"),
+    ).replace("/etc/cron.d", str(tmp_path / "cron")).replace(
+        "/var/lib/b7-1-logrotate", str(tmp_path / "rotation-state"),
+    )
+    (script.parent / "configure_log_rotation.sh").write_text(rotation_source, encoding="utf-8")
+    (tmp_path / "cron").mkdir()
 
     commands = tmp_path / "commands"
     commands.mkdir()
@@ -90,6 +98,10 @@ def script_environment(tmp_path):
             output.write(command + " " + " ".join(args) + "\n")
 
         if command == "systemctl":
+            if args[0] == "enable" and args[-1] == "cron" and mode == "cron_failure":
+                sys.exit(1)
+            if args[0] == "enable" and "--now" in args:
+                (root / (args[-1] + ".active")).touch()
             if args[0] in ("restart", "stop"):
                 state = root / (args[-1] + ".active")
                 if args[0] == "restart":
@@ -126,8 +138,14 @@ def script_environment(tmp_path):
             for filename in values[1:]:
                 Path(filename).chmod(int(values[0], 8))
         elif command == "install":
-            shutil.copyfile(args[-2], args[-1])
+            if "-d" in args:
+                Path(args[-1]).mkdir(parents=True, exist_ok=True)
+            else:
+                shutil.copyfile(args[-2], args[-1])
             Path(args[-1]).chmod(int(args[args.index("-m") + 1], 8))
+        elif command == "logrotate":
+            if mode == "rotation_failure" and Path(args[-1]) == root / "rotation/logrotate.conf":
+                sys.exit(1)
         elif command == "curl":
             url = urlsplit(args[-1])
             if url.path == "/api/health":
@@ -162,7 +180,7 @@ def script_environment(tmp_path):
             sys.exit(2)
     '''), encoding="utf-8")
     driver.chmod(0o755)
-    for name in ("nginx", "systemctl", "curl", "realpath", "readlink", "sleep", "chmod", "install"):
+    for name in ("nginx", "systemctl", "curl", "realpath", "readlink", "sleep", "chmod", "install", "logrotate"):
         (commands / name).symlink_to(driver)
 
     def run(mode="success", action=None):
@@ -212,6 +230,7 @@ def test_deploy_configuration_sequence(script_environment, site_name, service, f
     # 패키지 설치와 DB 작업은 제외하고 설정 트랜잭션 구간을 그대로 실행합니다.
     section = source[source.index('NGINX_AVAILABLE='):source.index("run_cmd 'DB 백업 디렉터리 생성'")]
     section = section.replace("/etc/nginx", str(nginx)).replace("/etc/systemd/system", str(root / "systemd"))
+    section = section.replace("/etc/b7-1", str(root / "rotation")).replace("/etc/cron.d", str(root / "cron"))
     wrapper = root / "deploy-config.sh"
     wrapper.write_text(
         'set -Eeuo pipefail\nrun_cmd() { shift; "$@"; }\nfail() { exit 1; }\n'
@@ -227,6 +246,7 @@ def test_deploy_configuration_sequence(script_environment, site_name, service, f
         SERVICE_NAME=service, NGINX_SITE_NAME=site_name,
         SITE_CONFIG=str(site), TEST_ROOT=str(root), TEST_MODE="fresh",
         LOGGING_SCRIPT=str(project / "scripts/ec2/configure_nginx_logs.sh"),
+        ROTATION_SCRIPT=str(project / "scripts/ec2/configure_log_rotation.sh"),
         VERIFY_BASE_URL="http://test.local", TMPDIR=str(root),
     )
     def execute():
@@ -238,7 +258,8 @@ def test_deploy_configuration_sequence(script_environment, site_name, service, f
         env.update(TEST_MODE="query_leak", TEST_INIT_INACTIVE="1")
         result = execute()
         assert result.returncode != 0
-        for path in (site, unit, dropin, nginx / "sites-enabled" / site_name):
+        for path in (site, unit, dropin, nginx / "sites-enabled" / site_name,
+                     root / "rotation/logrotate.conf", root / "cron/b7-1-logrotate"):
             assert not path.exists() and not path.is_symlink()
         assert not (root / (service + ".active")).exists()
         assert not (root / "nginx.active").exists()
@@ -254,12 +275,13 @@ def test_deploy_configuration_sequence(script_environment, site_name, service, f
     assert calls.count("systemctl restart nginx") == 2
     assert "systemctl reload nginx" not in calls
     if failure == "reapply":
-        before = [path.read_bytes() for path in (site, unit, dropin)]
+        paths = (site, unit, dropin, root / "rotation/logrotate.conf", root / "cron/b7-1-logrotate")
+        before = [path.read_bytes() for path in paths]
         env["TEST_MODE"] = "query_leak"
         result = execute()
         assert result.returncode != 0
         assert "이전 Nginx·systemd 설정으로 복원" in result.stderr
-        assert before == [path.read_bytes() for path in (site, unit, dropin)]
+        assert before == [path.read_bytes() for path in paths]
 
 
 def test_script_applies_and_reapplies_with_distinct_probes(script_environment):
@@ -278,6 +300,112 @@ def test_script_applies_and_reapplies_with_distinct_probes(script_environment):
     for path in ("/logs", "/logs/", "/logs/app.log", "/logs/app.log.1",
                  "/logs/server.log", "/logs/nginx_access.log"):
         assert f"http://test.local{path}\n" in calls
+
+
+def run_rotation(root, mode="success"):
+    """운영 경로를 임시 경로로 치환한 회전 설치기를 실행합니다."""
+    env = dict(os.environ)
+    env.update(PATH=str(root / "commands") + os.pathsep + env.get("PATH", ""),
+               TEST_ROOT=str(root), TEST_MODE=mode, TMPDIR=str(root))
+    return subprocess.run(
+        [shutil.which("bash"), str(root / "project/scripts/ec2/configure_log_rotation.sh")],
+        env=env, text=True, capture_output=True, timeout=30,
+    )
+
+
+def test_rotation_policy_installation_is_idempotent(script_environment):
+    """세 파일만 회전하고 반복 설치 시 예약과 정책이 중복되지 않는지 확인합니다."""
+    run, root, _, _, _ = script_environment
+    assert run(action="--prepare").returncode == 0
+    paths = (root / "rotation/logrotate.conf", root / "cron/b7-1-logrotate")
+    first = None
+    for _ in range(2):
+        result = run_rotation(root)
+        assert result.returncode == 0, result.stderr
+        contents = [path.read_text() for path in paths]
+        if first is not None:
+            assert contents == first
+        first = contents
+    policy, schedule = first
+    assert "app.log" not in policy
+    for name in ("nginx_access.log", "nginx_error.log", "server.log"):
+        assert policy.count(name) == 1
+    nginx, server = policy.split('"' + str(root / "project/logs/server.log") + '"')
+    assert "copytruncate" not in nginx
+    assert "--signal=USR1 nginx.service" in nginx
+    assert "create 0640 root root" in nginx
+    assert "copytruncate" in server and "postrotate" not in server
+    for setting in ("daily", "maxsize 5M", "rotate 7", "compress", "delaycompress", "missingok", "notifempty"):
+        assert setting in nginx and setting in server
+    assert schedule.count("17 * * * * root") == 1
+    assert "--state" in schedule and "--force" not in schedule
+    assert paths[0].stat().st_mode & 0o777 == 0o644
+    assert paths[1].stat().st_mode & 0o777 == 0o644
+    assert (root / "rotation-state").stat().st_mode & 0o777 == 0o700
+    assert "logrotate --debug" in (root / "calls").read_text()
+
+
+@pytest.mark.parametrize("mode", ["rotation_failure", "cron_failure"])
+@pytest.mark.parametrize("existing", [False, True])
+def test_rotation_install_failure_restores_files(script_environment, mode, existing):
+    """검사나 예약 활성화 실패 시 기존 정책을 복원하거나 새 파일을 제거합니다."""
+    run, root, _, _, _ = script_environment
+    assert run(action="--prepare").returncode == 0
+    paths = (root / "rotation/logrotate.conf", root / "cron/b7-1-logrotate")
+    if existing:
+        for path in paths:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("# 기존 설정\n", encoding="utf-8")
+    result = run_rotation(root, mode)
+    assert result.returncode != 0
+    assert "이전 상태로 복원" in result.stderr
+    for path in paths:
+        if existing:
+            assert path.read_text(encoding="utf-8") == "# 기존 설정\n"
+        else:
+            assert not path.exists()
+
+
+def test_real_logrotate_retention_and_open_writer(script_environment):
+    """실제 회전 도구로 압축·보관 개수와 열린 서버 로그 핸들의 기록 지속을 확인합니다."""
+    engine = shutil.which("logrotate")
+    if not engine:
+        pytest.skip("실제 logrotate가 설치된 환경에서 실행합니다.")
+    import grp
+    import pwd
+
+    run, root, _, _, _ = script_environment
+    assert run(action="--prepare").returncode == 0
+    assert run_rotation(root).returncode == 0
+    policy = root / "rotation/logrotate.conf"
+    user, group = pwd.getpwuid(os.getuid()).pw_name, grp.getgrgid(os.getgid()).gr_name
+    contents = policy.read_text().replace("root root", f"{user} {group}")
+    # 실제 시스템 서비스 대신 신호 호출 기록 대역을 사용합니다.
+    contents = contents.replace("/usr/bin/systemctl", str(root / "commands/systemctl"))
+    policy.write_text(contents)
+    logs = root / "project/logs"
+    server = logs / "server.log"
+    env = dict(os.environ, TEST_ROOT=str(root), TEST_MODE="success")
+    with server.open("a") as writer:
+        inode = server.stat().st_ino
+        for index in range(9):
+            writer.write(f"회전 전 {index}\n")
+            writer.flush()
+            for name in ("nginx_access.log", "nginx_error.log"):
+                with (logs / name).open("a") as stream:
+                    stream.write(f"요청 {index}\n")
+            result = subprocess.run([engine, "--force", "--state", str(root / "state"), str(policy)],
+                                    env=env, text=True, capture_output=True, timeout=30)
+            assert result.returncode == 0, result.stderr
+            assert server.stat().st_ino == inode
+        writer.write("회전 후 기록\n")
+        writer.flush()
+        assert "회전 후 기록" in server.read_text()
+    for name in ("nginx_access.log", "nginx_error.log", "server.log"):
+        assert len(list(logs.glob(name + ".*"))) == 7
+        assert (logs / (name + ".7.gz")).exists()
+        assert (logs / name).stat().st_mode & 0o777 == 0o640
+    assert "systemctl kill --kill-who=main --signal=USR1 nginx.service" in (root / "calls").read_text()
 
 
 @pytest.mark.parametrize("mode", [
