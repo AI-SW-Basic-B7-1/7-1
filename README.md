@@ -186,3 +186,21 @@ EC2 배포는 [배포 매뉴얼](docs/ec2_deployment_manual.md)의 SSM·Nginx·S
 | 차종민 (`whdals006`, Git author `jongmin`) | Gemini 연결, 대화 문맥 전달, AI 타임아웃·오류 처리 | [#29](https://github.com/AI-SW-Basic-B7-1/7-1/pull/29), [#35](https://github.com/AI-SW-Basic-B7-1/7-1/pull/35), [#41](https://github.com/AI-SW-Basic-B7-1/7-1/pull/41) |
 
 개인 작업 브랜치 → PR·리뷰 → `develop` 통합 → 배포용 `main` 반영이 협업 원칙입니다. **팀원별 유의미한 커밋 10회는 요구사항이며, 전원 달성으로 확인된 상태가 아닙니다.** 집계 기준·현재 확인값·열린 이슈는 [평가 가이드](docs/evaluation_guide.md)에서 확인합니다.
+
+## 반려동물 여행 검색 처리 흐름
+
+사용자가 예를 들어 다음과 같이 질문합니다.
+
+`서울에서 강아지와 함께 갈 수 있는 관광지 추천해줘`
+
+1. 최근 대화 이력과 현재 질문을 Gemini에 전달합니다.
+2. Gemini가 `areaCode=1`, `contentTypeId=12`와 같이 검색 조건을 추출합니다.
+3. `pet_service.py`가 KorPetTourService2 `areaBasedList2`를 호출합니다.
+4. 반환된 `contentid`, `contenttypeid`를 이용해 `detailIntro2`를 호출합니다.
+5. `areaBasedList2`의 장소 기본정보와 `detailIntro2`의 상세정보를 하나의 context로 구성합니다.
+6. Gemini가 해당 context만 근거로 최종 답변을 생성합니다.
+7. 최종 질문·답변을 기존 SQLite 대화 로그에 저장합니다.
+
+Gemini 1차 분석에서 지역 또는 관광 유형을 확인할 수 없는 경우에는 KorPetTourService2를 호출하지 않고 필요한 정보를 다시 질문합니다.
+
+KorPetTourService2 조회 결과가 없는 경우에는 장소를 임의로 생성하지 않고 데이터가 없음을 안내합니다.
