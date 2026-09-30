@@ -58,7 +58,19 @@ def _extract_items(data: dict[str, Any]) -> list[dict[str, Any]]:
 
     response = data.get("response", {})
     body = response.get("body", {})
+
+    if not isinstance(body, dict):
+        return []
+
     items = body.get("items", {})
+
+    # 조회 결과가 없으면 items가 빈 문자열로 내려올 수 있음
+    if not items:
+        return []
+
+    if not isinstance(items, dict):
+        return []
+
     item = items.get("item", [])
 
     if not item:

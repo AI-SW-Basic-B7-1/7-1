@@ -5,7 +5,23 @@ from time import perf_counter
 import aiosqlite
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 
-from app.ai_service import AIServiceError, AITimeoutError, generate_chat_response
+from app.ai_service import (
+    AIServiceError,
+    AITimeoutError,
+    DATA_SYSTEM_INSTRUCTION,
+    NO_PARAMETER_SYSTEM_INSTRUCTION,
+    NO_RESULT_SYSTEM_INSTRUCTION,
+    extract_pet_tour_parameters,
+    generate_chat_response,
+)
+
+from app.pet_service import (
+    PetTourAPITimeoutError,
+    PetTourServiceError,
+    build_pet_tour_context,
+    get_pet_tour_data,
+)
+
 from app.auth import get_current_user
 from app.database import (
     ConversationAccessError,
@@ -84,22 +100,309 @@ async def send_chat_message(
             detail="대화 기록을 불러오지 못했습니다.",
         ) from exc
 
-    chat_logger.info("ai_call_start user_id=%s request_id=%s", user_id, log_request_id)
+    chat_logger.info(
+        "ai_parameter_extract_start "
+        "user_id=%s request_id=%s",
+        user_id,
+        log_request_id,
+    )
+
     started_at = perf_counter()
+
     try:
-        answer = await generate_chat_response(question, history)
+        parameters = await extract_pet_tour_parameters(
+            question,
+            history,
+        )
+
     except AITimeoutError as exc:
-        chat_logger.error("ai_call_failed request_id=%s error=%s", log_request_id, exc, exc_info=True)
+        chat_logger.error(
+            "ai_parameter_extract_failed "
+            "request_id=%s error=%s",
+            log_request_id,
+            exc,
+            exc_info=True,
+        )
+
         raise HTTPException(
             status_code=status.HTTP_504_GATEWAY_TIMEOUT,
-            detail="현재 AI 응답이 지연되고 있습니다. 잠시 후 다시 시도해 주세요.",
+            detail=(
+                "현재 AI 응답이 지연되고 있습니다. "
+                "잠시 후 다시 시도해 주세요."
+            ),
         ) from exc
+
     except AIServiceError as exc:
-        chat_logger.error("ai_call_failed request_id=%s error=%s", log_request_id, exc, exc_info=True)
+        chat_logger.error(
+            "ai_parameter_extract_failed "
+            "request_id=%s error=%s",
+            log_request_id,
+            exc,
+            exc_info=True,
+        )
+
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="AI 응답을 생성하지 못했습니다. 잠시 후 다시 시도해 주세요.",
+            detail=(
+                "AI 검색 조건을 분석하지 못했습니다. "
+                "잠시 후 다시 시도해 주세요."
+            ),
         ) from exc
+
+
+    area_code = parameters.get("areaCode")
+    content_type_id = parameters.get("contentTypeId")
+
+
+    # ---------------------------------------------------------
+    # 1. Gemini가 지역 또는 관광 타입을 찾지 못한 경우
+    # ---------------------------------------------------------
+
+    if area_code is None or content_type_id is None:
+
+        missing_values = []
+
+        if area_code is None:
+            missing_values.append("지역")
+
+        if content_type_id is None:
+            missing_values.append("관광 유형")
+
+        extra_context = (
+            "KorPetTourService2 검색을 실행하지 않았습니다.\n"
+            f"확인되지 않은 정보: {', '.join(missing_values)}"
+        )
+
+        chat_logger.info(
+            "pet_parameter_missing "
+            "user_id=%s request_id=%s area_code=%s content_type_id=%s",
+            user_id,
+            log_request_id,
+            area_code,
+            content_type_id,
+        )
+
+        try:
+            answer = await generate_chat_response(
+                question,
+                history,
+                system_instruction=NO_PARAMETER_SYSTEM_INSTRUCTION,
+                extra_context=extra_context,
+            )
+
+        except AITimeoutError as exc:
+            chat_logger.error(
+                "ai_call_failed "
+                "request_id=%s error=%s",
+                log_request_id,
+                exc,
+                exc_info=True,
+            )
+
+            raise HTTPException(
+                status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+                detail=(
+                    "현재 AI 응답이 지연되고 있습니다. "
+                    "잠시 후 다시 시도해 주세요."
+                ),
+            ) from exc
+
+        except AIServiceError as exc:
+            chat_logger.error(
+                "ai_call_failed "
+                "request_id=%s error=%s",
+                log_request_id,
+                exc,
+                exc_info=True,
+            )
+
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=(
+                    "AI 응답을 생성하지 못했습니다. "
+                    "잠시 후 다시 시도해 주세요."
+                ),
+            ) from exc
+
+
+    # ---------------------------------------------------------
+    # 2. Gemini가 검색 조건을 정상적으로 찾은 경우
+    # ---------------------------------------------------------
+
+    else:
+
+        chat_logger.info(
+            "pet_api_call_start "
+            "user_id=%s request_id=%s area_code=%s "
+            "content_type_id=%s",
+            user_id,
+            log_request_id,
+            area_code,
+            content_type_id,
+        )
+
+        try:
+            pet_results = await get_pet_tour_data(
+                area_code,
+                content_type_id,
+            )
+
+        except PetTourAPITimeoutError as exc:
+            chat_logger.error(
+                "pet_api_call_failed "
+                "request_id=%s error=%s",
+                log_request_id,
+                exc,
+                exc_info=True,
+            )
+
+            raise HTTPException(
+                status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+                detail=(
+                    "관광 정보를 조회하는 데 시간이 걸리고 있습니다. "
+                    "잠시 후 다시 시도해 주세요."
+                ),
+            ) from exc
+
+        except PetTourServiceError as exc:
+            chat_logger.error(
+                "pet_api_call_failed "
+                "request_id=%s error=%s",
+                log_request_id,
+                exc,
+                exc_info=True,
+            )
+
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=(
+                    "반려동물 여행 정보를 조회하지 못했습니다. "
+                    "잠시 후 다시 시도해 주세요."
+                ),
+            ) from exc
+
+
+        # -----------------------------------------------------
+        # 3. Open API 결과가 없는 경우
+        # -----------------------------------------------------
+
+        if not pet_results:
+
+            extra_context = (
+                "KorPetTourService2에서 "
+                "해당 지역과 관광 유형에 대한 "
+                "조회 결과가 없습니다."
+            )
+
+            chat_logger.info(
+                "pet_api_no_result "
+                "request_id=%s area_code=%s content_type_id=%s",
+                log_request_id,
+                area_code,
+                content_type_id,
+            )
+
+            try:
+                answer = await generate_chat_response(
+                    question,
+                    history,
+                    system_instruction=NO_RESULT_SYSTEM_INSTRUCTION,
+                    extra_context=extra_context,
+                )
+
+            except AITimeoutError as exc:
+                chat_logger.error(
+                    "ai_call_failed "
+                    "request_id=%s error=%s",
+                    log_request_id,
+                    exc,
+                    exc_info=True,
+                )
+
+                raise HTTPException(
+                    status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+                    detail=(
+                        "현재 AI 응답이 지연되고 있습니다. "
+                        "잠시 후 다시 시도해 주세요."
+                    ),
+                ) from exc
+
+            except AIServiceError as exc:
+                chat_logger.error(
+                    "ai_call_failed "
+                    "request_id=%s error=%s",
+                    log_request_id,
+                    exc,
+                    exc_info=True,
+                )
+
+                raise HTTPException(
+                    status_code=status.HTTP_502_BAD_GATEWAY,
+                    detail=(
+                        "AI 응답을 생성하지 못했습니다. "
+                        "잠시 후 다시 시도해 주세요."
+                    ),
+                ) from exc
+
+
+        # -----------------------------------------------------
+        # 4. Open API 데이터가 정상적으로 존재하는 경우
+        # -----------------------------------------------------
+
+        else:
+
+            pet_context = build_pet_tour_context(
+                pet_results
+            )
+
+            chat_logger.info(
+                "ai_final_call_start "
+                "user_id=%s request_id=%s",
+                user_id,
+                log_request_id,
+            )
+
+            try:
+                answer = await generate_chat_response(
+                    question,
+                    history,
+                    system_instruction=DATA_SYSTEM_INSTRUCTION,
+                    extra_context=pet_context,
+                )
+
+            except AITimeoutError as exc:
+                chat_logger.error(
+                    "ai_call_failed "
+                    "request_id=%s error=%s",
+                    log_request_id,
+                    exc,
+                    exc_info=True,
+                )
+
+                raise HTTPException(
+                    status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+                    detail=(
+                        "현재 AI 응답이 지연되고 있습니다. "
+                        "잠시 후 다시 시도해 주세요."
+                    ),
+                ) from exc
+
+            except AIServiceError as exc:
+                chat_logger.error(
+                    "ai_call_failed "
+                    "request_id=%s error=%s",
+                    log_request_id,
+                    exc,
+                    exc_info=True,
+                )
+
+                raise HTTPException(
+                    status_code=status.HTTP_502_BAD_GATEWAY,
+                    detail=(
+                        "AI 응답을 생성하지 못했습니다. "
+                        "잠시 후 다시 시도해 주세요."
+                    ),
+                ) from exc
 
     latency_ms = max(0, round((perf_counter() - started_at) * 1000))
     chat_logger.info(
