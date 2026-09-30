@@ -40,6 +40,15 @@ class Settings:
     GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite")
     AI_TIMEOUT_SECONDS: float = float(os.getenv("AI_TIMEOUT_SECONDS", "8.0"))
 
+    # [한국관광공사 반려동물 동반여행 API 설정]
+    KOR_PET_TOUR_SERVICE_KEY: str = os.getenv(
+        "KOR_PET_TOUR_SERVICE_KEY",
+        "",
+    )
+
+    PET_TOUR_API_TIMEOUT_SECONDS: float = float(
+        os.getenv("PET_TOUR_API_TIMEOUT_SECONDS", "8.0")
+    )
 
 # 전역 설정 싱글톤 인스턴스
 settings = Settings()
