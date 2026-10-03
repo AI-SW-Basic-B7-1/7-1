@@ -46,8 +46,8 @@ Google Maps는 지도 표시와 경로 계산을 구분합니다. 2026-09-23 [�
 | 항목 | 위치·상태 |
 |---|---|
 | 저장소 | [AI-SW-Basic-B7-1/7-1](https://github.com/AI-SW-Basic-B7-1/7-1) |
-| 평가용 서비스 주소 | [http://15.164.49.77/](http://15.164.49.77/) — 기존 배포 문서에 등록된 주소, 평가 직전 재확인 필요 |
-| 상태 확인 | [배포 헬스체크](http://15.164.49.77/api/health) — 확인 범위·시각은 평가 가이드 참조 |
+| 평가용 서비스 주소 | [https://ptrip.duckdns.org/](https://ptrip.duckdns.org/) — EC2 배포 설정 대상, 현재 외부 접속은 확인하지 않음 |
+| 상태 확인 | [배포 헬스체크](https://ptrip.duckdns.org/api/health) — 실제 배포·응답 확인 필요 |
 | 실행 중 API 문서 | 로컬 [Swagger UI](http://127.0.0.1:8000/docs), [ReDoc](http://127.0.0.1:8000/redoc) |
 | 현재 기획·역할·후속 순서 | [중기 프로젝트 계획](docs/midterm_project_plan.md) |
 | 프로젝트 시작 기록 | [4일 프로토타입 초기 프로젝트 계획](docs/project_plan.md) |
@@ -155,7 +155,7 @@ python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 
 [로컬 화면](http://127.0.0.1:8000/)에서 회원가입·로그인합니다. HTML 파일을 직접 열거나 정적 서버만 실행하면 인증·AI 채팅은 동작하지 않습니다.
 
-`.gitignore`에는 `.env`, `.env.local`, DB 파일과 로그가 등록되어 있습니다. 실제 키·비밀번호·토큰·DB·SQLite의 `-wal`/`-shm` 보조 파일은 업로드하지 않습니다. 현재 `.gitignore`는 `.env.*` 전체와 DB 보조 파일을 모두 제외하지 않으므로 커밋 전 `git status`로 확인해야 합니다. 보강 작업은 [평가 가이드](docs/evaluation_guide.md)에서 추적합니다. 코드에 JWT 기본값이 있으므로 `.env`를 반드시 설정해야 합니다. HTTP 시연 주소와 `localStorage` 인증은 교육용 MVP의 현재 한계이며, 실제 서비스 운영에는 HTTPS와 인증 보안 보강이 필요합니다.
+`.gitignore`는 환경 파일 변형, SQLite DB와 WAL/SHM 보조 파일, 로그를 제외하며 `.env.example`은 추적합니다. 실제 키·비밀번호·토큰·DB는 업로드하지 않습니다. JWT 비밀 키가 없거나 예시값이면 앱 시작이 중단되며, EC2 배포 스크립트는 SecureString·HTTPS·백업 경로를 설정합니다. 현재 작업 브랜치의 코드 변경은 실제 EC2 배포나 외부 HTTPS 접속 검증을 뜻하지 않습니다. 브라우저의 `localStorage` 토큰 보관은 교육용 MVP의 남은 한계입니다.
 
 ## 검증·오류·배포
 
