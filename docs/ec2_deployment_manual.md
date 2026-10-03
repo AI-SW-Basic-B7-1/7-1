@@ -4,7 +4,7 @@
 
 이 문서는 Windows 개발 환경에서 AWS Systems Manager(SSM)를 사용해 B7-1 애플리케이션을 EC2에 배포하는 절차를 설명합니다.
 
-아래는 기존 팀 시연 배포 대상입니다. 스크립트는 develop에 병합되어 있으나 이 문서 정비에서는 배포를 실행하지 않았습니다. 공개 GET 확인과 미실행 범위는 [평가 가이드](evaluation_guide.md)를 봅니다.
+아래 값은 기존 팀 시연 환경을 위한 설정 참고입니다. 이번 작업에서 EC2 배포나 공개 접속은 실행하지 않았으므로 DNS, 보안 그룹, 운영 상태는 배포 전에 다시 확인합니다.
 
 **주의: wrapper의 `DEPLOY_BRANCH` 코드 기본값은 `main`입니다.** 이 매뉴얼은 통합본 시연을 위해 `--branch develop`을 명시합니다. 기본 브랜치(develop)와 스크립트 기본값(main)은 다르며 main에 최신 앱이 있다고 가정하지 않습니다.
 
@@ -14,12 +14,13 @@
 | 이 매뉴얼의 배포 브랜치 | develop (`--branch develop` 명시) |
 | EC2 인스턴스 ID | i-0b0b18a5347d8a96d |
 | EC2 공개 주소 | 15.164.49.77 |
+| HTTPS 도메인 | ptrip.duckdns.org |
 | EC2 사용자 | ubuntu |
 | 원격 프로젝트 경로 | /home/ubuntu/app/B7-1/7-1 |
 
 일반적인 배포는 SSH로 원격 명령을 직접 실행하지 않고 SSM을 사용합니다. SSH는 초기 접속, 운영 상태 확인, 비밀키 생성 등의 보조 작업에 사용합니다.
 
-## 2. 세 스크립트의 역할과 실행 시점
+## 2. 배포 스크립트의 역할과 실행 시점
 
 배포 흐름은 다음과 같습니다.
 
@@ -38,11 +39,11 @@ backup_db.sh (EC2 시간 기준 매일 04:00)
 
 | 스크립트 | 실행 위치 | 실행 시점 | 주요 역할 |
 | --- | --- | --- | --- |
-| scripts/ec2/run_ec2_deploy.sh | 로컬 | 개발자가 배포할 때 수동 실행 | AWS 인증, SSM Online 확인, 원격 브랜치 갱신, .env 전송, SSM 배포 명령 전송 및 결과 대기 |
-| scripts/ec2/deploy_ec2.sh | EC2 | run_ec2_deploy.sh가 SSM으로 자동 실행 | 패키지·Swap·Python 가상환경·의존성·Nginx·Systemd 설정, 테스트, 헬스체크, 백업 예약 설정 |
-| scripts/ec2/backup_db.sh | EC2 | deploy_ec2.sh가 등록한 Cron에 의해 매일 04:00 실행 | SQLite 온라인 백업, 백업 파일 권한 설정, 7일 초과 백업 삭제 |
+| scripts/ec2/run_ec2_deploy.sh | 로컬 | 개발자가 배포할 때 수동 실행 | AWS 인증, SSM Online 확인, 원격 브랜치 갱신, SecureString 이름 전달, SSM 배포 명령 전송 및 결과 대기 |
+| scripts/ec2/deploy_ec2.sh | EC2 | run_ec2_deploy.sh가 SSM으로 자동 실행 | 패키지·Swap·Python 가상환경·의존성·HTTPS Nginx·Systemd 설정, 배포 전 DB 백업, 롤백, 헬스체크, 백업 예약 설정 |
+| scripts/ec2/backup_db.sh | EC2 | deploy_ec2.sh가 등록한 Cron에 의해 매일 04:00 실행 | 앱과 동일한 DB 경로의 SQLite 온라인 백업, 무결성·권한 확인, 보관 기간이 지난 백업 삭제 |
 
-backup_db.sh는 배포 중에 즉시 실행되는 것이 아니라 deploy_ec2.sh가 Cron 작업을 등록한 뒤 정해진 시각에 실행됩니다.
+`backup_db.sh`는 기존 DB가 있으면 배포 직전에도 실행해 복구용 스냅샷을 만들고, 배포가 끝나면 Cron에 따라 매일 실행됩니다.
 
 ## 3. 배포 전 필수 전제조건
 
@@ -52,7 +53,7 @@ backup_db.sh는 배포 중에 즉시 실행되는 것이 아니라 deploy_ec2.sh
 - Git
 - Git Bash
 - SSH 클라이언트
-- 로컬 저장소의 scripts/ec2 세 파일
+- 로컬 저장소의 scripts/ec2 배포 스크립트 네 파일
 
 설치 여부는 다음 명령으로 확인합니다.
 
@@ -82,7 +83,7 @@ aws sts get-caller-identity --region ap-northeast-2
 
 ### 3.3 원격 배포 브랜치
 
-`run_ec2_deploy.sh`는 로컬 파일을 EC2로 복사하지 않고 Git 원격 저장소의 지정 브랜치에서 코드를 clone 또는 pull합니다. 배포 전에 실제 사용할 브랜치를 정하고, 해당 브랜치의 원격 ref에 배포 스크립트 세 개가 있는지 확인합니다.
+`run_ec2_deploy.sh`는 로컬 파일을 EC2로 복사하지 않고 Git 원격 저장소의 지정 브랜치에서 코드를 clone 또는 pull합니다. 배포 전에 실제 사용할 브랜치를 정하고, 해당 브랜치의 원격 ref에 배포 스크립트 네 개가 있는지 확인합니다.
 
 ~~~bash
 DEPLOY_BRANCH=develop
@@ -91,12 +92,13 @@ git ls-remote --heads origin "$DEPLOY_BRANCH"
 git ls-tree -r --name-only "origin/$DEPLOY_BRANCH" -- scripts/ec2
 ~~~
 
-`DEPLOY_BRANCH`는 실제 배포할 브랜치로 설정합니다. `develop`이 아닌 브랜치를 배포한다면 그 브랜치 이름을 지정합니다. 마지막 명령의 결과에 다음 세 파일이 모두 포함되어야 합니다.
+`DEPLOY_BRANCH`는 실제 배포할 브랜치로 설정합니다. `develop`이 아닌 브랜치를 배포한다면 그 브랜치 이름을 지정합니다. 마지막 명령의 결과에 다음 네 파일이 모두 포함되어야 합니다.
 
 ~~~text
 scripts/ec2/run_ec2_deploy.sh
 scripts/ec2/deploy_ec2.sh
 scripts/ec2/backup_db.sh
+scripts/ec2/configure_nginx_logs.sh
 ~~~
 
 이 확인은 선택한 원격 브랜치에 필요한 파일이 있는지 검사합니다. 파일이 누락되면 해당 브랜치에 먼저 커밋·병합한 뒤 배포합니다. 파일 존재 확인만으로 애플리케이션의 실행 상태가 보장되지는 않습니다.
@@ -117,6 +119,8 @@ Online
 
 EC2에는 SSM Agent가 실행 중이어야 하며, 인스턴스 역할에는 Systems Manager 연결에 필요한 권한이 있어야 합니다. 인스턴스가 Online이 아니면 배포를 시작하지 않습니다.
 
+배포할 SecureString을 읽으려면 인스턴스 역할에 해당 Parameter Store 항목의 `ssm:GetParameter` 권한이 필요합니다. 고객 관리형 KMS 키를 사용한다면 해당 키에 대한 `kms:Decrypt` 권한도 필요합니다.
+
 ### 3.5 SSH 개인키
 
 SSH 개인키는 로컬에 안전하게 보관하고, 실제 경로는 명령어의 placeholder에 넣습니다.
@@ -126,6 +130,10 @@ ssh -i <PRIVATE_KEY_PATH> ubuntu@15.164.49.77
 ~~~
 
 SSH는 일반 배포의 필수 경로는 아니지만, 서버 상태 확인과 SECRET_KEY 생성에 사용할 수 있습니다.
+
+### 3.6 HTTPS 네트워크 전제조건
+
+`ptrip.duckdns.org`의 DNS A 레코드가 대상 EC2 공개 IP를 가리켜야 하며, EC2 보안 그룹에서 HTTP 80과 HTTPS 443 인바운드를 허용해야 합니다. SSH 22는 팀원 IP로 제한합니다. 이 작업에서는 DNS 응답, 보안 그룹 규칙, 인증서 발급 가능 여부를 확인하지 않았습니다.
 
 ## 4. 로컬 .env 준비
 
@@ -140,6 +148,7 @@ cp .env.example .env
 | 변수 | 설정 기준 |
 | --- | --- |
 | SECRET_KEY | 예시값이 아닌 충분히 긴 무작위 비밀값 |
+| SITE_DOMAIN | HTTPS 인증서에 사용할 도메인 (`ptrip.duckdns.org`) |
 | ALGORITHM | 기본값 HS256 |
 | ACCESS_TOKEN_EXPIRE_MINUTES | 토큰 만료 시간(분) |
 | DATABASE_URL | 기본값 sqlite:///./data/chatbot.db |
@@ -147,17 +156,13 @@ cp .env.example .env
 | GEMINI_MODEL | 사용할 Gemini 모델명 |
 | AI_TIMEOUT_SECONDS | httpx 네트워크 타임아웃(기본 8.0초). 전체 요청의 정확한 마감시간은 아님 |
 
-SECRET_KEY를 SSH로 생성하려면 다음처럼 실행하고 출력된 값을 로컬 .env의 SECRET_KEY에 입력합니다.
+SECRET_KEY는 충분히 긴 무작위 값으로 생성해 `.env`에 입력합니다. 실제 키를 문서나 Git에 기록하지 않습니다.
 
-~~~bash
-ssh -i <PRIVATE_KEY_PATH> ubuntu@15.164.49.77 "openssl rand -hex 32"
-~~~
+운영 환경변수 파일을 AWS Systems Manager Parameter Store에 `SecureString` 형식으로 저장합니다. 예를 들어 항목 이름은 `/b7-1/production/env`로 정하고, `.env` 내용은 AWS 콘솔 또는 승인된 비밀정보 관리 절차로 입력합니다. 배포 명령에는 항목 이름만 전달되며 EC2 인스턴스가 값을 조회해 권한 `600`의 `.env` 파일로 저장합니다.
 
-.env는 --env-file .env로 SSM 명령에 포함되어 EC2의 /home/ubuntu/app/B7-1/7-1/.env로 저장됩니다. 원격 배포 스크립트는 SECRET_KEY, GEMINI_API_KEY, DATABASE_URL이 비어 있거나 예시값인지 확인하고, EC2에서 .env 권한을 600으로 설정합니다.
+`.env`와 `.env.example` 외 환경 파일 변형, SQLite 파일과 `-wal`/`-shm` 보조 파일은 `.gitignore`에서 제외합니다. 실제 키 파일이 Git에 들어가지 않았는지 커밋 전에 상태를 확인합니다. 관광공사·지도 설정은 [후속 명세](pet_travel_spec.md)의 후보이며 현재 배포 필수값이 아닙니다.
 
-.env는 .gitignore에 포함되어 있으므로 Git에 커밋하지 않습니다. 현재 `.env.*` 전체와 SQLite `-wal`/`-shm` 파일은 모두 제외되어 있지 않으므로 업로드 전 상태를 확인합니다. 관광공사·지도 설정은 [후속 명세](pet_travel_spec.md)의 후보이며 현재 배포 필수값이 아닙니다.
-
-앱은 DATABASE_URL을 읽지만 현재 deploy_ec2.sh의 DB 권한·무결성 검사 대상은 프로젝트의 `data/chatbot.db`로 고정되어 있습니다. 백업 스크립트도 기본값이 같은 파일이며 별도 DB_PATH를 지원합니다. 배포 매뉴얼에서는 기본 DATABASE_URL을 사용하고, 사용자 지정 DB 경로의 운영/백업 일치는 별도 점검해야 합니다.
+배포 스크립트는 `DATABASE_URL`의 SQLite 파일 경로를 계산해 권한 설정, 배포 전 백업, 무결성 점검, 매일 백업에 동일하게 사용합니다. 기존 배포의 `DATABASE_URL`을 바꾸면 자동으로 중단하므로, DB를 옮기는 작업은 별도 이전·복구 계획을 먼저 준비합니다.
 
 ## 5. 배포 전 점검 순서
 
@@ -175,13 +180,13 @@ ssh -i <PRIVATE_KEY_PATH> ubuntu@15.164.49.77 "openssl rand -hex 32"
    aws ssm describe-instance-information --region ap-northeast-2 --filters "Key=InstanceIds,Values=i-0b0b18a5347d8a96d" --query "InstanceInformationList[0].PingStatus" --output text
    ~~~
 
-3. 로컬 .env가 존재하고 비어 있지 않은지 확인합니다.
+3. 로컬 `.env`가 존재하고 비어 있지 않은지 확인하고, 같은 내용을 지정한 Parameter Store 항목에 `SecureString`으로 저장했는지 확인합니다.
 
    ~~~bash
    test -s .env
    ~~~
 
-4. 원격 develop 브랜치에 배포 스크립트 세 개가 존재하는지 확인합니다.
+4. 원격 develop 브랜치에 배포 스크립트 네 개가 존재하는지 확인합니다.
 
    ~~~bash
    git ls-tree -r --name-only origin/develop -- scripts/ec2
@@ -198,16 +203,16 @@ ssh -i <PRIVATE_KEY_PATH> ubuntu@15.164.49.77 "openssl rand -hex 32"
 모든 전제조건을 확인한 뒤 프로젝트 루트에서 다음 명령을 실행합니다.
 
 ~~~bash
-bash scripts/ec2/run_ec2_deploy.sh --instance-id i-0b0b18a5347d8a96d --region ap-northeast-2 --branch develop --env-file .env
+bash scripts/ec2/run_ec2_deploy.sh --instance-id i-0b0b18a5347d8a96d --region ap-northeast-2 --branch develop --secret-parameter /b7-1/production/env
 ~~~
 
 run_ec2_deploy.sh는 다음 작업을 순서대로 수행합니다.
 
 1. AWS 자격증명 확인
 2. 대상 EC2의 SSM PingStatus 확인
-3. 로컬 .env를 전송 가능한 문자열로 변환
+3. Parameter Store 항목 이름을 포함한 SSM 배포 명령 구성
 4. SSM을 통해 EC2에서 develop 브랜치 clone 또는 pull
-5. 원격 프로젝트 경로에 .env 저장
+5. EC2 인스턴스 역할로 SecureString 조회 후 `.env`에 안전하게 저장
 6. EC2에서 deploy_ec2.sh 실행
 7. SSM 명령 완료까지 대기
 8. 표준 출력과 표준 오류 수집
@@ -225,17 +230,18 @@ run_ec2_deploy.sh는 다음 작업을 순서대로 수행합니다.
 
 deploy_ec2.sh가 SSM에서 root 권한으로 실행되면 다음 작업을 수행합니다.
 
-- 필수 Linux 패키지 설치: nginx, git, python3-venv, sqlite3, cron 등
+- 필수 Linux 패키지 설치: nginx, certbot, logrotate, git, python3-venv, sqlite3, cron 등
 - 2GB Swap 생성 및 재부팅 후 자동 활성화 등록
-- 프로젝트와 SQLite 데이터 디렉터리 권한 설정
+- `DATABASE_URL`과 일치하는 SQLite 경로 권한 설정 및 배포 전 온라인 백업
 - Python 가상환경 생성 및 requirements.txt 설치
 - 배포 전 pytest -q 실행
-- Nginx를 80번 포트의 reverse proxy로 설정하고 `/static/` 요청도 FastAPI로 전달
+- Let’s Encrypt 인증서 발급·갱신 설정, HTTPS 역방향 프록시 구성 및 일반 HTTP 요청 HTTPS 전환
 - SQLite, .env, Git, 로그 파일 외부 접근 차단
 - chatbot.service Systemd 서비스 등록 및 재시작
-- `/api/health` 헬스체크와 CSS·JavaScript 정적 파일 HTTP 응답 점검
-- SQLite 무결성 검사
-- SQLite 백업 Cron 등록
+- HTTPS 헬스체크와 HTTP 전환, CSS·JavaScript 응답, DB 파일 접근 차단 점검
+- SQLite 무결성 검사와 매일 백업 Cron 등록
+- 배포 실패 시 이전 코드·환경·Nginx 설정 및 DB 백업 복원
+- Nginx 요청 추적·로그 권한·logrotate 설정 재적용
 
 백업 Cron은 다음 정책으로 등록됩니다.
 
@@ -243,24 +249,27 @@ deploy_ec2.sh가 SSM에서 root 권한으로 실행되면 다음 작업을 수�
 | --- | --- |
 | 실행 시각 | EC2 시스템 시간 기준 매일 04:00 |
 | 백업 경로 | /home/ubuntu/db_backups |
+| 파일 권한 | 디렉터리 700, 백업 파일 600 |
 | 보관 기간 | 7일 |
 | 로그 | /home/ubuntu/db_backups/backup.log |
+
+기존 DB가 있으면 재배포 전 `predeploy_*.db` 온라인 백업도 생성합니다. DB 변경이 필요한 새 버전이 실패하면 이 백업을 원래 DB 경로로 복원합니다.
 
 ## 8. 배포 후 확인
 
 ### 8.1 웹 서비스와 API
 
-브라우저 또는 HTTP 클라이언트에서 다음 주소를 확인합니다.
+브라우저 또는 HTTPS 클라이언트에서 다음 주소를 확인합니다.
 
 ~~~text
-http://15.164.49.77/
-http://15.164.49.77/api/health
+https://ptrip.duckdns.org/
+https://ptrip.duckdns.org/api/health
 ~~~
 
 DB 파일 직접 접근은 Nginx에서 차단되어 404가 반환되어야 합니다.
 
 ~~~text
-http://15.164.49.77/data/chatbot.db
+https://ptrip.duckdns.org/data/chatbot.db
 ~~~
 
 ### 8.2 배포 로그
@@ -292,10 +301,12 @@ active
 
 ### 8.3 애플리케이션 로그와 실제 시연
 
-배포 로그와 별도로 앱 이벤트는 프로젝트 기준 `logs/app.log` 및 Systemd journal에 남습니다. 프로젝트 루트에서 다음 명령으로 확인합니다.
+앱 이벤트는 프로젝트 기준 `logs/app.log` 및 `logs/server.log`에 기록되고, Nginx 로그는 `/var/log/nginx/b7-1` 아래에 분리됩니다. 배포 후 로그 정책이 재적용되고 logrotate가 Nginx와 앱 로그를 매일 회전하며 14개까지 보관합니다. 프로젝트 루트에서 앱 로그를 확인합니다.
 
 ~~~bash
 grep -E 'request_received|ai_call_start|ai_call_success|ai_call_failed|db_save_success|db_save_failed|db_read_failed' logs/app.log
+tail -n 100 logs/server.log
+sudo tail -n 100 /var/log/nginx/b7-1/nginx_error.log
 sudo journalctl -u chatbot.service --no-pager -n 100
 git rev-parse HEAD
 ~~~
@@ -316,9 +327,10 @@ ssh -i <PRIVATE_KEY_PATH> ubuntu@15.164.49.77 "ls -l /home/ubuntu/db_backups"
 ## 9. 보안 주의사항
 
 - 실제 API 키, SECRET_KEY, SSH 개인키 내용은 문서·Git·터미널 캡처에 기록하지 않습니다.
-- .env는 로컬에서만 관리하고 Git에 커밋하지 않습니다.
-- Base64는 암호화가 아니라 전송 형식 변환입니다.
-- .env가 로그나 명령어 출력에 노출되었다면 해당 Gemini API 키를 폐기하고 새 키로 교체합니다.
+- `.env`는 Git에 커밋하지 않고 Parameter Store `SecureString`으로 관리합니다.
+- SSM 명령에는 비밀값 대신 Parameter Store 이름만 포함됩니다.
+- 인스턴스 역할의 Parameter Store·KMS 권한은 필요한 항목으로 제한합니다.
+- 실제 비밀값이 로그나 명령 출력에 노출되었다면 해당 키를 폐기하고 새 키로 교체합니다.
 - AWS 임시 인증 세션은 만료되므로 배포 직전에 유효한지 확인합니다.
 - 운영 배포에는 root AWS 자격증명보다 최소 권한 IAM 정책을 사용하는 것을 권장합니다.
 
@@ -336,4 +348,4 @@ aws ssm describe-instance-information --region ap-northeast-2
 - [AWS CLI send-command](https://docs.aws.amazon.com/cli/latest/reference/ssm/send-command.html)
 - [Linux 인스턴스 SSH 연결](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/connect-to-linux-instance.html)
 
-현재 HTTP 시연 구성에는 HTTPS 자동 설정이 없습니다. 프리티어 적용 여부와 실제 AWS 사용량/과금은 계정에서 확인해야 하며 이 문서가 무과금을 보장하지 않습니다.
+HTTPS 자동 설정은 DNS와 보안 그룹에서 80·443 포트가 준비된 경우에 적용됩니다. 실제 DNS, 보안 그룹, 인증서, 외부 접속과 EC2 배포는 별도로 확인해야 합니다. 프리티어 적용 여부와 AWS 사용량·과금도 계정에서 확인해야 하며 이 문서가 무과금을 보장하지 않습니다.
