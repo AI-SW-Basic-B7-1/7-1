@@ -8,6 +8,15 @@ from datetime import datetime
 from typing import List, Optional
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+MAX_BCRYPT_PASSWORD_BYTES = 72
+
+
+def validate_password_bytes(value: str) -> str:
+    """bcrypt 입력 비밀번호의 UTF-8 바이트 길이를 제한합니다."""
+    if len(value.encode("utf-8")) > MAX_BCRYPT_PASSWORD_BYTES:
+        raise ValueError("비밀번호는 UTF-8 기준 72바이트 이하여야 합니다.")
+    return value
+
 
 # ============================================================================
 # 1. 인증 관련 스키마 (Authentication Schemas)
@@ -43,10 +52,10 @@ class UserRegisterRequest(BaseModel):
     @field_validator("password")
     @classmethod
     def validate_password(cls, value: str) -> str:
-        """비밀번호의 공백 여부를 검증합니다."""
+        """비밀번호의 공백과 bcrypt 바이트 길이를 검증합니다."""
         if not value or not value.strip():
             raise ValueError("비밀번호는 공백일 수 없습니다.")
-        return value
+        return validate_password_bytes(value)
 
     model_config = ConfigDict(
         json_schema_extra={
@@ -89,6 +98,7 @@ class UserLoginRequest(BaseModel):
     )
     password: str = Field(
         ...,
+        max_length=100,
         description="사용자 로그인 비밀번호",
     )
 
@@ -104,10 +114,10 @@ class UserLoginRequest(BaseModel):
     @field_validator("password")
     @classmethod
     def validate_password(cls, value: str) -> str:
-        """로그인 비밀번호 입력을 검증합니다."""
+        """로그인 비밀번호의 공백과 bcrypt 바이트 길이를 검증합니다."""
         if not value:
             raise ValueError("비밀번호를 입력해 주세요.")
-        return value
+        return validate_password_bytes(value)
 
     model_config = ConfigDict(
         json_schema_extra={
