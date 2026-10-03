@@ -439,6 +439,12 @@ h2 {
   box-shadow: 0 0 0 3px rgba(49, 87, 213, 0.14);
 }
 
+.auth-password-help {
+  margin-top: -6px;
+  color: var(--color-muted);
+  font-size: 0.78rem;
+}
+
 .button-block {
   width: 100%;
   margin-top: 8px;
