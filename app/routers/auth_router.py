@@ -145,7 +145,16 @@ async def login(
     user_row = await cursor.fetchone()
 
     # 2. 자격 증명 검증 (존재 여부 및 비밀번호 해시 일치 검사)
-    if user_row is None or not verify_password(request.password, user_row["hashed_password"]):
+    password_matches = (
+        await run_in_threadpool(
+            verify_password,
+            request.password,
+            user_row["hashed_password"],
+        )
+        if user_row is not None
+        else False
+    )
+    if not password_matches:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="아이디 또는 비밀번호가 올바르지 않습니다.",
