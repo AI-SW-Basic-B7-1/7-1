@@ -9,8 +9,15 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+from app.config import settings
 from app.database import init_db
 from app.logger import app_logger
+
+
+EXAMPLE_SECRET_KEYS = {
+    "your_super_secret_jwt_key_here",
+    "your_super_secret_jwt_key_here_codessey_b7_1_security_default",
+}
 
 
 class AppLifespanManager:
@@ -21,8 +28,12 @@ class AppLifespanManager:
         self.is_database_initialized = False
 
     async def startup(self) -> None:
-        """애플리케이션 시작 시 SQLite DB를 초기화합니다."""
+        """비밀 키 설정을 확인한 뒤 SQLite DB를 초기화합니다."""
         self.is_database_initialized = False
+        secret_key = settings.SECRET_KEY.strip()
+        if not secret_key or secret_key.casefold() in EXAMPLE_SECRET_KEYS:
+            app_logger.error("invalid_secret_key_configuration")
+            raise RuntimeError("운영용 SECRET_KEY가 설정되지 않았습니다.")
         try:
             await init_db()
         except Exception:

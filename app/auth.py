@@ -95,7 +95,11 @@ def decode_access_token(token: str) -> Optional[Dict[str, Any]]:
             token,
             settings.SECRET_KEY,
             algorithms=[settings.ALGORITHM],
+            options={"require": ["exp", "sub"]},
         )
+        username = payload.get("sub")
+        if not isinstance(username, str) or not username.strip():
+            return None
         return payload
     except Exception:
         return None
