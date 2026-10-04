@@ -133,6 +133,26 @@ def test_deploy_logs_revision_for_the_root_owned_safe_directory():
     assert 'git -c safe.directory="${PROJECT_DIR}" -C "${PROJECT_DIR}" rev-parse HEAD' in ec2_source
 
 
+def test_cron_backup_script_is_executable_in_git():
+    """Cron에서 직접 실행하는 백업 스크립트가 Git에도 실행 파일로 기록됩니다."""
+    result = subprocess.run(
+        [
+            "git",
+            "-C",
+            str(PROJECT_ROOT),
+            "ls-files",
+            "--stage",
+            "--",
+            "scripts/ec2/backup_db.sh",
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+
+    assert result.stdout.split(maxsplit=1)[0] == "100755"
+
+
 def test_remote_command_pins_the_requested_revision(tmp_path: Path, fake_aws):
     """원격 checkout 명령에 지정한 SHA와 브랜치 포함 검증을 전달합니다."""
     environment, command_capture = fake_aws
