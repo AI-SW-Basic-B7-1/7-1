@@ -13,11 +13,16 @@ INSTANCE_ID="${INSTANCE_ID:-}"
 AWS_REGION_NAME="${AWS_REGION:-ap-northeast-2}"
 REPO_URL="${REPO_URL:-${DEFAULT_REPO_URL}}"
 DEPLOY_BRANCH="${DEPLOY_BRANCH:-main}"
+DEPLOY_REVISION="${DEPLOY_REVISION:-}"
 APP_USER="${APP_USER:-ubuntu}"
 REMOTE_PROJECT_DIR="${REMOTE_PROJECT_DIR:-/home/ubuntu/app/B7-1/7-1}"
 CLONE_DIR="${CLONE_DIR:-}"
 SECRET_PARAMETER="${SECRET_PARAMETER:-}"
 RUN_TESTS=1
+FAILURE_INJECTION=""
+REQUIRE_E2E_TEST_INSTANCE=0
+E2E_PRESERVE_CHAT_MARKER="${B7_1_E2E_PRESERVE_CHAT_MARKER:-}"
+E2E_READY_MARKER="${B7_1_E2E_READY_MARKER:-}"
 WAIT_SECONDS="${WAIT_SECONDS:-900}"
 
 usage() {
@@ -32,12 +37,17 @@ usage() {
   --region REGION        AWS 리전 (기본값: ap-northeast-2)
   --repo-url URL         clone할 Git 저장소 URL (기본값: 현재 저장소 origin)
   --branch BRANCH        배포할 Git 브랜치 (기본값: main)
+  --revision SHA         브랜치에 포함된 40자리 커밋 SHA에 정확히 배포
   --project-dir PATH     EC2 애플리케이션 경로 (기본값: /home/ubuntu/app/B7-1/7-1)
   --clone-dir PATH       Git clone 경로 (기본값: project-dir과 동일)
   --secret-parameter NAME
                          EC2가 조회할 Systems Manager SecureString 이름
   --app-user USER        EC2 애플리케이션 사용자 (기본값: ubuntu)
   --skip-tests            EC2 배포 전 pytest 생략
+  --failure-injection POINT
+                         테스트 EC2에서 before-start 또는 after-start 복구 실패를 재현
+  --require-e2e-test-instance
+                         배포 전에 EC2의 root 전용 테스트 표식을 확인
   --wait-seconds SECONDS  SSM 완료 대기 시간 (기본값: 900)
   -h, --help              도움말 출력
 
@@ -84,6 +94,11 @@ while [[ $# -gt 0 ]]; do
             DEPLOY_BRANCH="$2"
             shift 2
             ;;
+        --revision)
+            [[ $# -ge 2 ]] || fail '--revision 값이 필요합니다.'
+            DEPLOY_REVISION="$2"
+            shift 2
+            ;;
         --project-dir)
             [[ $# -ge 2 ]] || fail '--project-dir 값이 필요합니다.'
             REMOTE_PROJECT_DIR="$2"
@@ -108,6 +123,15 @@ while [[ $# -gt 0 ]]; do
             RUN_TESTS=0
             shift
             ;;
+        --failure-injection)
+            [[ $# -ge 2 ]] || fail '--failure-injection 값이 필요합니다.'
+            FAILURE_INJECTION="$2"
+            shift 2
+            ;;
+        --require-e2e-test-instance)
+            REQUIRE_E2E_TEST_INSTANCE=1
+            shift
+            ;;
         --wait-seconds)
             [[ $# -ge 2 ]] || fail '--wait-seconds 값이 필요합니다.'
             WAIT_SECONDS="$2"
@@ -127,6 +151,14 @@ done
     usage >&2
     fail '--instance-id는 필수입니다.'
 }
+[[ -z "${DEPLOY_REVISION}" || "${DEPLOY_REVISION}" =~ ^[0-9a-fA-F]{40}$ ]] || fail '--revision은 40자리 Git SHA여야 합니다.'
+[[ -z "${FAILURE_INJECTION}" || "${FAILURE_INJECTION}" == before-start || "${FAILURE_INJECTION}" == after-start ]] || fail '--failure-injection은 before-start 또는 after-start여야 합니다.'
+if [[ "${FAILURE_INJECTION}" == after-start ]]; then
+    [[ "${E2E_PRESERVE_CHAT_MARKER}" =~ ^[A-Za-z0-9_-]{1,120}$ ]] || fail '기동 후 실패 시험에는 DB 저장 확인용 B7_1_E2E_PRESERVE_CHAT_MARKER 환경변수가 필요합니다.'
+    [[ "${E2E_READY_MARKER}" =~ ^/run/b7-1-e2e-ready-[A-Za-z0-9_-]{1,80}$ ]] || fail '기동 후 실패 시험에는 /run/b7-1-e2e-ready-* 형식의 B7_1_E2E_READY_MARKER 환경변수가 필요합니다.'
+else
+    [[ -z "${E2E_PRESERVE_CHAT_MARKER}" && -z "${E2E_READY_MARKER}" ]] || fail 'DB 저장 표식 환경변수는 after-start 실패 시험에서만 사용할 수 있습니다.'
+fi
 [[ -n "${SECRET_PARAMETER}" ]] || fail '--secret-parameter는 필수입니다.'
 [[ "${SECRET_PARAMETER}" =~ ^[A-Za-z0-9_./-]+$ ]] || fail 'Parameter Store 이름에 지원하지 않는 문자가 있습니다.'
 [[ -n "${REPO_URL}" ]] || fail 'Git 저장소 URL을 확인할 수 없습니다. --repo-url을 지정하세요.'
@@ -180,6 +212,7 @@ clone_dir_q="$(quote_for_remote "${CLONE_DIR}")"
 project_dir_q="$(quote_for_remote "${REMOTE_PROJECT_DIR}")"
 repo_url_q="$(quote_for_remote "${REPO_URL}")"
 branch_q="$(quote_for_remote "${DEPLOY_BRANCH}")"
+revision_q="$(quote_for_remote "${DEPLOY_REVISION}")"
 app_user_q="$(quote_for_remote "${APP_USER}")"
 secret_parameter_q="$(quote_for_remote "${SECRET_PARAMETER}")"
 region_q="$(quote_for_remote "${AWS_REGION_NAME}")"
@@ -190,48 +223,94 @@ backup_root_q="$(quote_for_remote '/var/backups/b7-1-deploy')"
 remote_command="$(
     printf 'set -Eeuo pipefail\n'
     printf 'umask 077\n'
+    if [[ "${REQUIRE_E2E_TEST_INSTANCE}" == '1' ]]; then
+        printf '[[ -f /etc/b7-1/e2e-test-instance && ! -L /etc/b7-1/e2e-test-instance ]] || { echo %q; exit 1; }\n' '테스트 EC2 표식이 없습니다.'
+        printf '[[ "$(stat -c '\''%%U:%%a'\'' /etc/b7-1/e2e-test-instance)" == '\''root:600'\'' ]] || { echo %q; exit 1; }\n' '테스트 EC2 표식의 소유자 또는 권한이 올바르지 않습니다.'
+    fi
     printf "previous_revision=''\n"
     printf "previous_branch=''\n"
     printf "env_backup=''\n"
     printf "env_temp=''\n"
+    printf 'env_written=0\n'
     printf 'rollback_remote_state() {\n'
     printf '  local result=$?\n'
+    printf '  local rollback_verified=1\n'
+    printf '  local current_revision=""\n'
     printf '  trap - EXIT\n'
+    printf '  set +e\n'
     printf '  rm -f -- "$env_temp"\n'
     printf '  if [[ $result -ne 0 ]]; then\n'
     printf '    if [[ -n $previous_revision ]]; then\n'
-    printf '      if [[ -n $previous_branch ]]; then git -c safe.directory=%s -C %s checkout --force "$previous_branch" || true; fi\n' "${clone_dir_q}" "${clone_dir_q}"
-    printf '      git -c safe.directory=%s -C %s reset --hard "$previous_revision" || true\n' "${clone_dir_q}" "${clone_dir_q}"
+    printf '      if [[ -n $previous_branch ]]; then git -c safe.directory=%s -C %s checkout --force "$previous_branch" || rollback_verified=0; fi\n' "${clone_dir_q}" "${clone_dir_q}"
+    printf '      git -c safe.directory=%s -C %s reset --hard "$previous_revision" || rollback_verified=0\n' "${clone_dir_q}" "${clone_dir_q}"
+    printf '      current_revision=$(git -c safe.directory=%s -C %s rev-parse HEAD 2>/dev/null || true)\n' "${clone_dir_q}" "${clone_dir_q}"
+    printf '      [[ "$current_revision" == "$previous_revision" ]] || rollback_verified=0\n'
     printf '    fi\n'
-    printf '    if [[ -n $env_backup && -f $env_backup ]]; then install -o %s -g %s -m 600 "$env_backup" %s/.env || true; fi\n' "${app_user_q}" "${app_user_q}" "${project_dir_q}"
-    printf '    if [[ -n $env_backup ]]; then rm -f -- "$env_backup"; fi\n'
+    printf '    if [[ -n $env_backup ]]; then\n'
+    printf '      if [[ ! -f $env_backup ]]; then\n'
+    printf '        printf "ENV_ROLLBACK_SNAPSHOT_MISSING=%%s\\n" "$env_backup"\n'
+    printf '        rollback_verified=0\n'
+    printf '      elif install -o %s -g %s -m 600 "$env_backup" %s/.env && cmp -s -- "$env_backup" %s/.env; then\n' "${app_user_q}" "${app_user_q}" "${project_dir_q}" "${project_dir_q}"
+    printf '        rm -f -- "$env_backup"\n'
+    printf '      else\n'
+    printf '        printf "ENV_ROLLBACK_VERIFICATION_FAILED=1\\nENV_ROLLBACK_SNAPSHOT_RETAINED=%%s\\n" "$env_backup"\n'
+    printf '        rollback_verified=0\n'
+    printf '      fi\n'
+    printf '    elif [[ "$env_written" == 1 ]]; then\n'
+    printf '      rm -f -- %s/.env\n' "${project_dir_q}"
+    printf '      [[ ! -e %s/.env ]] || rollback_verified=0\n' "${project_dir_q}"
+    printf '    fi\n'
+    printf '    if [[ $rollback_verified -ne 1 ]]; then printf "REMOTE_DEPLOY_ROLLBACK_VERIFICATION_FAILED=1\\n"; result=1; fi\n'
     printf '  fi\n'
     printf '  exit $result\n'
     printf '}\n'
     printf 'trap rollback_remote_state EXIT\n'
+    printf 'save_env_backup() {\n'
+    printf '  local env_source=%s/.env\n' "${project_dir_q}"
+    printf '  env_backup=$(mktemp %s/env.XXXXXXXX)\n' "${backup_root_q}"
+    printf '  if ! cp -p -- "$env_source" "$env_backup" || ! chmod 600 "$env_backup" || ! cmp -s -- "$env_source" "$env_backup"; then\n'
+    printf '    rm -f -- "$env_backup"\n'
+    printf "    env_backup=''\n"
+    printf '    echo %q >&2\n' '.env 이전 사본을 검증하지 못했습니다.'
+    printf '    return 1\n'
+    printf '  fi\n'
+    printf '}\n'
     printf 'install -d -m 755 -o root -g root %s\n' "${clone_parent_q}"
     printf 'if [[ -d %s/.git ]]; then\n' "${clone_dir_q}"
+    printf '  worktree_status="$(git -c safe.directory=%s -C %s status --porcelain)" || { echo %q; exit 1; }\n' "${clone_dir_q}" "${clone_dir_q}" '원격 저장소 작업 트리 상태를 확인하지 못했습니다.'
+    printf '  [[ -z "$worktree_status" ]] || { echo %q; exit 1; }\n' '원격 저장소 작업 트리에 변경이 있어 배포를 중단합니다.'
     printf '  previous_revision=$(git -c safe.directory=%s -C %s rev-parse HEAD)\n' "${clone_dir_q}" "${clone_dir_q}"
     printf '  previous_branch=$(git -c safe.directory=%s -C %s branch --show-current || true)\n' "${clone_dir_q}" "${clone_dir_q}"
     printf '  install -d -m 700 -o root -g root %s\n' "${backup_root_q}"
-    printf '  if [[ -f %s/.env ]]; then env_backup=$(mktemp %s/env.XXXXXXXX); cp -p %s/.env "$env_backup"; chmod 600 "$env_backup"; fi\n' "${project_dir_q}" "${backup_root_q}" "${project_dir_q}"
+    printf '  if [[ -f %s/.env ]]; then save_env_backup; fi\n' "${project_dir_q}"
     printf '  git -c safe.directory=%s -C %s fetch --prune origin %s\n' "${clone_dir_q}" "${clone_dir_q}" "${branch_q}"
     printf '  if git -c safe.directory=%s -C %s show-ref --verify --quiet refs/heads/%s; then\n' "${clone_dir_q}" "${clone_dir_q}" "${branch_q}"
     printf '    git -c safe.directory=%s -C %s checkout %s\n' "${clone_dir_q}" "${clone_dir_q}" "${branch_q}"
     printf '  else\n'
     printf '    git -c safe.directory=%s -C %s checkout -b %s origin/%s\n' "${clone_dir_q}" "${clone_dir_q}" "${branch_q}" "${branch_q}"
     printf '  fi\n'
-    printf '  git -c safe.directory=%s -C %s pull --ff-only origin %s\n' "${clone_dir_q}" "${clone_dir_q}" "${branch_q}"
+    if [[ -n "${DEPLOY_REVISION}" ]]; then
+        printf '  git -c safe.directory=%s -C %s merge-base --is-ancestor %s origin/%s || { echo %q; exit 1; }\n' \
+            "${clone_dir_q}" "${clone_dir_q}" "${revision_q}" "${branch_q}" '요청한 SHA가 원격 브랜치에 없습니다.'
+        printf '  git -c safe.directory=%s -C %s reset --hard %s\n' "${clone_dir_q}" "${clone_dir_q}" "${revision_q}"
+    else
+        printf '  git -c safe.directory=%s -C %s pull --ff-only origin %s\n' "${clone_dir_q}" "${clone_dir_q}" "${branch_q}"
+    fi
     printf 'else\n'
     printf '  if [[ -e %s && -n "$(find %s -mindepth 1 -maxdepth 1 -print -quit)" ]]; then\n' "${clone_dir_q}" "${clone_dir_q}"
     printf '    echo %q\n' 'clone 경로가 비어 있지 않아 중단합니다.'
     printf '    exit 1\n'
     printf '  fi\n'
     printf '  git clone --branch %s --single-branch %s %s\n' "${branch_q}" "${repo_url_q}" "${clone_dir_q}"
+    if [[ -n "${DEPLOY_REVISION}" ]]; then
+        printf '  git -c safe.directory=%s -C %s merge-base --is-ancestor %s origin/%s || { echo %q; exit 1; }\n' \
+            "${clone_dir_q}" "${clone_dir_q}" "${revision_q}" "${branch_q}" '요청한 SHA가 원격 브랜치에 없습니다.'
+        printf '  git -c safe.directory=%s -C %s reset --hard %s\n' "${clone_dir_q}" "${clone_dir_q}" "${revision_q}"
+    fi
     printf 'fi\n'
     printf '[[ -d %s ]] || { echo %q; exit 1; }\n' "${project_dir_q}" '애플리케이션 경로가 없습니다.'
     printf 'install -d -m 700 -o root -g root %s\n' "${backup_root_q}"
-    printf 'if [[ -f %s/.env && -z $env_backup ]]; then env_backup=$(mktemp %s/env.XXXXXXXX); cp -p %s/.env "$env_backup"; chmod 600 "$env_backup"; fi\n' "${project_dir_q}" "${backup_root_q}" "${project_dir_q}"
+    printf 'if [[ -f %s/.env && -z $env_backup ]]; then save_env_backup; fi\n' "${project_dir_q}"
     printf 'if ! command -v aws >/dev/null 2>&1; then apt-get update; DEBIAN_FRONTEND=noninteractive apt-get install -y awscli; fi\n'
     printf 'env_temp=$(mktemp %s/.env.XXXXXXXX)\n' "${project_dir_q}"
     printf 'aws --region %s ssm get-parameter --name %s --with-decryption --query Parameter.Value --output text > "$env_temp"\n' "${region_q}" "${secret_parameter_q}"
@@ -240,9 +319,11 @@ remote_command="$(
     printf 'chmod 600 "$env_temp"\n'
     printf 'mv -f -- "$env_temp" %s/.env\n' "${project_dir_q}"
     printf "env_temp=''\n"
+    printf 'env_written=1\n'
     printf '[[ -f %s/requirements.txt ]] || { echo %q; exit 1; }\n' "${project_dir_q}" 'requirements.txt가 프로젝트 경로에 없습니다.'
-    printf 'APP_USER=%s PROJECT_DIR=%s LOG_DIR=%q RUN_TESTS=%q PREVIOUS_REVISION="$previous_revision" PREVIOUS_BRANCH="$previous_branch" ENV_BACKUP_PATH="$env_backup" bash %s\n' \
-        "${app_user_q}" "${project_dir_q}" '/var/log/b7-1' "${RUN_TESTS}" "${deploy_script_q}"
+    printf 'APP_USER=%s PROJECT_DIR=%s LOG_DIR=%q RUN_TESTS=%q PREVIOUS_REVISION="$previous_revision" PREVIOUS_BRANCH="$previous_branch" ENV_BACKUP_PATH="$env_backup" B7_1_E2E_FAILPOINT=%q B7_1_E2E_PRESERVE_CHAT_MARKER=%q B7_1_E2E_READY_MARKER=%q bash %s\n' \
+        "${app_user_q}" "${project_dir_q}" '/var/log/b7-1' "${RUN_TESTS}" "${FAILURE_INJECTION}" \
+        "${E2E_PRESERVE_CHAT_MARKER}" "${E2E_READY_MARKER}" "${deploy_script_q}"
     printf 'rm -f -- "$env_backup"\n'
     printf 'trap - EXIT\n'
 )"

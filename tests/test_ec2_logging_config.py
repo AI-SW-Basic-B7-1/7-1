@@ -1,5 +1,6 @@
 """EC2 Nginx 로그 설정 스크립트의 보안 계약을 검증합니다."""
 
+import getpass
 import os
 import re
 import shutil
@@ -50,6 +51,9 @@ def script_environment(tmp_path):
     script.parent.mkdir(parents=True)
     dropin_dir = tmp_path / "systemd/chatbot.service.d"
     dropin = dropin_dir / "90-b7-1-logging.conf"
+    nginx_logs = tmp_path / "nginx-logs"
+    logrotate_file = tmp_path / "logrotate/b7-1"
+    logrotate_file.parent.mkdir(parents=True)
     backups = tmp_path / "backups"
     site = tmp_path / "site.conf"
     original_site = "server {\n    listen 80;\n    location / { proxy_pass http://127.0.0.1:8000; }\n}\n"
@@ -63,8 +67,13 @@ def script_environment(tmp_path):
         'DROPIN_DIR="/etc/systemd/system/${SERVICE}.d"',
         f'DROPIN_DIR="{dropin_dir}"',
     ).replace("/var/backups/b7-1-nginx", str(backups))
+    source = source.replace(
+        "LOGROTATE_FILE='/etc/logrotate.d/b7-1'",
+        f"LOGROTATE_FILE='{logrotate_file}'",
+    )
     assert "/etc/systemd/system/" not in source
     assert "/var/backups/" not in source
+    assert "/etc/logrotate.d/" not in source
     script.write_text(source, encoding="utf-8")
 
     commands = tmp_path / "commands"
@@ -72,6 +81,7 @@ def script_environment(tmp_path):
     driver = commands / "driver"
     driver.write_text(f"#!{sys.executable}\n" + textwrap.dedent(r'''
         import os
+        import shutil
         import sys
         import uuid
         from pathlib import Path
@@ -82,6 +92,8 @@ def script_environment(tmp_path):
         root = Path(os.environ["TEST_ROOT"])
         project = root / "project"
         logs = project / "logs"
+        nginx_logs = Path(os.environ["NGINX_LOG_DIR"])
+        nginx_logs.mkdir(parents=True, exist_ok=True)
         mode = os.environ["TEST_MODE"]
         dropin = root / "systemd/chatbot.service.d/90-b7-1-logging.conf"
         with (root / "calls").open("a") as output:
@@ -90,7 +102,9 @@ def script_environment(tmp_path):
         if command == "systemctl":
             if args[0] == "show":
                 property_name = args[args.index("-p") + 1]
-                if property_name == "WorkingDirectory":
+                if property_name == "User":
+                    print(os.environ["TEST_APP_USER"])
+                elif property_name == "WorkingDirectory":
                     print(project)
                 elif property_name == "MainPID":
                     print("12345")
@@ -110,6 +124,27 @@ def script_environment(tmp_path):
                 sys.exit(1)
         elif command == "realpath":
             print(Path(args[-1]).resolve())
+        elif command == "install":
+            values = list(args)
+            mode_value = None
+            while values and values[0].startswith("-"):
+                option = values.pop(0)
+                if option in ("-o", "-g", "-m"):
+                    value = values.pop(0)
+                    if option == "-m":
+                        mode_value = int(value, 8)
+            if len(values) != 2:
+                sys.exit(2)
+            source_path, target_path = map(Path, values)
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source_path, target_path)
+            if mode_value is not None:
+                target_path.chmod(mode_value)
+        elif command in ("chown", "logrotate"):
+            pass
+        elif command == "id":
+            if len(args) > 1 and args[1] != os.environ["TEST_APP_USER"]:
+                sys.exit(1)
         elif command == "chmod":
             # macOS에서도 Ubuntu의 옵션 종료 구분자를 처리합니다.
             values = [value for value in args if value != "--"]
@@ -133,7 +168,7 @@ def script_environment(tmp_path):
                 event = "http_request_started" if mode == "app_incomplete" else "http_request_completed"
                 with (logs / "app.log").open("a") as output:
                     output.write(event + " request_id=" + app_id + "\n")
-                with (logs / "nginx_access.log").open("a") as output:
+                with (nginx_logs / "nginx_access.log").open("a") as output:
                     # 다른 요청에 같은 검사 문자열이 남아 있는 상황을 재현합니다.
                     output.write("old request_id=old query=" + probe + "\n")
                     output.write("method=GET path=/api/health status=200 " + key + "=" + access_id + " nginx_request_id=" + nginx_id)
@@ -149,7 +184,10 @@ def script_environment(tmp_path):
             sys.exit(2)
     '''), encoding="utf-8")
     driver.chmod(0o755)
-    for name in ("nginx", "systemctl", "curl", "realpath", "readlink", "sleep", "chmod"):
+    for name in (
+        "nginx", "systemctl", "curl", "realpath", "readlink", "sleep", "chmod",
+        "install", "chown", "logrotate", "id",
+    ):
         (commands / name).symlink_to(driver)
 
     def run(mode="success"):
@@ -158,7 +196,10 @@ def script_environment(tmp_path):
         env.update(
             PATH=str(commands) + os.pathsep + env.get("PATH", ""),
             SITE_CONFIG=str(site),
+            NGINX_LOG_DIR=str(nginx_logs),
             VERIFY_BASE_URL="http://test.local",
+            APP_USER=getpass.getuser(),
+            TEST_APP_USER=getpass.getuser(),
             TEST_ROOT=str(tmp_path),
             TEST_MODE=mode,
             TMPDIR=str(tmp_path),

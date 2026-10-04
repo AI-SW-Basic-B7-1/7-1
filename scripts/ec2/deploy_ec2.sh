@@ -4,11 +4,16 @@
 
 set -Eeuo pipefail
 umask 027
+exec 3>&1
 
 APP_USER="${APP_USER:-ubuntu}"
 PROJECT_DIR="${PROJECT_DIR:-/home/ubuntu/app/B7-1/7-1}"
 LOG_DIR="${LOG_DIR:-/var/log/b7-1}"
 SERVICE_NAME="${SERVICE_NAME:-chatbot.service}"
+SYSTEMD_UNIT="/etc/systemd/system/${SERVICE_NAME}"
+CRON_FILE='/etc/cron.d/b7-1-chatbot-backup'
+LOGGING_DROPIN="/etc/systemd/system/${SERVICE_NAME}.d/90-b7-1-logging.conf"
+LOGROTATE_POLICY='/etc/logrotate.d/b7-1'
 NGINX_SITE_NAME="${NGINX_SITE_NAME:-chatbot}"
 SWAP_FILE="${SWAP_FILE:-/swapfile}"
 SWAP_SIZE="${SWAP_SIZE:-2G}"
@@ -24,6 +29,14 @@ NGINX_ENABLED="/etc/nginx/sites-enabled/${NGINX_SITE_NAME}"
 NGINX_SITE_BACKUP=""
 NGINX_SITE_EXISTED=0
 NGINX_SITE_CHANGED=0
+NGINX_ENABLED_EXISTED=0
+NGINX_ENABLED_TARGET=""
+NGINX_DEFAULT_ENABLED='/etc/nginx/sites-enabled/default'
+NGINX_DEFAULT_EXISTED=0
+NGINX_DEFAULT_BACKUP=""
+NGINX_DEFAULT_CHANGED=0
+NGINX_WAS_ACTIVE=0
+NGINX_WAS_ENABLED=0
 DB_PATH=""
 DB_EXISTED_BEFORE=0
 PRE_DEPLOY_BACKUP=""
@@ -33,16 +46,57 @@ PREVIOUS_REVISION="${PREVIOUS_REVISION:-}"
 PREVIOUS_BRANCH="${PREVIOUS_BRANCH:-}"
 ENV_BACKUP_PATH="${ENV_BACKUP_PATH:-}"
 SERVICE_WAS_ACTIVE=0
+SERVICE_WAS_ENABLED=0
+CRON_WAS_ACTIVE=0
+CRON_WAS_ENABLED=0
+SYSTEMD_CHANGED=0
+SYSTEMD_EXISTED=0
+CRON_CHANGED=0
+CRON_EXISTED=0
+LOGGING_CONFIG_CHANGED=0
+LOGGING_DROPIN_EXISTED=0
+LOGROTATE_POLICY_EXISTED=0
+ROLLBACK_CONFIG_RETAINED=0
+ROLLBACK_CONFIG_DIR=""
+B7_1_E2E_FAILPOINT="${B7_1_E2E_FAILPOINT:-}"
+B7_1_E2E_PRESERVE_CHAT_MARKER="${B7_1_E2E_PRESERVE_CHAT_MARKER:-}"
+B7_1_E2E_READY_MARKER="${B7_1_E2E_READY_MARKER:-}"
+E2E_FAULT_INJECTION_REACHED=0
+ERROR_OUTPUT_EMITTED=0
+
+emit_error_log() {
+    [[ -n "${LOG_FILE:-}" && -f "${LOG_FILE}" ]] || return 0
+    printf '[실패] 전체 배포 로그: %s\n' "${LOG_FILE}" >&3
+    tail -c 8000 -- "${LOG_FILE}" >&3 2>/dev/null || true
+    ERROR_OUTPUT_EMITTED=1
+}
 
 fail() {
     printf '[실패] %s\n' "$*" >&2
-    if [[ -n "${LOG_FILE:-}" && -f "${LOG_FILE}" ]]; then
-        cat "${LOG_FILE}" >&3 2>/dev/null || true
+    if [[ "$*" == E2E_FAULT_INJECTION_REACHED=* ]]; then
+        E2E_FAULT_INJECTION_REACHED=1
+        printf '%s\n' "$*" >&3
+    else
+        printf '[실패] %s\n' "$*" >&3
+        emit_error_log
     fi
     exit 1
 }
 
 [[ "$(id -u)" -eq 0 ]] || fail '이 스크립트는 root 권한으로 실행해야 합니다.'
+case "${B7_1_E2E_FAILPOINT}" in
+    '') ;;
+    before-start|after-start)
+        [[ -f /etc/b7-1/e2e-test-instance && ! -L /etc/b7-1/e2e-test-instance ]] || fail '실패 주입은 표시된 테스트 EC2에서만 허용됩니다.'
+        [[ "$(stat -c '%U:%a' /etc/b7-1/e2e-test-instance)" == 'root:600' ]] || fail '테스트 EC2 표시 파일은 root 소유 600 권한이어야 합니다.'
+        if [[ "${B7_1_E2E_FAILPOINT}" == after-start ]]; then
+            [[ "${B7_1_E2E_PRESERVE_CHAT_MARKER}" =~ ^[A-Za-z0-9_-]{1,120}$ ]] || fail '기동 후 실패 주입에는 검증용 채팅 표식이 필요합니다.'
+            [[ "${B7_1_E2E_READY_MARKER}" =~ ^/run/b7-1-e2e-ready-[A-Za-z0-9_-]{1,80}$ ]] || fail '기동 후 실패 주입 준비 표식 경로가 올바르지 않습니다.'
+            rm -f -- "${B7_1_E2E_READY_MARKER}"
+        fi
+        ;;
+    *) fail '지원하지 않는 E2E 실패 주입 지점입니다.' ;;
+esac
 id "${APP_USER}" >/dev/null 2>&1 || fail "애플리케이션 사용자 계정을 찾을 수 없습니다: ${APP_USER}"
 [[ -d "${PROJECT_DIR}" ]] || fail "프로젝트 디렉터리를 찾을 수 없습니다: ${PROJECT_DIR}"
 [[ -f "${PROJECT_DIR}/requirements.txt" ]] || fail "requirements.txt를 찾을 수 없습니다: ${PROJECT_DIR}"
@@ -58,14 +112,14 @@ LOG_FILE="${LOG_FILE:-${LOG_DIR}/deploy_$(date +%Y%m%d_%H%M%S).log}"
 touch "${LOG_FILE}"
 chown root:root "${LOG_FILE}"
 chmod 600 "${LOG_FILE}"
-exec 3>&1
 exec >>"${LOG_FILE}" 2>&1
 
 on_error() {
     local exit_code=$?
-    printf '[실패] 줄 번호 %s에서 배포가 중단되었습니다. 종료 코드: %s\n' "${BASH_LINENO[0]:-알 수 없음}" "${exit_code}" >&2
-    printf '[실패] 배포 로그: %s\n' "${LOG_FILE}" >&2
-    cat "${LOG_FILE}" >&3 2>/dev/null || true
+    printf '[실패] 줄 번호 %s에서 배포가 중단되었습니다. 종료 코드: %s\n' "${BASH_LINENO[0]:-알 수 없음}" "${exit_code}" >&3
+    if [[ "${E2E_FAULT_INJECTION_REACHED}" -eq 0 && "${ERROR_OUTPUT_EMITTED}" -eq 0 ]]; then
+        emit_error_log
+    fi
     exit "${exit_code}"
 }
 
@@ -74,12 +128,41 @@ trap on_error ERR
 if systemctl is-active --quiet "${SERVICE_NAME}"; then
     SERVICE_WAS_ACTIVE=1
 fi
+if systemctl is-enabled --quiet "${SERVICE_NAME}"; then
+    SERVICE_WAS_ENABLED=1
+fi
+if systemctl is-active --quiet cron; then
+    CRON_WAS_ACTIVE=1
+fi
+if systemctl is-enabled --quiet cron; then
+    CRON_WAS_ENABLED=1
+fi
+if systemctl is-active --quiet nginx; then
+    NGINX_WAS_ACTIVE=1
+fi
+if systemctl is-enabled --quiet nginx; then
+    NGINX_WAS_ENABLED=1
+fi
 
 on_exit() {
     local result=$?
     trap - EXIT ERR
     if [[ ${result} -ne 0 ]]; then
         set +e
+        local rollback_verified=1
+        local current_revision=''
+        local database_integrity=''
+        local preserve_count=''
+        local enabled_state=0
+        local active_state=0
+        local cron_active_state=0
+        local cron_enabled_state=0
+        local nginx_active_state=0
+        local nginx_enabled_state=0
+        local rollback_health_ok=0
+        local rollback_health_deadline=0
+        local rollback_health_remaining=0
+        local rollback_health_timeout=0
         log_step '배포 실패로 변경 사항 복구'
         if [[ -n "${PREVIOUS_REVISION}" ]]; then
             systemctl stop "${SERVICE_NAME}" >/dev/null 2>&1 || true
@@ -99,13 +182,87 @@ on_exit() {
         if [[ -n "${ENV_BACKUP_PATH}" && -f "${ENV_BACKUP_PATH}" ]]; then
             install -o "${APP_USER}" -g "${APP_USER}" -m 600 "${ENV_BACKUP_PATH}" "${ENV_FILE}"
         fi
-        if [[ "${NGINX_SITE_CHANGED}" -eq 1 && "${NGINX_SITE_EXISTED}" -eq 1 && -n "${NGINX_SITE_BACKUP}" && -f "${NGINX_SITE_BACKUP}" ]]; then
-            install -o root -g root -m 644 "${NGINX_SITE_BACKUP}" "${NGINX_AVAILABLE}"
-            ln -sfn "${NGINX_AVAILABLE}" "${NGINX_ENABLED}"
-            nginx -t && systemctl reload nginx
-        elif [[ "${NGINX_SITE_CHANGED}" -eq 1 && -n "${NGINX_SITE_BACKUP}" ]]; then
-            rm -f -- "${NGINX_AVAILABLE}" "${NGINX_ENABLED}"
-            nginx -t && systemctl reload nginx
+        if [[ "${NGINX_SITE_CHANGED}" -eq 1 || "${NGINX_DEFAULT_CHANGED}" -eq 1 ]]; then
+            if [[ "${NGINX_SITE_CHANGED}" -eq 1 ]]; then
+                if [[ "${NGINX_SITE_EXISTED}" -eq 1 ]]; then
+                    if [[ -n "${NGINX_SITE_BACKUP}" && -f "${NGINX_SITE_BACKUP}" ]]; then
+                        install -o root -g root -m 644 "${NGINX_SITE_BACKUP}" "${NGINX_AVAILABLE}"
+                    fi
+                else
+                    rm -f -- "${NGINX_AVAILABLE}"
+                fi
+                if [[ "${NGINX_ENABLED_EXISTED}" -eq 1 ]]; then
+                    ln -sfn -- "${NGINX_ENABLED_TARGET}" "${NGINX_ENABLED}"
+                else
+                    rm -f -- "${NGINX_ENABLED}"
+                fi
+            fi
+            if [[ "${NGINX_DEFAULT_CHANGED}" -eq 1 ]]; then
+                if [[ "${NGINX_DEFAULT_EXISTED}" -eq 1 ]]; then
+                    rm -f -- "${NGINX_DEFAULT_ENABLED}"
+                    cp -a -- "${NGINX_DEFAULT_BACKUP}" "${NGINX_DEFAULT_ENABLED}"
+                else
+                    rm -f -- "${NGINX_DEFAULT_ENABLED}"
+                fi
+            fi
+            if nginx -t; then
+                if [[ "${NGINX_WAS_ENABLED}" -eq 1 ]]; then
+                    systemctl enable nginx || rollback_verified=0
+                else
+                    systemctl disable nginx >/dev/null 2>&1 || true
+                fi
+                if [[ "${NGINX_WAS_ACTIVE}" -eq 1 ]]; then
+                    systemctl restart nginx || rollback_verified=0
+                else
+                    systemctl stop nginx >/dev/null 2>&1 || true
+                fi
+            else
+                rollback_verified=0
+            fi
+        fi
+        if [[ "${SYSTEMD_CHANGED}" -eq 1 ]]; then
+            if [[ "${SYSTEMD_EXISTED}" -eq 1 && -f "${ROLLBACK_CONFIG_DIR}/chatbot.service" ]]; then
+                install -o root -g root -m 644 "${ROLLBACK_CONFIG_DIR}/chatbot.service" "${SYSTEMD_UNIT}"
+            else
+                rm -f -- "${SYSTEMD_UNIT}"
+            fi
+            systemctl daemon-reload
+            if [[ "${SERVICE_WAS_ENABLED}" -eq 1 ]]; then
+                systemctl enable "${SERVICE_NAME}"
+            else
+                systemctl disable "${SERVICE_NAME}" >/dev/null 2>&1 || true
+            fi
+        fi
+        if [[ "${CRON_CHANGED}" -eq 1 ]]; then
+            if [[ "${CRON_EXISTED}" -eq 1 && -f "${ROLLBACK_CONFIG_DIR}/chatbot-backup.cron" ]]; then
+                install -o root -g root -m 644 "${ROLLBACK_CONFIG_DIR}/chatbot-backup.cron" "${CRON_FILE}"
+            else
+                rm -f -- "${CRON_FILE}"
+            fi
+            if [[ "${CRON_WAS_ENABLED}" -eq 1 ]]; then
+                systemctl enable cron
+            else
+                systemctl disable cron >/dev/null 2>&1 || true
+            fi
+            if [[ "${CRON_WAS_ACTIVE}" -eq 1 ]]; then
+                systemctl restart cron
+            else
+                systemctl stop cron >/dev/null 2>&1 || true
+            fi
+        fi
+        if [[ "${LOGGING_CONFIG_CHANGED}" -eq 1 ]]; then
+            if [[ "${LOGGING_DROPIN_EXISTED}" -eq 1 && -f "${ROLLBACK_CONFIG_DIR}/90-b7-1-logging.conf" ]]; then
+                cp -p -- "${ROLLBACK_CONFIG_DIR}/90-b7-1-logging.conf" "${LOGGING_DROPIN}"
+            else
+                rm -f -- "${LOGGING_DROPIN}"
+                rmdir -- "$(dirname -- "${LOGGING_DROPIN}")" 2>/dev/null || true
+            fi
+            if [[ "${LOGROTATE_POLICY_EXISTED}" -eq 1 && -f "${ROLLBACK_CONFIG_DIR}/logrotate-b7-1" ]]; then
+                cp -p -- "${ROLLBACK_CONFIG_DIR}/logrotate-b7-1" "${LOGROTATE_POLICY}"
+            else
+                rm -f -- "${LOGROTATE_POLICY}"
+            fi
+            systemctl daemon-reload
         fi
         if [[ -n "${PREVIOUS_REVISION}" ]]; then
             if [[ -n "${PREVIOUS_BRANCH}" ]]; then
@@ -116,7 +273,173 @@ on_exit() {
         fi
         if [[ "${SERVICE_WAS_ACTIVE}" -eq 1 ]]; then
             systemctl restart "${SERVICE_NAME}"
-            systemctl is-active --quiet "${SERVICE_NAME}"
+            if command -v curl >/dev/null 2>&1; then
+                rollback_health_deadline=$((SECONDS + 30))
+                while (( SECONDS < rollback_health_deadline )); do
+                    rollback_health_remaining=$((rollback_health_deadline - SECONDS))
+                    rollback_health_timeout=3
+                    if (( rollback_health_remaining < rollback_health_timeout )); then
+                        rollback_health_timeout=${rollback_health_remaining}
+                    fi
+                    if curl -fsS --max-time "${rollback_health_timeout}" http://127.0.0.1:8000/api/health >/dev/null; then
+                        rollback_health_ok=1
+                        break
+                    fi
+                    rollback_health_remaining=$((rollback_health_deadline - SECONDS))
+                    if (( rollback_health_remaining > 1 )); then
+                        sleep 1
+                    elif (( rollback_health_remaining > 0 )); then
+                        sleep "${rollback_health_remaining}"
+                    fi
+                done
+            fi
+            [[ "${rollback_health_ok}" -eq 1 ]] || rollback_verified=0
+        else
+            systemctl stop "${SERVICE_NAME}" >/dev/null 2>&1 || true
+        fi
+        if [[ -n "${PREVIOUS_REVISION}" ]]; then
+            current_revision="$(git -c safe.directory="${PROJECT_DIR}" -C "${PROJECT_DIR}" rev-parse HEAD 2>/dev/null || true)"
+            [[ "${current_revision}" == "${PREVIOUS_REVISION}" ]] || rollback_verified=0
+        fi
+        if [[ "${SYSTEMD_CHANGED}" -eq 1 ]]; then
+            if [[ "${SYSTEMD_EXISTED}" -eq 1 ]]; then
+                [[ -f "${ROLLBACK_CONFIG_DIR}/chatbot.service" && -f "${SYSTEMD_UNIT}" ]] && \
+                    cmp -s -- "${ROLLBACK_CONFIG_DIR}/chatbot.service" "${SYSTEMD_UNIT}" || rollback_verified=0
+            else
+                [[ ! -e "${SYSTEMD_UNIT}" ]] || rollback_verified=0
+            fi
+            if systemctl is-enabled --quiet "${SERVICE_NAME}"; then enabled_state=1; fi
+            [[ "${enabled_state}" -eq "${SERVICE_WAS_ENABLED}" ]] || rollback_verified=0
+        fi
+        if [[ "${CRON_CHANGED}" -eq 1 || ( -n "${B7_1_E2E_FAILPOINT}" && -n "${ROLLBACK_CONFIG_DIR}" ) ]]; then
+            if [[ "${CRON_EXISTED}" -eq 1 ]]; then
+                [[ -f "${ROLLBACK_CONFIG_DIR}/chatbot-backup.cron" && -f "${CRON_FILE}" ]] && \
+                    cmp -s -- "${ROLLBACK_CONFIG_DIR}/chatbot-backup.cron" "${CRON_FILE}" || rollback_verified=0
+            else
+                [[ ! -e "${CRON_FILE}" ]] || rollback_verified=0
+            fi
+            if systemctl is-active --quiet cron; then cron_active_state=1; fi
+            if systemctl is-enabled --quiet cron; then cron_enabled_state=1; fi
+            [[ "${cron_active_state}" -eq "${CRON_WAS_ACTIVE}" ]] || rollback_verified=0
+            [[ "${cron_enabled_state}" -eq "${CRON_WAS_ENABLED}" ]] || rollback_verified=0
+        fi
+        if [[ "${LOGGING_CONFIG_CHANGED}" -eq 1 ]]; then
+            if [[ "${LOGGING_DROPIN_EXISTED}" -eq 1 ]]; then
+                [[ -f "${ROLLBACK_CONFIG_DIR}/90-b7-1-logging.conf" && -f "${LOGGING_DROPIN}" ]] && \
+                    cmp -s -- "${ROLLBACK_CONFIG_DIR}/90-b7-1-logging.conf" "${LOGGING_DROPIN}" || rollback_verified=0
+            else
+                [[ ! -e "${LOGGING_DROPIN}" ]] || rollback_verified=0
+            fi
+            if [[ "${LOGROTATE_POLICY_EXISTED}" -eq 1 ]]; then
+                [[ -f "${ROLLBACK_CONFIG_DIR}/logrotate-b7-1" && -f "${LOGROTATE_POLICY}" ]] && \
+                    cmp -s -- "${ROLLBACK_CONFIG_DIR}/logrotate-b7-1" "${LOGROTATE_POLICY}" || rollback_verified=0
+            else
+                [[ ! -e "${LOGROTATE_POLICY}" ]] || rollback_verified=0
+            fi
+        fi
+        if [[ -n "${ENV_BACKUP_PATH}" ]]; then
+            if [[ -f "${ENV_BACKUP_PATH}" && -f "${ENV_FILE}" ]]; then
+                cmp -s -- "${ENV_BACKUP_PATH}" "${ENV_FILE}" || rollback_verified=0
+            else
+                rollback_verified=0
+            fi
+        fi
+        if [[ "${NGINX_SITE_CHANGED}" -eq 1 || "${NGINX_DEFAULT_CHANGED}" -eq 1 ]]; then
+            if [[ "${NGINX_SITE_CHANGED}" -eq 1 ]]; then
+                if [[ "${NGINX_SITE_EXISTED}" -eq 1 ]]; then
+                    [[ -f "${NGINX_SITE_BACKUP}" && -f "${NGINX_AVAILABLE}" ]] && \
+                        cmp -s -- "${NGINX_SITE_BACKUP}" "${NGINX_AVAILABLE}" || rollback_verified=0
+                else
+                    [[ ! -e "${NGINX_AVAILABLE}" ]] || rollback_verified=0
+                fi
+                if [[ "${NGINX_ENABLED_EXISTED}" -eq 1 ]]; then
+                    [[ -L "${NGINX_ENABLED}" && "$(readlink -- "${NGINX_ENABLED}" 2>/dev/null)" == "${NGINX_ENABLED_TARGET}" ]] || rollback_verified=0
+                else
+                    [[ ! -e "${NGINX_ENABLED}" && ! -L "${NGINX_ENABLED}" ]] || rollback_verified=0
+                fi
+            fi
+            if [[ "${NGINX_DEFAULT_CHANGED}" -eq 1 ]]; then
+                if [[ "${NGINX_DEFAULT_EXISTED}" -eq 1 ]]; then
+                    if [[ -L "${NGINX_DEFAULT_BACKUP}" ]]; then
+                        [[ -L "${NGINX_DEFAULT_ENABLED}" && "$(readlink -- "${NGINX_DEFAULT_ENABLED}" 2>/dev/null)" == "$(readlink -- "${NGINX_DEFAULT_BACKUP}" 2>/dev/null)" ]] || rollback_verified=0
+                    else
+                        [[ -f "${NGINX_DEFAULT_BACKUP}" && -f "${NGINX_DEFAULT_ENABLED}" ]] && \
+                            cmp -s -- "${NGINX_DEFAULT_BACKUP}" "${NGINX_DEFAULT_ENABLED}" || rollback_verified=0
+                    fi
+                else
+                    [[ ! -e "${NGINX_DEFAULT_ENABLED}" && ! -L "${NGINX_DEFAULT_ENABLED}" ]] || rollback_verified=0
+                fi
+            fi
+            nginx -t >/dev/null 2>&1 || rollback_verified=0
+            if systemctl is-active --quiet nginx; then nginx_active_state=1; fi
+            if systemctl is-enabled --quiet nginx; then nginx_enabled_state=1; fi
+            [[ "${nginx_active_state}" -eq "${NGINX_WAS_ACTIVE}" ]] || rollback_verified=0
+            [[ "${nginx_enabled_state}" -eq "${NGINX_WAS_ENABLED}" ]] || rollback_verified=0
+        fi
+        if [[ -n "${DB_PATH}" ]]; then
+            if [[ "${DB_RESTORE_SAFE}" -eq 1 ]]; then
+                if [[ "${DB_EXISTED_BEFORE}" -eq 1 ]]; then
+                    if [[ -n "${PRE_DEPLOY_BACKUP}" && -f "${PRE_DEPLOY_BACKUP}" ]]; then
+                        [[ -f "${DB_PATH}" ]] && cmp -s -- "${PRE_DEPLOY_BACKUP}" "${DB_PATH}" || rollback_verified=0
+                    else
+                        [[ -f "${DB_PATH}" ]] || rollback_verified=0
+                    fi
+                else
+                    [[ ! -e "${DB_PATH}" ]] || rollback_verified=0
+                fi
+            elif [[ -f "${DB_PATH}" ]]; then
+                if command -v sqlite3 >/dev/null 2>&1; then
+                    database_integrity="$(sqlite3 -readonly "${DB_PATH}" 'PRAGMA integrity_check;' 2>/dev/null || true)"
+                    [[ "${database_integrity}" == 'ok' ]] || rollback_verified=0
+                elif [[ -n "${B7_1_E2E_FAILPOINT}" ]]; then
+                    rollback_verified=0
+                fi
+            elif [[ "${DB_EXISTED_BEFORE}" -eq 1 || -n "${B7_1_E2E_FAILPOINT}" ]]; then
+                rollback_verified=0
+            fi
+        fi
+        if systemctl is-active --quiet "${SERVICE_NAME}"; then active_state=1; fi
+        [[ "${active_state}" -eq "${SERVICE_WAS_ACTIVE}" ]] || rollback_verified=0
+
+        if [[ -n "${B7_1_E2E_FAILPOINT}" ]]; then
+            if [[ -n "${DB_PATH}" && -f "${DB_PATH}" ]]; then
+                database_integrity="$(sqlite3 -readonly "${DB_PATH}" 'PRAGMA integrity_check;' 2>/dev/null || true)"
+                [[ "${database_integrity}" == 'ok' ]] || rollback_verified=0
+            else
+                rollback_verified=0
+            fi
+            if [[ "${B7_1_E2E_FAILPOINT}" == after-start ]]; then
+                preserve_count="$(sqlite3 -readonly "${DB_PATH}" "SELECT count(*) FROM chat_logs WHERE instr(question, '${B7_1_E2E_PRESERVE_CHAT_MARKER}') > 0;" 2>/dev/null || true)"
+                [[ "${preserve_count}" =~ ^[1-9][0-9]*$ ]] || rollback_verified=0
+            fi
+            if [[ "${rollback_verified}" -eq 1 ]]; then
+                printf 'E2E_ROLLBACK_COMPLETE=1\n' >&3
+            else
+                printf 'E2E_ROLLBACK_VERIFICATION_FAILED=1\n' >&3
+                if [[ -n "${ROLLBACK_CONFIG_DIR}" ]]; then
+                    ROLLBACK_CONFIG_RETAINED=1
+                    printf 'E2E_ROLLBACK_SNAPSHOT_RETAINED=%s\n' "${ROLLBACK_CONFIG_DIR}" >&3
+                fi
+                if [[ -n "${NGINX_SITE_BACKUP}" && -f "${NGINX_SITE_BACKUP}" ]]; then
+                    printf 'E2E_NGINX_ROLLBACK_SNAPSHOT_RETAINED=%s\n' "${NGINX_SITE_BACKUP}" >&3
+                fi
+                if [[ -n "${NGINX_DEFAULT_BACKUP}" && ( -e "${NGINX_DEFAULT_BACKUP}" || -L "${NGINX_DEFAULT_BACKUP}" ) ]]; then
+                    printf 'E2E_NGINX_DEFAULT_ROLLBACK_SNAPSHOT_RETAINED=%s\n' "${NGINX_DEFAULT_BACKUP}" >&3
+                fi
+                result=1
+            fi
+        elif [[ "${rollback_verified}" -ne 1 ]]; then
+            printf 'ROLLBACK_VERIFICATION_FAILED=1\n' >&3
+            if [[ -n "${ROLLBACK_CONFIG_DIR}" ]]; then
+                ROLLBACK_CONFIG_RETAINED=1
+                printf 'ROLLBACK_SNAPSHOT_RETAINED=%s\n' "${ROLLBACK_CONFIG_DIR}" >&3
+            fi
+            if [[ -n "${NGINX_SITE_BACKUP}" && -f "${NGINX_SITE_BACKUP}" ]]; then
+                printf 'NGINX_ROLLBACK_SNAPSHOT_RETAINED=%s\n' "${NGINX_SITE_BACKUP}" >&3
+            fi
+            if [[ -n "${NGINX_DEFAULT_BACKUP}" && ( -e "${NGINX_DEFAULT_BACKUP}" || -L "${NGINX_DEFAULT_BACKUP}" ) ]]; then
+                printf 'NGINX_DEFAULT_ROLLBACK_SNAPSHOT_RETAINED=%s\n' "${NGINX_DEFAULT_BACKUP}" >&3
+            fi
         fi
         if [[ -n "${PREVIOUS_REVISION}" ]]; then
             printf '복구 기준 커밋: %s\n' "${PREVIOUS_REVISION}"
@@ -129,6 +452,16 @@ on_exit() {
     fi
     if [[ ${result} -eq 0 && -n "${NGINX_SITE_BACKUP}" ]]; then
         rm -f -- "${NGINX_SITE_BACKUP}"
+    fi
+    if [[ ${result} -eq 0 && -n "${NGINX_DEFAULT_BACKUP}" ]]; then
+        rm -f -- "${NGINX_DEFAULT_BACKUP}"
+    fi
+    if [[ -n "${ROLLBACK_CONFIG_DIR}" ]]; then
+        if [[ "${ROLLBACK_CONFIG_RETAINED}" -eq 0 ]]; then
+            rm -rf -- "${ROLLBACK_CONFIG_DIR}"
+        else
+            printf '복구 설정 스냅샷 보존 경로: %s\n' "${ROLLBACK_CONFIG_DIR}"
+        fi
     fi
     exit "${result}"
 }
@@ -163,6 +496,10 @@ env_value() {
     raw="${raw%"${raw##*[![:space:]]}"}"
     raw="${raw#\"}"
     raw="${raw%\"}"
+    if [[ "${raw:0:1}" == "'" ]]; then
+        [[ ${#raw} -ge 2 && "${raw: -1}" == "'" ]] || fail "${key}의 따옴표가 짝을 이루지 않습니다."
+        raw="${raw:1:${#raw}-2}"
+    fi
     printf '%s' "${raw}"
 }
 
@@ -253,10 +590,14 @@ run_cmd 'pip 업데이트' run_as_app_in_project "${PROJECT_DIR}/venv/bin/python
 run_cmd 'Python 의존성 설치' run_as_app_in_project "${PROJECT_DIR}/venv/bin/python" -m pip install -r requirements.txt
 
 if [[ "${RUN_TESTS}" == '1' ]]; then
-    run_cmd '배포 전 pytest 실행' run_as_app_in_project "${PROJECT_DIR}/venv/bin/python" -m pytest -q
+    run_cmd '배포 전 단위 및 통합 테스트 실행' run_as_app_in_project \
+        "${PROJECT_DIR}/venv/bin/python" -m pytest -q tests --ignore=tests/e2e
 else
     log_step '배포 전 pytest 생략'
 fi
+
+printf '배포 코드 커밋: '
+git -C "${PROJECT_DIR}" rev-parse HEAD
 
 NGINX_AVAILABLE="/etc/nginx/sites-available/${NGINX_SITE_NAME}"
 NGINX_ENABLED="/etc/nginx/sites-enabled/${NGINX_SITE_NAME}"
@@ -265,6 +606,20 @@ NGINX_SITE_BACKUP="$(mktemp /var/backups/b7-1-nginx/deploy.XXXXXXXX)"
 if [[ -f "${NGINX_AVAILABLE}" ]]; then
     cp -p -- "${NGINX_AVAILABLE}" "${NGINX_SITE_BACKUP}"
     NGINX_SITE_EXISTED=1
+fi
+if [[ -L "${NGINX_ENABLED}" ]]; then
+    NGINX_ENABLED_EXISTED=1
+    NGINX_ENABLED_TARGET="$(readlink -- "${NGINX_ENABLED}")"
+elif [[ -e "${NGINX_ENABLED}" ]]; then
+    fail 'Nginx sites-enabled 경로가 심볼릭 링크가 아니어서 배포를 중단합니다.'
+fi
+if [[ -L "${NGINX_DEFAULT_ENABLED}" || -e "${NGINX_DEFAULT_ENABLED}" ]]; then
+    [[ -L "${NGINX_DEFAULT_ENABLED}" || -f "${NGINX_DEFAULT_ENABLED}" ]] || \
+        fail 'Nginx 기본 사이트 경로가 일반 파일 또는 심볼릭 링크가 아니어서 배포를 중단합니다.'
+    NGINX_DEFAULT_EXISTED=1
+    NGINX_DEFAULT_BACKUP="$(mktemp /var/backups/b7-1-nginx/default.XXXXXXXX)"
+    rm -f -- "${NGINX_DEFAULT_BACKUP}"
+    cp -a -- "${NGINX_DEFAULT_ENABLED}" "${NGINX_DEFAULT_BACKUP}"
 fi
 
 CERTIFICATE_PATH="/etc/letsencrypt/live/${SITE_DOMAIN}/fullchain.pem"
@@ -356,7 +711,8 @@ server {
 EOF
 run_cmd 'Nginx 사이트 설정 설치' install -o root -g root -m 644 "${nginx_temp_file}" "${NGINX_AVAILABLE}"
 rm -f "${nginx_temp_file}"
-run_cmd '기본 Nginx 사이트 비활성화' rm -f /etc/nginx/sites-enabled/default
+NGINX_DEFAULT_CHANGED=1
+run_cmd '기본 Nginx 사이트 비활성화' rm -f -- "${NGINX_DEFAULT_ENABLED}"
 run_cmd '챗봇 Nginx 사이트 활성화' ln -sfn "${NGINX_AVAILABLE}" "${NGINX_ENABLED}"
 run_cmd 'Nginx 문법 검사' nginx -t
 run_cmd 'Nginx 부팅 자동 시작 설정' systemctl enable nginx
@@ -370,7 +726,17 @@ HOOK
 chmod 755 /etc/letsencrypt/renewal-hooks/deploy/reload-nginx
 run_cmd '인증서 자동 갱신 타이머 활성화' systemctl enable --now certbot.timer
 
-SYSTEMD_UNIT="/etc/systemd/system/${SERVICE_NAME}"
+install -d -o root -g root -m 700 /var/backups/b7-1-deploy
+ROLLBACK_CONFIG_DIR="$(mktemp -d /var/backups/b7-1-deploy/config.XXXXXXXX)"
+if [[ -f "${CRON_FILE}" ]]; then
+    CRON_EXISTED=1
+    cp -p -- "${CRON_FILE}" "${ROLLBACK_CONFIG_DIR}/chatbot-backup.cron"
+fi
+if [[ -f "${SYSTEMD_UNIT}" ]]; then
+    SYSTEMD_EXISTED=1
+    cp -p -- "${SYSTEMD_UNIT}" "${ROLLBACK_CONFIG_DIR}/chatbot.service"
+fi
+SYSTEMD_CHANGED=1
 systemd_temp_file="$(mktemp)"
 cat > "${systemd_temp_file}" <<EOF
 [Unit]
@@ -396,6 +762,9 @@ run_cmd 'Systemd 서비스 파일 설치' install -o root -g root -m 644 "${syst
 rm -f "${systemd_temp_file}"
 run_cmd 'Systemd 설정 다시 읽기' systemctl daemon-reload
 run_cmd '챗봇 서비스 부팅 자동 시작 설정' systemctl enable "${SERVICE_NAME}"
+if [[ "${B7_1_E2E_FAILPOINT}" == before-start ]]; then
+    fail 'E2E_FAULT_INJECTION_REACHED=before-start'
+fi
 # 새 서비스가 요청을 처리할 수 있으므로 이후 실패에서는 오래된 DB로 덮어쓰지 않습니다.
 DB_RESTORE_SAFE=0
 run_cmd '챗봇 서비스 재시작' systemctl restart "${SERVICE_NAME}"
@@ -405,6 +774,15 @@ if ! systemctl is-active --quiet "${SERVICE_NAME}"; then
     fail "챗봇 서비스가 실행 중이 아닙니다: ${SERVICE_NAME}"
 fi
 
+if [[ -f "${LOGGING_DROPIN}" ]]; then
+    LOGGING_DROPIN_EXISTED=1
+    cp -p -- "${LOGGING_DROPIN}" "${ROLLBACK_CONFIG_DIR}/90-b7-1-logging.conf"
+fi
+if [[ -f "${LOGROTATE_POLICY}" ]]; then
+    LOGROTATE_POLICY_EXISTED=1
+    cp -p -- "${LOGROTATE_POLICY}" "${ROLLBACK_CONFIG_DIR}/logrotate-b7-1"
+fi
+LOGGING_CONFIG_CHANGED=1
 run_cmd 'Nginx 요청 추적 및 로그 회전 설정 재적용' env \
     "PROJECT_DIR=${PROJECT_DIR}" "SITE_CONFIG=${NGINX_ENABLED}" \
     "VERIFY_BASE_URL=https://${SITE_DOMAIN}" \
@@ -426,7 +804,7 @@ cron_quote() {
     printf '%s' "$value"
 }
 
-CRON_FILE='/etc/cron.d/b7-1-chatbot-backup'
+CRON_CHANGED=1
 cron_temp_file="$(mktemp)"
 cron_db_path="$(cron_quote "${DB_PATH}")"
 cron_backup_dir="$(cron_quote "${BACKUP_DIR}")"
@@ -438,6 +816,22 @@ run_cmd 'SQLite 일일 백업 예약 설치' install -o root -g root -m 644 "${c
 rm -f "${cron_temp_file}"
 run_cmd 'Cron 부팅 자동 시작 설정' systemctl enable cron
 run_cmd 'Cron 재시작' systemctl restart cron
+if [[ "${B7_1_E2E_FAILPOINT}" == after-start ]]; then
+    install -o root -g root -m 600 /dev/null "${B7_1_E2E_READY_MARKER}"
+    printf 'ready\n' > "${B7_1_E2E_READY_MARKER}"
+    for attempt in $(seq 1 300); do
+        preserve_count="$(sqlite3 -readonly "${DB_PATH}" "SELECT count(*) FROM chat_logs WHERE instr(question, '${B7_1_E2E_PRESERVE_CHAT_MARKER}') > 0;" 2>/dev/null || true)"
+        ready_state="$(cat "${B7_1_E2E_READY_MARKER}" 2>/dev/null || true)"
+        if [[ "${preserve_count}" =~ ^[1-9][0-9]*$ && "${ready_state}" == ack ]]; then
+            fail 'E2E_FAULT_INJECTION_REACHED=after-start'
+        fi
+        if [[ "${ready_state}" == abort ]]; then
+            fail 'E2E_PRESERVE_CHAT_TEST_ABORTED'
+        fi
+        sleep 1
+    done
+    fail 'E2E_PRESERVE_CHAT_NOT_OBSERVED'
+fi
 
 log_step '서비스 헬스체크 대기'
 health_ok=0
@@ -478,4 +872,5 @@ printf '애플리케이션 경로: %s\n' "${PROJECT_DIR}"
 printf 'Systemd 서비스: %s\n' "${SERVICE_NAME}"
 printf 'Nginx 보안 검증: HTTPS, HTTP 전환, DB 직접 접근 404 확인\n'
 printf 'SQLite 백업 예약: 매일 04:00, 보관 기간 %s일\n' "${RETENTION_DAYS}"
-cat "${LOG_FILE}" >&3
+printf '배포 로그: %s\n' "${LOG_FILE}" >&3
+tail -c 8000 -- "${LOG_FILE}" >&3
