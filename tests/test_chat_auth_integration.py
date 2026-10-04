@@ -112,6 +112,46 @@ async def test_chat_unauthorized_expired_token(test_client: AsyncClient):
 
 
 @pytest.mark.anyio
+async def test_registered_users_expired_token_is_rejected_without_ai_call(
+    test_client: AsyncClient,
+    mock_generate_chat_response: AsyncMock,
+):
+    """등록된 사용자도 만료된 토큰으로는 채팅할 수 없고 AI를 호출하지 않습니다."""
+    username = "registered_expired_user"
+    valid_token = await register_and_login(test_client, username)
+
+    valid_response = await test_client.post(
+        "/api/chat",
+        json={"question": "정상 토큰 대조 질문"},
+        headers={"Authorization": f"Bearer {valid_token}"},
+    )
+    assert valid_response.status_code == 200
+    mock_generate_chat_response.assert_awaited_once_with("정상 토큰 대조 질문", [])
+
+    mock_generate_chat_response.reset_mock()
+    expired_token = create_access_token(
+        {"sub": username},
+        expires_delta=timedelta(seconds=-1),
+    )
+    expired_response = await test_client.post(
+        "/api/chat",
+        json={"question": "만료 토큰 질문"},
+        headers={"Authorization": f"Bearer {expired_token}"},
+    )
+
+    assert expired_response.status_code == 401
+    assert expired_response.json()["detail"] == "인증 토큰이 유효하지 않거나 만료되었습니다."
+    mock_generate_chat_response.assert_not_awaited()
+
+    history_response = await test_client.get(
+        "/api/me/chats",
+        headers={"Authorization": f"Bearer {valid_token}"},
+    )
+    assert history_response.status_code == 200
+    assert [entry["question"] for entry in history_response.json()] == ["정상 토큰 대조 질문"]
+
+
+@pytest.mark.anyio
 async def test_get_my_chats_unauthorized(test_client: AsyncClient):
     """Authorization 헤더 없이 GET /api/me/chats 요청 시 401 Unauthorized를 반환하는지 검증합니다."""
     response = await test_client.get("/api/me/chats")

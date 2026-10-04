@@ -10,6 +10,24 @@ from app import lifespan
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize(
+    "secret_key",
+    ["", "your_super_secret_jwt_key_here", "YOUR_SUPER_SECRET_JWT_KEY_HERE"],
+)
+async def test_startup_rejects_missing_and_example_secret_keys(monkeypatch, secret_key: str):
+    """비어 있거나 예시인 서명 키는 DB를 열기 전에 서버 기동을 거부합니다."""
+    monkeypatch.setattr(lifespan.settings, "SECRET_KEY", secret_key)
+    initialize = AsyncMock()
+    monkeypatch.setattr(lifespan, "init_db", initialize)
+    manager = lifespan.AppLifespanManager()
+
+    with pytest.raises(RuntimeError, match="운영용 SECRET_KEY"):
+        await manager.startup()
+
+    initialize.assert_not_awaited()
+
+
+@pytest.mark.anyio
 async def test_startup_failure_aborts_lifespan_and_allows_recovery(monkeypatch):
     """초기화 실패를 숨기지 않고 기록하며 다음 정상 시작은 허용합니다."""
     monkeypatch.setattr(lifespan.settings, "SECRET_KEY", "test-signing-secret")

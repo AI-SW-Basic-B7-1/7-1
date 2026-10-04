@@ -4,15 +4,20 @@
 자격증명 불일치, 만료/위변조 토큰, 미인증 차단)을 체계적으로 검증합니다.
 """
 
+import asyncio
 from datetime import timedelta
+from threading import Barrier, Event, Timer
 from typing import AsyncGenerator
 import aiosqlite
 import pytest
 from httpx import ASGITransport, AsyncClient
+from unittest.mock import patch
 
+from app.auth import hash_password
 from app.auth import create_access_token
 from app.database import get_db, init_db
 from app.main import app
+from app.routers import auth_router
 
 
 @pytest.fixture
@@ -54,6 +59,80 @@ async def test_register_success(test_client: AsyncClient):
     data = response.json()
     assert data["message"] == "회원가입이 완료되었습니다."
     assert data["username"] == "newuser123"
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("password", "expected_status"),
+    [("a" * 72, 201), ("a" * 73, 422), ("가" * 24, 201), ("가" * 25, 422)],
+)
+async def test_register_bcrypt_utf8_byte_boundary(
+    test_client: AsyncClient,
+    password: str,
+    expected_status: int,
+):
+    """ASCII와 다국어 비밀번호의 72바이트 경계를 가입 API에서 확인합니다."""
+    response = await test_client.post(
+        "/api/auth/register",
+        json={"username": "password_boundary", "password": password},
+    )
+
+    assert response.status_code == expected_status
+
+
+@pytest.mark.anyio
+async def test_register_duplicate_username_race_returns_one_success_and_one_conflict(
+    test_client: AsyncClient,
+):
+    """동시에 같은 아이디를 가입해도 한 요청만 만들고 다른 요청은 400을 반환합니다."""
+    hash_barrier = Barrier(2)
+
+    def synchronized_hash(password: str) -> str:
+        hash_barrier.wait(timeout=5)
+        return hash_password(password)
+
+    payload = {"username": "duplicate_signup_race", "password": "password1234"}
+    with patch.object(auth_router, "hash_password", side_effect=synchronized_hash):
+        responses = await asyncio.gather(
+            test_client.post("/api/auth/register", json=payload),
+            test_client.post("/api/auth/register", json=payload),
+        )
+
+    assert sorted(response.status_code for response in responses) == [201, 400]
+
+
+@pytest.mark.anyio
+async def test_register_password_hash_does_not_block_other_requests(
+    test_client: AsyncClient,
+):
+    """비밀번호 해시 중에도 서버가 보조 health 요청에 응답하는지 확인합니다."""
+    hash_started = Event()
+    release_hash = Event()
+
+    def delayed_hash(password: str) -> str:
+        hash_started.set()
+        release_hash.wait(timeout=5)
+        return "테스트 전용 해시"
+
+    timer = Timer(2, release_hash.set)
+    timer.start()
+    try:
+        with patch.object(auth_router, "hash_password", side_effect=delayed_hash):
+            registration = asyncio.create_task(
+                test_client.post(
+                    "/api/auth/register",
+                    json={"username": "bcrypt_event_loop", "password": "password1234"},
+                )
+            )
+            assert await asyncio.wait_for(asyncio.to_thread(hash_started.wait), timeout=1)
+            health_response = await test_client.get("/api/health")
+            assert health_response.status_code == 200
+            assert not release_hash.is_set()
+    finally:
+        release_hash.set()
+        timer.cancel()
+
+    assert (await registration).status_code == 201
 
 
 @pytest.mark.anyio

@@ -1,0 +1,66 @@
+name: E2E 품질 검사
+
+on:
+  pull_request:
+    branches: [develop, main]
+  push:
+    branches: [develop, main]
+
+permissions:
+  contents: read
+
+jobs:
+  python-node:
+    name: Python 및 프론트엔드 테스트
+    runs-on: ubuntu-latest
+    steps:
+      - name: 저장소 확인
+        uses: actions/checkout@v4
+      - name: Python 설치
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Node.js 설치
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Python 의존성 설치
+        run: python -m pip install -r requirements.txt
+      - name: Python 전체 단위·통합 테스트
+        run: python -m pytest -q tests --ignore=tests/e2e
+      - name: 만료 검증 비활성화 변형 대조
+        run: python scripts/verify_jwt_expiry_regression.py
+      - name: 프론트엔드 계약 및 상태 테스트
+        run: node --test tests/frontend/*.test.mjs
+      - name: EC2 셸 문법 확인
+        run: |
+          for script in scripts/ec2/*.sh; do
+            bash -n "$script"
+          done
+
+  browser:
+    name: 격리 SQLite 브라우저 E2E
+    runs-on: ubuntu-latest
+    steps:
+      - name: 저장소 확인
+        uses: actions/checkout@v4
+      - name: Python 설치
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Playwright 의존성 설치
+        run: python -m pip install -r requirements-e2e.txt
+      - name: Chromium 설치
+        run: python -m playwright install --with-deps chromium
+      - name: 테스트 보고서 디렉터리 준비
+        run: mkdir -p .artifacts/e2e
+      - name: 실제 브라우저 회원가입·채팅·복원 E2E
+        run: python -m pytest -q tests/e2e --browser chromium --output=.artifacts/e2e --junitxml=.artifacts/e2e/report.xml
+      - name: 실패 보고서 보관
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-e2e-report
+          path: .artifacts/e2e/report.xml
+          if-no-files-found: ignore
+          retention-days: 7
