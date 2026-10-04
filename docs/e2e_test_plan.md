@@ -43,47 +43,30 @@ Windows에서 pytest 임시 디렉터리 권한 오류가 발생하면 프로젝
 
 이슈 #55는 등록 사용자 대조와 만료 검증 변형 실패까지, #74는 인증·HTTPS·비밀정보·DB와 systemd/Cron 복구까지, #26은 전체 테스트·리뷰·병합 후 최종 SHA의 테스트 EC2 브라우저·로그 회전 검증까지 완료하면 닫습니다.
 
-## Windows 및 컴퓨터 유즈를 통한 상호작용 실행 계획
+## Windows·WSL 및 원격 브라우저 실행 상태
 
-2026-10-04 사전 확인에서 현재 브랜치는 `feat/auth-ec2-ko`, HEAD는 `eed5f4e6adb915a285639244ffd597a02d46e512`이며 E2E 구현은 미커밋 변경입니다. Ubuntu WSL2와 기존 Linux 테스트 가상환경이 확인됐고 Python 3.14.4, Bash, OpenSSL, Git, pytest, pytest-asyncio를 사용할 수 있습니다. WSL에는 Node와 Playwright가 없습니다. 기존 Windows 환경의 Node와 Python 3.12 가상환경을 함께 사용합니다. 실행 직전에 이 상태와 원격 ref를 다시 확인합니다.
+2026-10-04 확인 기준으로 저장소 기본 브랜치는 `develop`이며, 개발 통합 기준은 `fe44772cfbb40c8a507691936137b827a4a7bc17`입니다. PR #75의 검증 대상은 `feat/auth-ec2-ko`의 `04110dec409e9c40339a1e692863b1117d753241`입니다. PR #75는 열려 있고 팀원 승인 대기 상태입니다. 기존 GitHub CI의 Python·프런트엔드 및 Chromium 브라우저 작업은 통과했습니다.
 
-현재 컴퓨터 유즈의 브라우저 연결에는 Codex 내장 브라우저가 보입니다. Chrome 또는 Edge 사용을 선택하면 해당 브라우저를 사용할 수 있는 연결을 먼저 확인합니다. 계획 단계에서는 테스트 실행, 의존성 설치, 커밋·푸시·PR·병합, AWS 설정 변경과 배포를 수행하지 않습니다.
+WSL 테스트 가상환경에서 Playwright가 요구하는 Chromium Linux 패키지를 설치했습니다. 격리 SQLite와 AI 대역을 사용하는 로컬 Chromium 가입·로그인·채팅·이력 복원 테스트 1개가 통과했습니다. 비밀값이 없는 JUnit 보고서는 `logs/e2e/wsl-local-browser.xml`에 있습니다. 이 결과는 HTTPS 테스트 EC2, 실제 Gemini, DNS·인증서, 로그 회전이나 배포 롤백 검증을 의미하지 않습니다.
 
-### 실행 순서와 통과 조건
+전용 테스트 EC2는 `ap-northeast-2`의 `i-011cd11330626e74c`이며, 배포 대상은 `https://ptrip-test.duckdns.org`입니다. GitHub `e2e` 환경에 배포 변수와 Parameter Store 이름이 등록돼 있습니다. 승인 전에는 GitHub Actions 대신 AWS CloudShell에서 제한된 SSM 배포 스크립트를 직접 실행해 실제 배포 검증을 진행합니다. 기존 운영 EC2는 배포 대상으로 사용하지 않습니다.
 
-| 단계 | 수행 내용 | 담당 및 상호작용 | 다음 단계로 넘어가는 조건 |
-| --- | --- | --- | --- |
-| 1. 로컬 상태 고정 | 변경 파일과 기준 SHA를 확인하고 기존 WSL 가상환경의 의존성을 점검합니다. 심볼릭 링크 등 POSIX 테스트의 임시 파일은 WSL의 Linux 임시 디렉터리에 둡니다. | 에이전트가 터미널 도구로 확인합니다. WSL 사용자 접근이 차단되면 호스트 사용자 권한으로 같은 명령을 실행합니다. | 필요한 패키지와 Bash/OpenSSL이 정상이고 소스 변경 범위가 확인됩니다. |
-| 2. 건너뛴 테스트 실행 | `tests/test_ec2_deploy_revision.py`, `tests/test_ec2_e2e_log_rotation.py`, `tests/test_ec2_logging_config.py`를 WSL에서 실행합니다. 이후 Python 전체 단위·통합 테스트와 만료 검증 변형 대조를 같은 환경에서 실행하고 Node 테스트는 Windows에서 실행합니다. | 에이전트가 명령과 결과를 보여 줍니다. 실패 원인을 해결한 뒤 영향받은 검증을 다시 실행합니다. | 기존에 건너뛴 Bash/POSIX 테스트가 모두 실제로 실행되고 실패·건너뜀이 없습니다. 전체 Python·Node·변형 대조도 통과합니다. |
-| 3. 로컬 브라우저 E2E | Windows의 공유 Python 가상환경에 `requirements-e2e.txt`와 Chromium을 준비하고 `tests/e2e`를 실행합니다. 자식 테스트 프로세스에서 원격 `E2E_*` 설정을 제거해 임시 SQLite와 AI 대역을 사용합니다. | 필요한 설치 항목을 먼저 알리고 에이전트가 터미널 도구로 준비·실행합니다. | 실제 Chromium에서 가입·로그인·채팅 화면·재로그인 후 같은 저장 기록 복원을 확인합니다. |
-| 4. 원격 코드와 수동 실행 등록 | 검증한 구현을 원격에 반영할 커밋/PR 범위를 정하고 실제 테스트 대상 브랜치와 전체 SHA를 기록합니다. GitHub 기본 브랜치와 기존 배포 워크플로를 확인합니다. 수동 워크플로가 기본 브랜치에 없으면 등록에 필요한 변경을 PR로 반영합니다. 기능 코드 통합과 기본 브랜치의 워크플로 등록 범위는 각각 검토합니다. | 원격 반영에 앞서 변경 파일·커밋·PR 대상을 사용자에게 보여 줍니다. `main` 변경은 저장소 규칙에 따라 PR로 진행합니다. | 기본 브랜치에서 수동 워크플로가 등록되고, 배포 대상 SHA에 스크립트·테스트·의존성 파일이 모두 존재하며 대상 브랜치에 속합니다. |
-| 5. GitHub/AWS 준비 | 브라우저에서 저장소의 Actions/환경 설정, AWS의 테스트 EC2·SSM·IAM·Parameter Store·DNS를 확인합니다. 필요한 설정값은 아래 표를 사용합니다. | 에이전트가 화면을 읽고 설정 내용과 다음 동작을 설명합니다. 사용자가 로그인/MFA와 비밀값 입력을 수행합니다. IAM 권한 생성·확대는 정확한 정책을 검토한 뒤 적용합니다. 새 EC2가 필요하면 리소스·비용 범위·사용 종료 시점을 먼저 정합니다. | 전용 테스트 인스턴스, SSM Online, 테스트용 설정, GitHub OIDC와 HTTPS 도메인이 준비됩니다. |
-| 6. 화면에서 수동 실행 | GitHub Actions의 `테스트 EC2 배포 및 브라우저 E2E`에서 `Run workflow`를 엽니다. 워크플로 정의를 사용할 브랜치와 배포 입력 `branch`/`revision`을 구별해 확인하고 실행합니다. | 에이전트가 컴퓨터 유즈로 화면을 조작하고 사용자가 목표 인스턴스·도메인·전체 SHA를 함께 확인합니다. 단계별 결과는 새 화면 상태에서 읽습니다. | 고정 SHA 배포, HTTPS 브라우저/실 Gemini, 기동 전 롤백, 기동 후 새 DB 기록 보존, 롤백 후 재로그인·기록 복원, 채팅 이벤트/강제 로그 회전 단계가 모두 통과합니다. |
-| 7. 실제 서비스 화면 및 결과 확인 | 테스트 HTTPS 사이트에서 직접 로그인·질문·응답·기록 복원을 확인하고 Actions 실행 URL, 실제 배포 SHA, 비밀값 없는 보고서와 로그 검증 결과를 정리합니다. 코드 수정이 발생했다면 Sol High에게 최신 전체 변경을 다시 검토시킵니다. | 사용자가 실제 화면을 함께 확인하고 에이전트가 결과를 정리합니다. | 로컬 WSL/Windows 결과, CI 결과, 실제 EC2 결과가 각각 확인되고 각 이슈의 완료 기준과 대응됩니다. |
+GitHub의 `workflow_dispatch`는 실제 기본 브랜치에 워크플로가 있어야 수동 실행할 수 있습니다. PR #76은 `develop` 기준으로 워크플로 파일 하나만 추가하는 PR로 수정합니다. 기본 브랜치에 등록되기 전까지 해당 Actions 실행 경로는 대기합니다. 승인 없이 수행하는 SSM 검증과 Actions/OIDC 검증 결과는 별도로 기록합니다.
 
-WSL에서 먼저 실행할 명령은 저장소 루트를 기준으로 다음과 같습니다. `TEST_PYTHON`은 확인된 저장소 밖 Linux 가상환경의 Python 실행 파일로 설정합니다.
+### 실행 단계와 통과 조건
 
-```bash
-"$TEST_PYTHON" -m pytest -q tests/test_ec2_deploy_revision.py tests/test_ec2_e2e_log_rotation.py tests/test_ec2_logging_config.py --basetemp="$(mktemp -d)"
-"$TEST_PYTHON" -m pytest -q tests --ignore=tests/e2e --basetemp="$(mktemp -d)"
-"$TEST_PYTHON" scripts/verify_jwt_expiry_regression.py
-```
-
-현재 WSL의 Python 3.14 검증 결과는 GitHub CI의 Python 3.12 및 실제 EC2 환경 결과와 각각 기록합니다. WSL에 Node를 추가할 필요 없이 기존 Windows Node로 프론트엔드 테스트를 실행합니다. Windows에 Bash 경로만 추가하거나 심볼릭 링크를 위한 시스템 보안 설정을 변경하는 방식은 사용하지 않습니다.
-
-### 준비할 값과 사용자 참여
-
-| 항목 | 확인하거나 입력할 내용 | 처리 방식 |
+| 단계 | 수행 내용 | 통과 조건 |
 | --- | --- | --- |
-| 브라우저 | Codex 내장 브라우저 또는 연결된 Chrome/Edge | 실제 연결 목록에서 선택한 브라우저를 확인합니다. |
-| GitHub 계정 권한 | `AI-SW-Basic-B7-1/7-1` 저장소의 Actions 실행 권한, PR 작업 권한, 필요한 환경 설정 권한 | 로그인/MFA는 사용자가 직접 진행하고 기존 권한을 먼저 확인합니다. |
-| 테스트 EC2 | 리전, 인스턴스 ID, 실제 OS, 전용 테스트 용도, SSM 연결 상태 | 기존 인스턴스의 용도를 확인한 후 선택합니다. 미준비라면 새 리소스 계획을 확정합니다. |
-| HTTPS 주소 | 테스트 도메인, DNS와 EC2 연결, 인증서, 80/443 및 외부 8000 접근 제한 | 화면 상태와 실제 네트워크 응답으로 확인합니다. |
-| GitHub `e2e` 변수 | `E2E_AWS_REGION`, `E2E_AWS_ROLE_ARN`, `E2E_EC2_INSTANCE_ID`, `E2E_SECRET_PARAMETER`, `E2E_BASE_URL` | GitHub 환경 화면에서 값과 대상을 확인합니다. |
-| AWS OIDC 역할 | 저장소와 `e2e` 환경에 맞는 실제 subject 조건, 테스트 인스턴스에 필요한 SSM 권한 | 기존/불변 ID subject 형식을 확인한 뒤 정책을 준비합니다. 토큰 자체는 출력하지 않습니다. |
-| EC2 인스턴스 역할/환경 | 테스트 경로 SecureString 읽기 권한, 실제 Gemini 키·강한 JWT 키·DB 경로 등 앱 설정 | 비밀값은 사용자가 AWS 화면에 직접 입력합니다. 채팅·Git·보고서에는 키나 `.env` 전문을 넣지 않습니다. |
-| 테스트 인스턴스 표식 | 배포 스크립트가 검사하는 테스트 EC2 표시 파일의 root 소유·600 권한 | 전용 테스트 인스턴스임을 확인한 후 준비하고 실패 주입 전 다시 검사합니다. |
+| 1. 로컬 검증 고정 | 기준 브랜치·전체 SHA, 기존 Python·Node·변형 대조 테스트 결과, WSL Chromium 결과를 실행 환경별로 기록합니다. | 배포 대상 코드의 SHA와 테스트 보고서가 대응됩니다. |
+| 2. PR 범위 정정 | PR #76을 `develop` 기준 단일 워크플로 추가로 재구성합니다. PR #75에는 이번 WSL Chromium 통과와 미실행 EC2 검증을 기록합니다. | PR #76 파일 범위가 `.github/workflows/deploy-test-ec2.yml` 하나이고 #75의 전체 이슈 링크가 유지됩니다. |
+| 3. AWS 사전 검사 | CloudShell에서 계정·리전, EC2 상태, SSM Online, 전용 인스턴스 역할·파라미터 권한, 테스트 표식, DNS와 보안 그룹을 확인합니다. SecureString 내용은 출력하지 않습니다. | 대상이 테스트 인스턴스이고 SSM·파라미터·표식이 준비되며 HTTPS 경로가 대상 IP를 가리킵니다. |
+| 4. 고정 SHA 직접 배포 | CloudShell에서 `scripts/ec2/run_ec2_deploy.sh`를 실행해 테스트 표식과 브랜치 포함 여부를 확인하고 기록한 전체 SHA를 배포합니다. | SSM 배포와 원격 단위 테스트가 성공하고 systemd·Nginx가 준비됩니다. |
+| 5. 실제 HTTPS 브라우저 검증 | 테스트 도메인에서 인증서, HTTP 전환, 정적 파일, 가입·로그인·Gemini 채팅·이력 복원, 내부 파일 차단을 확인합니다. | 브라우저 응답과 저장 이력이 일치하고 서비스 요청 ID가 서버 로그와 연결됩니다. |
+| 6. 복구와 로그 검증 | 테스트 인스턴스 표식을 재확인하고 기동 전·후 실패를 각각 주입합니다. 기동 후 질문은 DB 커밋을 확인한 다음 실패를 주입합니다. SQLite 무결성, 이전 코드·서비스 설정 복원, 로그 회전 전후 요청 추적을 검사합니다. | 두 실패 지점의 롤백 완료를 확인하고, 기동 후 저장 기록이 남으며, 서비스·Cron·로그 설정과 DB가 검증됩니다. |
+| 7. 전체 코드 재검토 | 최종 코드·워크플로 변경을 솔(high) 서브에이전트가 프런트/API·인증·AI·DB·IAM·배포 경로 전체 관점으로 재검토합니다. 지적 사항은 수정 후 영향받은 검증을 반복합니다. | P0/P1 지적이 없고 남은 운영 제한이 결과에 명시됩니다. |
+| 8. 증거 보관 및 중지 | SHA, SSM 실행 ID, 비밀값 없는 테스트 결과를 정리하고 테스트 EC2를 중지합니다. | AWS 콘솔에서 테스트 인스턴스 상태가 `stopped`입니다. 기존 인스턴스는 건드리지 않습니다. |
+| 9. 승인 후 실행 | PR #76 또는 #75가 기본 브랜치에 병합되면 Actions `workflow_dispatch`와 OIDC 인수를 검증합니다. PR #75 병합 뒤에는 최종 `develop` SHA를 다시 배포·검증하고 인스턴스를 다시 중지합니다. | GitHub Actions, OIDC, 병합 후 최종 SHA까지 확인됩니다. |
 
-한 단계에서 실패하면 해당 실패의 Actions/SSM 상태와 오류를 확인하고 후속 배포 단계를 보류합니다. 원인을 확인하지 않은 채 반복 실행하지 않습니다. 롤백 실패 표식이 나타나면 보존된 스냅샷과 실제 서비스 응답을 먼저 확인합니다. 테스트 데이터 정리와 인스턴스 중지·삭제는 대상 및 필요 증거를 정한 후 별도 단계로 진행합니다.
+배포 명령의 브랜치와 SHA는 실행 직전에 원격에서 다시 확인합니다. 실패한 단계의 SSM 상태와 출력으로 원인을 확인한 뒤 영향받은 단계만 재실행합니다. 테스트 보고서와 PR에는 계정 암호, JWT, SecureString, `.env`, DB 파일 또는 실제 Gemini 답변 전문을 포함하지 않습니다. 인스턴스를 다시 시작한 뒤 공인 IP가 달라지면 DuckDNS A 레코드를 갱신하고 HTTPS를 재확인합니다.
 
-GitHub UI의 수동 실행은 워크플로 파일이 기본 브랜치에 있어야 하며, AWS OIDC 조건은 저장소의 현재 subject 형식과 환경 이름에 맞아야 합니다. 근거: [GitHub 수동 실행 문서](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/manually-run-a-workflow), [AWS OIDC 설정 문서](https://docs.github.com/en/actions/how-tos/secure-your-work/security-harden-deployments/oidc-in-aws).
+GitHub 수동 실행 조건은 [GitHub 수동 실행 문서](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/manually-run-a-workflow), AWS OIDC 설정은 [GitHub AWS OIDC 안내](https://docs.github.com/en/actions/how-tos/secure-your-work/security-harden-deployments/oidc-in-aws)를 따릅니다.
