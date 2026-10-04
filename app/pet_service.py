@@ -247,7 +247,6 @@ async def get_pet_tour_data(
 
     detail_results = await asyncio.gather(
         *tasks,
-        return_exceptions=True,
     )
 
     results = []
@@ -256,11 +255,11 @@ async def get_pet_tour_data(
         valid_items,
         detail_results,
     ):
-        if isinstance(detail_result, Exception):
-            continue
 
         if detail_result is None:
-            continue
+            raise PetTourServiceError(
+                "KorPetTourService2 상세정보를 조회하지 못했습니다."
+            )
 
         results.append(
             {
