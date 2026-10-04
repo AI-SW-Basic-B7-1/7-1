@@ -12,6 +12,7 @@ from app import lifespan
 @pytest.mark.anyio
 async def test_startup_failure_aborts_lifespan_and_allows_recovery(monkeypatch):
     """초기화 실패를 숨기지 않고 기록하며 다음 정상 시작은 허용합니다."""
+    monkeypatch.setattr(lifespan.settings, "SECRET_KEY", "test-signing-secret")
     initialize = AsyncMock(side_effect=aiosqlite.OperationalError("초기화 실패"))
     log_error = Mock()
     monkeypatch.setattr(lifespan, "init_db", initialize)
