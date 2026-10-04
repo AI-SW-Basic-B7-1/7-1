@@ -1,0 +1,197 @@
+name: 테스트 EC2 배포 및 브라우저 E2E
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: 배포 대상 원격 브랜치
+        required: true
+        default: develop
+        type: string
+      revision:
+        description: 브랜치에서 검증할 정확한 40자리 커밋 SHA
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  deploy-and-verify:
+    name: 지정 SHA를 테스트 EC2에 배포하고 HTTPS E2E 실행
+    environment: e2e
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      AWS_REGION: ${{ vars.E2E_AWS_REGION }}
+      AWS_ROLE_ARN: ${{ vars.E2E_AWS_ROLE_ARN }}
+      EC2_INSTANCE_ID: ${{ vars.E2E_EC2_INSTANCE_ID }}
+      E2E_SECRET_PARAMETER: ${{ vars.E2E_SECRET_PARAMETER }}
+      E2E_BASE_URL: ${{ vars.E2E_BASE_URL }}
+    steps:
+      - name: 저장소의 지정 SHA 확인
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.revision }}
+          fetch-depth: 0
+      - name: 배포 대상을 확인
+        env:
+          DEPLOY_BRANCH: ${{ inputs.branch }}
+          DEPLOY_REVISION: ${{ inputs.revision }}
+        run: |
+          set -euo pipefail
+          [[ "$DEPLOY_REVISION" =~ ^[0-9a-fA-F]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$(printf '%s' "$DEPLOY_REVISION" | tr '[:upper:]' '[:lower:]')"
+          git fetch origin "$DEPLOY_BRANCH"
+          git merge-base --is-ancestor "$DEPLOY_REVISION" "origin/$DEPLOY_BRANCH"
+          test -n "$AWS_REGION"
+          test -n "$AWS_ROLE_ARN"
+          test -n "$EC2_INSTANCE_ID"
+          test -n "$E2E_SECRET_PARAMETER"
+          test -n "$E2E_BASE_URL"
+          [[ "$E2E_BASE_URL" =~ ^https://[A-Za-z0-9.-]+(:443)?/?$ ]]
+      - name: Python 설치
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: 브라우저 테스트 의존성 설치
+        run: python -m pip install -r requirements-e2e.txt
+      - name: Chromium 설치
+        run: python -m playwright install --with-deps chromium
+      - name: 복구 후에도 재사용할 임시 E2E 계정 생성
+        run: |
+          password="E2e_$(openssl rand -hex 12)a1"
+          echo "::add-mask::$password"
+          printf 'E2E_ACCOUNT_USERNAME=e2e_%s_%s\n' "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" >> "$GITHUB_ENV"
+          printf 'E2E_ACCOUNT_PASSWORD=%s\n' "$password" >> "$GITHUB_ENV"
+          printf 'E2E_REQUEST_ID_FILE=%s/e2e-request-id.txt\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+          printf 'E2E_PRESERVED_REQUEST_ID_FILE=%s/e2e-preserved-chat-request-id.txt\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+      - name: GitHub OIDC로 AWS 단기 자격 획득
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: 고정 SHA를 SSM으로 배포
+        env:
+          DEPLOY_BRANCH: ${{ inputs.branch }}
+          DEPLOY_REVISION: ${{ inputs.revision }}
+        run: bash scripts/ec2/run_ec2_deploy.sh --instance-id "$EC2_INSTANCE_ID" --region "$AWS_REGION" --branch "$DEPLOY_BRANCH" --revision "$DEPLOY_REVISION" --secret-parameter "$E2E_SECRET_PARAMETER" --require-e2e-test-instance
+      - name: HTTPS 브라우저 통합 테스트
+        run: |
+          mkdir -p .artifacts/e2e
+          python -m pytest -q tests/e2e --browser chromium --output=.artifacts/e2e --junitxml=.artifacts/e2e/report.xml
+      - name: 기동 전 실패를 주입해 DB와 이전 서비스 복구 확인
+        env:
+          DEPLOY_BRANCH: ${{ inputs.branch }}
+          DEPLOY_REVISION: ${{ inputs.revision }}
+        run: |
+          set -euo pipefail
+          output_file="$(mktemp)"
+          if bash scripts/ec2/run_ec2_deploy.sh --instance-id "$EC2_INSTANCE_ID" --region "$AWS_REGION" --branch "$DEPLOY_BRANCH" --revision "$DEPLOY_REVISION" --secret-parameter "$E2E_SECRET_PARAMETER" --failure-injection before-start --require-e2e-test-instance >"$output_file" 2>&1; then
+            cat "$output_file"
+            echo '기동 전 실패 주입 배포가 예상과 달리 성공했습니다.' >&2
+            exit 1
+          fi
+          grep -Fq 'E2E_FAULT_INJECTION_REACHED=before-start' "$output_file" || { cat "$output_file"; exit 1; }
+          grep -Fq 'E2E_ROLLBACK_COMPLETE=1' "$output_file" || { cat "$output_file"; exit 1; }
+      - name: 기동 전 롤백 뒤 로그인과 기존 기록 확인
+        env:
+          E2E_EXISTING_ACCOUNT: "1"
+        run: python -m pytest -q tests/e2e --browser chromium --output=.artifacts/e2e --junitxml=.artifacts/e2e/before-start-recovery.xml
+      - name: 기동 후 실패를 주입해 새 DB 보존과 설정 복구 확인
+        timeout-minutes: 20
+        env:
+          DEPLOY_BRANCH: ${{ inputs.branch }}
+          DEPLOY_REVISION: ${{ inputs.revision }}
+          B7_1_E2E_PRESERVE_CHAT_MARKER: e2e_preserve_${{ github.run_id }}_${{ github.run_attempt }}
+          B7_1_E2E_READY_MARKER: /run/b7-1-e2e-ready-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          output_file="$(mktemp)"
+          bash scripts/ec2/run_ec2_deploy.sh --instance-id "$EC2_INSTANCE_ID" --region "$AWS_REGION" --branch "$DEPLOY_BRANCH" --revision "$DEPLOY_REVISION" --secret-parameter "$E2E_SECRET_PARAMETER" --failure-injection after-start --require-e2e-test-instance >"$output_file" 2>&1 &
+          deploy_pid=$!
+          remote_ready_command="for attempt in \$(seq 1 330); do if [[ -f '$B7_1_E2E_READY_MARKER' ]] && [[ \$(cat '$B7_1_E2E_READY_MARKER') == ready ]]; then printf '%s\\n' E2E_AFTER_START_READY; exit 0; fi; sleep 1; done; exit 1"
+          ready_parameters="$(jq -cn --arg command "$remote_ready_command" '{commands: [$command]}')"
+          ready_command_id="$(aws ssm send-command --region "$AWS_REGION" --document-name AWS-RunShellScript --instance-ids "$EC2_INSTANCE_ID" --parameters "$ready_parameters" --timeout-seconds 360 --query 'Command.CommandId' --output text)"
+          wait_ssm_command() {
+            local command_id="$1"
+            local deadline=$((SECONDS + 360))
+            local status='Pending'
+            while (( SECONDS < deadline )); do
+              status="$(aws ssm get-command-invocation --region "$AWS_REGION" --command-id "$command_id" --instance-id "$EC2_INSTANCE_ID" --query Status --output text 2>/dev/null || true)"
+              case "$status" in
+                Success) return 0 ;;
+                Failed|Cancelled|TimedOut) break ;;
+              esac
+              sleep 3
+            done
+            aws ssm get-command-invocation --region "$AWS_REGION" --command-id "$command_id" --instance-id "$EC2_INSTANCE_ID" --query '{status:Status,stdout:StandardOutputContent,stderr:StandardErrorContent}' --output json || true
+            return 1
+          }
+          if ! wait_ssm_command "$ready_command_id"; then
+            wait "$deploy_pid" || true
+            cat "$output_file"
+            echo '기동 후 브라우저 쓰기 대기 상태를 확인하지 못했습니다.' >&2
+            exit 1
+          fi
+          if E2E_EXISTING_ACCOUNT=1 E2E_PRESERVE_CHAT_MARKER="$B7_1_E2E_PRESERVE_CHAT_MARKER" E2E_REQUEST_ID_FILE="$E2E_PRESERVED_REQUEST_ID_FILE" python -m pytest -q tests/e2e --browser chromium --output=.artifacts/e2e --junitxml=.artifacts/e2e/after-start-recovery.xml; then
+            handshake_value=ack
+          else
+            handshake_value=abort
+          fi
+          remote_handshake_command="[[ -f '$B7_1_E2E_READY_MARKER' ]] && printf '%s\\n' '$handshake_value' > '$B7_1_E2E_READY_MARKER'"
+          handshake_parameters="$(jq -cn --arg command "$remote_handshake_command" '{commands: [$command]}')"
+          handshake_command_id="$(aws ssm send-command --region "$AWS_REGION" --document-name AWS-RunShellScript --instance-ids "$EC2_INSTANCE_ID" --parameters "$handshake_parameters" --timeout-seconds 60 --query 'Command.CommandId' --output text)"
+          if ! wait_ssm_command "$handshake_command_id"; then
+            wait "$deploy_pid" || true
+            cat "$output_file"
+            echo '기동 후 DB 보존 시험 완료 신호를 전달하지 못했습니다.' >&2
+            exit 1
+          fi
+          if wait "$deploy_pid"; then
+            cat "$output_file"
+            echo '기동 후 실패 주입 배포가 예상과 달리 성공했습니다.' >&2
+            exit 1
+          fi
+          grep -Fq 'E2E_FAULT_INJECTION_REACHED=after-start' "$output_file" || { cat "$output_file"; exit 1; }
+          grep -Fq 'E2E_ROLLBACK_COMPLETE=1' "$output_file" || { cat "$output_file"; exit 1; }
+          [[ "$handshake_value" == ack ]] || { cat "$output_file"; exit 1; }
+      - name: 기동 후 롤백 뒤 로그인과 보존 기록 확인
+        env:
+          E2E_EXISTING_ACCOUNT: "1"
+        run: python -m pytest -q tests/e2e --browser chromium --output=.artifacts/e2e --junitxml=.artifacts/e2e/after-rollback-recovery.xml
+      - name: 채팅 로그 이벤트 및 로그 회전 전후 요청 추적 검증
+        run: |
+          set -euo pipefail
+          request_id="$(<"$E2E_PRESERVED_REQUEST_ID_FILE")"
+          [[ "$request_id" =~ ^[[:xdigit:]]{8}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{12}$ ]]
+          base_url_q="$(printf '%q' "$E2E_BASE_URL")"
+          request_id_q="$(printf '%q' "$request_id")"
+          remote_command="set -Eeuo pipefail; project_dir=\$(systemctl show chatbot.service -p WorkingDirectory --value); [[ -n \"\$project_dir\" ]]; PROJECT_DIR=\"\$project_dir\" VERIFY_BASE_URL=${base_url_q} VERIFY_CHAT_REQUEST_ID=${request_id_q} bash \"\$project_dir/scripts/ec2/verify_e2e_log_rotation.sh\""
+          parameters="$(jq -cn --arg command "$remote_command" '{commands: [$command]}')"
+          command_id="$(aws ssm send-command --region "$AWS_REGION" --document-name AWS-RunShellScript --instance-ids "$EC2_INSTANCE_ID" --parameters "$parameters" --timeout-seconds 180 --query 'Command.CommandId' --output text)"
+          start_seconds="$SECONDS"
+          status='Pending'
+          while (( SECONDS - start_seconds < 180 )); do
+            status="$(aws ssm get-command-invocation --region "$AWS_REGION" --command-id "$command_id" --instance-id "$EC2_INSTANCE_ID" --query Status --output text 2>/dev/null || true)"
+            case "$status" in
+              Success) break ;;
+              Failed|Cancelled|TimedOut) break ;;
+            esac
+            sleep 5
+          done
+          if [[ "$status" != Success ]]; then
+            aws ssm get-command-invocation --region "$AWS_REGION" --command-id "$command_id" --instance-id "$EC2_INSTANCE_ID" --query '{status:Status,stdout:StandardOutputContent,stderr:StandardErrorContent}' --output json || true
+            exit 1
+          fi
+          aws ssm get-command-invocation --region "$AWS_REGION" --command-id "$command_id" --instance-id "$EC2_INSTANCE_ID" --query StandardOutputContent --output text
+      - name: 비밀값이 없는 테스트 보고서 보관
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: deployed-e2e-report
+          path: .artifacts/e2e/*report.xml
+          if-no-files-found: ignore
+          retention-days: 7
