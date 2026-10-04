@@ -253,6 +253,7 @@ remote_command="$(
     printf '    if [[ -n $previous_revision ]]; then\n'
     printf '      if [[ -n $previous_branch ]]; then git -c safe.directory=%s -C %s checkout --force "$previous_branch" || rollback_verified=0; fi\n' "${clone_dir_q}" "${clone_dir_q}"
     printf '      git -c safe.directory=%s -C %s reset --hard "$previous_revision" || rollback_verified=0\n' "${clone_dir_q}" "${clone_dir_q}"
+    printf '      chown -R %s:%s %s || rollback_verified=0\n' "${app_user_q}" "${app_user_q}" "${project_dir_q}"
     printf '      current_revision=$(git -c safe.directory=%s -C %s rev-parse HEAD 2>/dev/null || true)\n' "${clone_dir_q}" "${clone_dir_q}"
     printf '      [[ "$current_revision" == "$previous_revision" ]] || rollback_verified=0\n'
     printf '    fi\n'

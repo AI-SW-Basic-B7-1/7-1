@@ -133,6 +133,17 @@ def test_deploy_logs_revision_for_the_root_owned_safe_directory():
     assert 'git -c safe.directory="${PROJECT_DIR}" -C "${PROJECT_DIR}" rev-parse HEAD' in ec2_source
 
 
+def test_project_ownership_is_fixed_before_predeploy_backup():
+    """root가 갱신한 체크아웃도 앱 사용자가 배포 전 백업을 실행할 수 있게 소유권을 먼저 정리합니다."""
+    ec2_source = (PROJECT_ROOT / "scripts/ec2/deploy_ec2.sh").read_text(encoding="utf-8")
+
+    ownership_step = "run_cmd '프로젝트 소유권 정리' chown -R \"${APP_USER}:${APP_USER}\" \"${PROJECT_DIR}\""
+    backup_step = "run_cmd '배포 전 DB 백업 생성' runuser -u \"${APP_USER}\""
+
+    assert ownership_step in ec2_source
+    assert ec2_source.index(ownership_step) < ec2_source.index(backup_step)
+
+
 def test_cron_backup_script_is_executable_in_git():
     """Cron에서 직접 실행하는 백업 스크립트가 Git에도 실행 파일로 기록됩니다."""
     result = subprocess.run(
@@ -216,6 +227,9 @@ def test_remote_command_pins_the_requested_revision(tmp_path: Path, fake_aws):
     assert 'wait "$deploy_pid" || true' in rollback_trap
     assert rollback_trap.index('wait "$deploy_pid" || true') < rollback_trap.index(
         "git -c safe.directory="
+    )
+    assert rollback_trap.index('reset --hard "$previous_revision"') < rollback_trap.index(
+        "chown -R ubuntu:ubuntu /home/ubuntu/app/B7-1/7-1"
     )
     rollback_function = (
         "rollback_remote_state() {"

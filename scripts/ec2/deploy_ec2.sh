@@ -529,6 +529,7 @@ fi
 DB_PATH="$(realpath -m -- "${database_candidate}")"
 unset secret_key gemini_api_key database_url previous_database_url
 
+run_cmd '프로젝트 소유권 정리' chown -R "${APP_USER}:${APP_USER}" "${PROJECT_DIR}"
 BACKUP_SCRIPT="${PROJECT_DIR}/scripts/ec2/backup_db.sh"
 [[ -f "${BACKUP_SCRIPT}" ]] || fail "DB 백업 스크립트를 찾을 수 없습니다: ${BACKUP_SCRIPT}"
 if [[ "${SERVICE_WAS_ACTIVE}" -eq 1 ]]; then
@@ -574,7 +575,6 @@ if ! grep -Fqx "${SWAP_FILE} none swap sw 0 0" /etc/fstab; then
 fi
 run_cmd '메모리 및 Swap 상태 기록' free -h
 
-run_cmd '프로젝트 소유권 정리' chown -R "${APP_USER}:${APP_USER}" "${PROJECT_DIR}"
 run_cmd 'SQLite 디렉터리 권한 설정' install -d -o "${APP_USER}" -g "${APP_USER}" -m 700 "$(dirname -- "${DB_PATH}")"
 run_cmd '애플리케이션 로그 디렉터리 생성' install -d -o "${APP_USER}" -g "${APP_USER}" -m 750 "${PROJECT_DIR}/logs"
 run_cmd '운영 환경변수 파일 권한 설정' chmod 600 "${ENV_FILE}"
