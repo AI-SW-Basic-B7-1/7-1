@@ -301,7 +301,7 @@ server {
     ssl_certificate_key ${CERTIFICATE_KEY_PATH};
     ssl_protocols TLSv1.2 TLSv1.3;
     if (\$scheme = http) {
-        rewrite ^(?!/\.well-known/acme-challenge/).* https://${SITE_DOMAIN}\$request_uri permanent;
+        rewrite ^(?!/\.well-known/acme-challenge/).* https://${SITE_DOMAIN}\$request_uri? permanent;
     }
 
     client_max_body_size 2M;
@@ -446,8 +446,8 @@ done
     fail 'HTTPS 헬스체크에 실패했습니다.'
 }
 
-http_redirect="$(curl --resolve "${SITE_DOMAIN}:80:127.0.0.1" -sS --max-time 5 -o /dev/null -w '%{http_code} %{redirect_url}' "http://${SITE_DOMAIN}/api/health" || true)"
-[[ "${http_redirect}" == "301 https://${SITE_DOMAIN}/api/health" ]] || fail "HTTP에서 HTTPS 전환을 확인하지 못했습니다: ${http_redirect}"
+http_redirect="$(curl --resolve "${SITE_DOMAIN}:80:127.0.0.1" -sS --max-time 5 -o /dev/null -w '%{http_code} %{redirect_url}' "http://${SITE_DOMAIN}/api/health?redirect_check=1" || true)"
+[[ "${http_redirect}" == "301 https://${SITE_DOMAIN}/api/health?redirect_check=1" ]] || fail "HTTP에서 HTTPS 전환을 확인하지 못했습니다: ${http_redirect}"
 
 for static_path in /static/css/style.css /static/js/auth.js /static/js/app.js; do
     if ! curl --resolve "${SITE_DOMAIN}:443:127.0.0.1" -fsS --max-time 5 "https://${SITE_DOMAIN}${static_path}" -o /dev/null; then
