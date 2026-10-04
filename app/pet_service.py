@@ -116,21 +116,21 @@ async def _request(
             )
             response.raise_for_status()
 
-    except httpx.TimeoutException as exc:
+    except httpx.TimeoutException:
         raise PetTourAPITimeoutError(
             "KorPetTourService2 API 요청이 시간 초과되었습니다."
-        ) from exc
+        ) from None
 
     except httpx.HTTPStatusError as exc:
         raise PetTourServiceError(
             "KorPetTourService2 API HTTP 오류: "
             f"{exc.response.status_code}"
-        ) from exc
+        ) from None
 
-    except httpx.RequestError as exc:
+    except httpx.RequestError:
         raise PetTourServiceError(
             "KorPetTourService2 API 네트워크 요청에 실패했습니다."
-        ) from exc
+        ) from None
 
     try:
         data = response.json()
