@@ -27,6 +27,8 @@ NGINX_SITE_CHANGED=0
 DB_PATH=""
 DB_EXISTED_BEFORE=0
 PRE_DEPLOY_BACKUP=""
+# 새 서비스가 요청을 처리하기 전까지만 자동 DB 복원을 허용합니다.
+DB_RESTORE_SAFE=1
 PREVIOUS_REVISION="${PREVIOUS_REVISION:-}"
 PREVIOUS_BRANCH="${PREVIOUS_BRANCH:-}"
 ENV_BACKUP_PATH="${ENV_BACKUP_PATH:-}"
@@ -81,13 +83,17 @@ on_exit() {
         log_step '배포 실패로 변경 사항 복구'
         if [[ -n "${PREVIOUS_REVISION}" ]]; then
             systemctl stop "${SERVICE_NAME}" >/dev/null 2>&1 || true
-            if [[ -n "${PRE_DEPLOY_BACKUP}" && -f "${PRE_DEPLOY_BACKUP}" ]]; then
-                restore_path="${DB_PATH}.restore.$$"
-                install -o "${APP_USER}" -g "${APP_USER}" -m 600 "${PRE_DEPLOY_BACKUP}" "${restore_path}"
-                rm -f -- "${DB_PATH}-wal" "${DB_PATH}-shm"
-                mv -f -- "${restore_path}" "${DB_PATH}"
-            elif [[ "${DB_EXISTED_BEFORE}" -eq 0 && -n "${DB_PATH}" ]]; then
-                rm -f -- "${DB_PATH}" "${DB_PATH}-wal" "${DB_PATH}-shm"
+            if [[ "${DB_RESTORE_SAFE}" -eq 1 ]]; then
+                if [[ -n "${PRE_DEPLOY_BACKUP}" && -f "${PRE_DEPLOY_BACKUP}" ]]; then
+                    restore_path="${DB_PATH}.restore.$$"
+                    install -o "${APP_USER}" -g "${APP_USER}" -m 600 "${PRE_DEPLOY_BACKUP}" "${restore_path}"
+                    rm -f -- "${DB_PATH}-wal" "${DB_PATH}-shm"
+                    mv -f -- "${restore_path}" "${DB_PATH}"
+                elif [[ "${DB_EXISTED_BEFORE}" -eq 0 && -n "${DB_PATH}" ]]; then
+                    rm -f -- "${DB_PATH}" "${DB_PATH}-wal" "${DB_PATH}-shm"
+                fi
+            else
+                printf '[안내] 새 서비스 기동 후 배포가 실패해 DB 자동 복원을 생략했습니다. 수동 검토용 백업: %s\n' "${PRE_DEPLOY_BACKUP:-없음}"
             fi
         fi
         if [[ -n "${ENV_BACKUP_PATH}" && -f "${ENV_BACKUP_PATH}" ]]; then
@@ -390,6 +396,8 @@ run_cmd 'Systemd 서비스 파일 설치' install -o root -g root -m 644 "${syst
 rm -f "${systemd_temp_file}"
 run_cmd 'Systemd 설정 다시 읽기' systemctl daemon-reload
 run_cmd '챗봇 서비스 부팅 자동 시작 설정' systemctl enable "${SERVICE_NAME}"
+# 새 서비스가 요청을 처리할 수 있으므로 이후 실패에서는 오래된 DB로 덮어쓰지 않습니다.
+DB_RESTORE_SAFE=0
 run_cmd '챗봇 서비스 재시작' systemctl restart "${SERVICE_NAME}"
 
 if ! systemctl is-active --quiet "${SERVICE_NAME}"; then
