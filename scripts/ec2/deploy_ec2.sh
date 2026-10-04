@@ -75,7 +75,7 @@ fi
 
 on_exit() {
     local result=$?
-    trap - EXIT
+    trap - EXIT ERR
     if [[ ${result} -ne 0 ]]; then
         set +e
         log_step '배포 실패로 변경 사항 복구'
@@ -188,11 +188,14 @@ unset secret_key gemini_api_key database_url previous_database_url
 
 BACKUP_SCRIPT="${PROJECT_DIR}/scripts/ec2/backup_db.sh"
 [[ -f "${BACKUP_SCRIPT}" ]] || fail "DB 백업 스크립트를 찾을 수 없습니다: ${BACKUP_SCRIPT}"
+if [[ "${SERVICE_WAS_ACTIVE}" -eq 1 ]]; then
+    run_cmd '일관된 DB 백업과 배포 중 쓰기 방지를 위해 챗봇 서비스 중지' systemctl stop "${SERVICE_NAME}"
+fi
 if [[ -f "${DB_PATH}" ]]; then
     DB_EXISTED_BEFORE=1
     BACKUP_TIMESTAMP="$(date +%Y%m%d_%H%M%S)"
     PRE_DEPLOY_BACKUP="${BACKUP_DIR}/predeploy_${BACKUP_TIMESTAMP}.db"
-    run_cmd '배포 전 운영 DB 온라인 백업' install -d -o "${APP_USER}" -g "${APP_USER}" -m 700 "${BACKUP_DIR}"
+    run_cmd '배포 전 운영 DB 백업 디렉터리 준비' install -d -o "${APP_USER}" -g "${APP_USER}" -m 700 "${BACKUP_DIR}"
     run_cmd '배포 전 DB 백업 생성' runuser -u "${APP_USER}" -- env \
         HOME="${APP_HOME}" DB_PATH="${DB_PATH}" BACKUP_DIR="${BACKUP_DIR}" \
         BACKUP_PREFIX=predeploy BACKUP_TIMESTAMP="${BACKUP_TIMESTAMP}" REQUIRE_DB=1 \

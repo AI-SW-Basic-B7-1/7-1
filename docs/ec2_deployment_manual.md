@@ -40,10 +40,10 @@ backup_db.sh (EC2 시간 기준 매일 04:00)
 | 스크립트 | 실행 위치 | 실행 시점 | 주요 역할 |
 | --- | --- | --- | --- |
 | scripts/ec2/run_ec2_deploy.sh | 로컬 | 개발자가 배포할 때 수동 실행 | AWS 인증, SSM Online 확인, 원격 브랜치 갱신, SecureString 이름 전달, SSM 배포 명령 전송 및 결과 대기 |
-| scripts/ec2/deploy_ec2.sh | EC2 | run_ec2_deploy.sh가 SSM으로 자동 실행 | 패키지·Swap·Python 가상환경·의존성·HTTPS Nginx·Systemd 설정, 배포 전 DB 백업, 롤백, 헬스체크, 백업 예약 설정 |
+| scripts/ec2/deploy_ec2.sh | EC2 | run_ec2_deploy.sh가 SSM으로 자동 실행 | 패키지·Swap·Python 가상환경·의존성·HTTPS Nginx·Systemd 설정, 서비스 중지 후 DB 백업, 롤백, 헬스체크, 백업 예약 설정 |
 | scripts/ec2/backup_db.sh | EC2 | deploy_ec2.sh가 등록한 Cron에 의해 매일 04:00 실행 | 앱과 동일한 DB 경로의 SQLite 온라인 백업, 무결성·권한 확인, 보관 기간이 지난 백업 삭제 |
 
-`backup_db.sh`는 기존 DB가 있으면 배포 직전에도 실행해 복구용 스냅샷을 만들고, 배포가 끝나면 Cron에 따라 매일 실행됩니다.
+기존 DB가 있으면 배포 스크립트는 복구용 스냅샷을 만들기 전에 챗봇 서비스를 중지하고, 배포 성공 또는 실패 복구가 끝날 때까지 중단 상태로 유지합니다. 따라서 배포 중 서비스 요청이 실패할 수 있습니다. `backup_db.sh`는 배포 후 Cron에 따라 매일 실행됩니다.
 
 ## 3. 배포 전 필수 전제조건
 
@@ -232,7 +232,7 @@ deploy_ec2.sh가 SSM에서 root 권한으로 실행되면 다음 작업을 수�
 
 - 필수 Linux 패키지 설치: nginx, certbot, logrotate, git, python3-venv, sqlite3, cron 등
 - 2GB Swap 생성 및 재부팅 후 자동 활성화 등록
-- `DATABASE_URL`과 일치하는 SQLite 경로 권한 설정 및 배포 전 온라인 백업
+- 챗봇 서비스 중지 후 `DATABASE_URL`과 일치하는 SQLite 경로의 배포 전 백업
 - Python 가상환경 생성 및 requirements.txt 설치
 - 배포 전 pytest -q 실행
 - Let’s Encrypt 인증서 발급·갱신 설정, HTTPS 역방향 프록시 구성 및 일반 HTTP 요청 HTTPS 전환
@@ -253,7 +253,7 @@ deploy_ec2.sh가 SSM에서 root 권한으로 실행되면 다음 작업을 수�
 | 보관 기간 | 7일 |
 | 로그 | /home/ubuntu/db_backups/backup.log |
 
-기존 DB가 있으면 재배포 전 `predeploy_*.db` 온라인 백업도 생성합니다. DB 변경이 필요한 새 버전이 실패하면 이 백업을 원래 DB 경로로 복원합니다.
+기존 DB가 있으면 재배포 전 `predeploy_*.db` 백업을 생성합니다. 서비스는 백업 전에 중지되어 DB 쓰기가 차단되며, 배포가 실패하면 같은 스냅샷을 복원한 뒤 이전 코드를 다시 시작합니다. 배포 시간 동안 챗봇 서비스는 이용할 수 없습니다.
 
 ## 8. 배포 후 확인
 
