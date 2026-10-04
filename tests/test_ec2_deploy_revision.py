@@ -109,7 +109,7 @@ def test_ubuntu_deploy_installs_aws_cli_from_official_script():
     deploy_source = DEPLOY_SCRIPT.read_text(encoding="utf-8")
     ec2_source = (PROJECT_ROOT / "scripts/ec2/deploy_ec2.sh").read_text(encoding="utf-8")
 
-    assert "DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl" in deploy_source
+    assert "DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl unzip" in deploy_source
     assert "curl -fsSL https://awscli.amazonaws.com/v2/install.sh | bash -s -- --system" in deploy_source
     assert "apt-get install -y awscli" not in deploy_source
     assert "apt-get install -y awscli" not in ec2_source

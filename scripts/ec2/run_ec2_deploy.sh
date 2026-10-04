@@ -313,7 +313,7 @@ remote_command="$(
     printf 'if [[ -f %s/.env && -z $env_backup ]]; then save_env_backup; fi\n' "${project_dir_q}"
     printf 'if ! command -v aws >/dev/null 2>&1; then\n'
     printf '  apt-get update\n'
-    printf '  DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl\n'
+    printf '  DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl unzip\n'
     printf '  curl -fsSL https://awscli.amazonaws.com/v2/install.sh | bash -s -- --system\n'
     printf 'fi\n'
     printf 'env_temp=$(mktemp %s/.env.XXXXXXXX)\n' "${project_dir_q}"
