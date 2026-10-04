@@ -238,6 +238,7 @@ remote_command="$(
     printf "previous_branch=''\n"
     printf "env_backup=''\n"
     printf "env_temp=''\n"
+    printf "deploy_pid=''\n"
     printf 'env_written=0\n'
     printf 'rollback_remote_state() {\n'
     printf '  local result=$?\n'
@@ -245,6 +246,8 @@ remote_command="$(
     printf '  local current_revision=""\n'
     printf '  trap - EXIT\n'
     printf '  set +e\n'
+    printf '  if [[ -z ${deploy_pid:-} ]]; then deploy_pid="$!"; fi\n'
+    printf '  if [[ -n ${deploy_pid:-} ]]; then wait "$deploy_pid" || true; fi\n'
     printf '  rm -f -- "$env_temp"\n'
     printf '  if [[ $result -ne 0 ]]; then\n'
     printf '    if [[ -n $previous_revision ]]; then\n'
@@ -332,9 +335,12 @@ remote_command="$(
     printf "env_temp=''\n"
     printf 'env_written=1\n'
     printf '[[ -f %s/requirements.txt ]] || { echo %q; exit 1; }\n' "${project_dir_q}" 'requirements.txt가 프로젝트 경로에 없습니다.'
-    printf 'APP_USER=%s PROJECT_DIR=%s LOG_DIR=%q RUN_TESTS=%q PREVIOUS_REVISION="$previous_revision" PREVIOUS_BRANCH="$previous_branch" ENV_BACKUP_PATH="$env_backup" B7_1_E2E_FAILPOINT=%q B7_1_E2E_PRESERVE_CHAT_MARKER=%q B7_1_E2E_READY_MARKER=%q bash %s\n' \
+    printf 'APP_USER=%s PROJECT_DIR=%s LOG_DIR=%q RUN_TESTS=%q PREVIOUS_REVISION="$previous_revision" PREVIOUS_BRANCH="$previous_branch" ENV_BACKUP_PATH="$env_backup" B7_1_E2E_FAILPOINT=%q B7_1_E2E_PRESERVE_CHAT_MARKER=%q B7_1_E2E_READY_MARKER=%q bash %s &\n' \
         "${app_user_q}" "${project_dir_q}" '/var/log/b7-1' "${RUN_TESTS}" "${FAILURE_INJECTION}" \
         "${E2E_PRESERVE_CHAT_MARKER}" "${E2E_READY_MARKER}" "${deploy_script_q}"
+    printf 'deploy_pid=$!\n'
+    printf 'wait "$deploy_pid"\n'
+    printf "deploy_pid=''\n"
     printf 'rm -f -- "$env_backup"\n'
     printf 'trap - EXIT\n'
 )"

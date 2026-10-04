@@ -188,6 +188,19 @@ def test_remote_command_pins_the_requested_revision(fake_aws):
     assert "원격 저장소 작업 트리에 변경이 있어 배포를 중단합니다." in deploy_source
     assert f"merge-base --is-ancestor {revision} origin/develop" in remote_command
     assert f"reset --hard {revision}" in remote_command
+    rollback_trap = (
+        remote_command.partition("rollback_remote_state() {")[2]
+        .partition("trap rollback_remote_state EXIT")[0]
+    )
+    assert 'wait "$deploy_pid" || true' in rollback_trap
+    assert rollback_trap.index('wait "$deploy_pid" || true') < rollback_trap.index(
+        "git -c safe.directory="
+    )
+    deploy_launch = remote_command.index(
+        "bash /home/ubuntu/app/B7-1/7-1/scripts/ec2/deploy_ec2.sh &"
+    )
+    assert remote_command.index("deploy_pid=$!", deploy_launch) > deploy_launch
+    assert remote_command.index('wait "$deploy_pid"', deploy_launch) > deploy_launch
     assert "get-parameter --name /b7-1/e2e/environment --with-decryption" in remote_command
     assert "B7_1_E2E_FAILPOINT=after-start" in remote_command
     assert "B7_1_E2E_PRESERVE_CHAT_MARKER=e2e_preserve_123_1" in remote_command
@@ -198,3 +211,54 @@ def test_remote_command_pins_the_requested_revision(fake_aws):
     assert 'cmp -s -- "$env_backup"' in remote_command
     assert "ENV_ROLLBACK_SNAPSHOT_RETAINED=%s" in remote_command
     assert 'if [[ -n $env_backup ]]; then rm -f -- "$env_backup"; fi' not in remote_command
+
+
+def test_timeout_waits_for_inner_rollback_before_outer_rollback(tmp_path: Path):
+    """협조적 시간 제한에서 내부 롤백 완료 후 외부 롤백이 시작되는지 확인합니다."""
+    bash_path = shutil.which("bash")
+    timeout_path = shutil.which("timeout")
+    if not bash_path or not timeout_path:
+        pytest.skip("이 검증은 Linux Bash와 GNU timeout이 필요합니다.")
+
+    rollback_log = tmp_path / "rollback-order.log"
+    inner_script = tmp_path / "inner.sh"
+    inner_script.write_text(
+        "trap 'printf \"%s\\n\" inner-rollback-start >> \"$ROLLBACK_ORDER_LOG\"; "
+        "sleep 0.2; printf \"%s\\n\" inner-rollback-done >> \"$ROLLBACK_ORDER_LOG\"' EXIT\n"
+        "sleep 30\n",
+        encoding="utf-8",
+    )
+    outer_script = (
+        "set -Eeuo pipefail\n"
+        "deploy_pid=''\n"
+        "rollback_remote_state() {\n"
+        "  local result=$?\n"
+        "  trap - EXIT\n"
+        "  set +e\n"
+        "  if [[ -z ${deploy_pid:-} ]]; then deploy_pid=\"$!\"; fi\n"
+        "  if [[ -n ${deploy_pid:-} ]]; then wait \"$deploy_pid\" || true; fi\n"
+        "  printf '%s\\n' outer-rollback >> \"$ROLLBACK_ORDER_LOG\"\n"
+        "  exit \"$result\"\n"
+        "}\n"
+        "trap rollback_remote_state EXIT\n"
+        "bash \"$INNER_SCRIPT\" &\n"
+        "deploy_pid=$!\n"
+        "wait \"$deploy_pid\"\n"
+    )
+    environment = os.environ.copy()
+    environment["ROLLBACK_ORDER_LOG"] = str(rollback_log)
+    environment["INNER_SCRIPT"] = str(inner_script)
+    result = subprocess.run(
+        [timeout_path, "--signal=TERM", "--kill-after=2s", "0.2s", bash_path, "-c", outer_script],
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+
+    assert result.returncode in {124, 143}
+    assert rollback_log.read_text(encoding="utf-8").splitlines() == [
+        "inner-rollback-start",
+        "inner-rollback-done",
+        "outer-rollback",
+    ]
