@@ -8,6 +8,7 @@ import httpx
 
 from app.config import settings
 
+from app.pet_service import AREA_CODES, CONTENT_TYPE_IDS
 
 class AITimeoutError(Exception):
     """AI API가 제한 시간 안에 응답하지 못한 경우의 예외."""
@@ -333,20 +334,49 @@ async def extract_pet_tour_parameters(
             "Gemini의 검색 조건 분석 결과를 읽을 수 없습니다."
         ) from exc
 
+    if not isinstance(result, dict):
+        raise AIServiceError(
+            "Gemini의 검색 조건 분석 결과 형식이 올바르지 않습니다."
+        )
+
     area_code = result.get("areaCode")
     content_type_id = result.get("contentTypeId")
 
     try:
         if area_code is not None:
+            if isinstance(area_code, bool):
+                raise ValueError
+
             area_code = int(area_code)
 
         if content_type_id is not None:
+            if isinstance(content_type_id, bool):
+                raise ValueError
+
             content_type_id = int(content_type_id)
 
     except (TypeError, ValueError) as exc:
         raise AIServiceError(
             "Gemini가 반환한 검색 조건 형식이 올바르지 않습니다."
         ) from exc
+
+
+    if (
+        area_code is not None
+        and area_code not in AREA_CODES.values()
+    ):
+        raise AIServiceError(
+            f"허용되지 않는 areaCode입니다: {area_code}"
+        )
+
+    if (
+        content_type_id is not None
+        and content_type_id not in CONTENT_TYPE_IDS.values()
+    ):
+        raise AIServiceError(
+            "허용되지 않는 contentTypeId입니다: "
+            f"{content_type_id}"
+        )
 
     return {
         "areaCode": area_code,
