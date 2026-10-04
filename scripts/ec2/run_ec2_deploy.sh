@@ -24,6 +24,9 @@ REQUIRE_E2E_TEST_INSTANCE=0
 E2E_PRESERVE_CHAT_MARKER="${B7_1_E2E_PRESERVE_CHAT_MARKER:-}"
 E2E_READY_MARKER="${B7_1_E2E_READY_MARKER:-}"
 WAIT_SECONDS="${WAIT_SECONDS:-900}"
+# SSM 명령 전달 제한과 원격 실행 제한은 별도로 관리하고, 로컬에는 결과 수신 여유를 둡니다.
+SSM_DELIVERY_TIMEOUT_SECONDS=120
+SSM_RESULT_GRACE_SECONDS=60
 
 usage() {
     cat <<'EOF'
@@ -166,7 +169,8 @@ fi
 [[ -f "${SCRIPT_DIR}/deploy_ec2.sh" ]] || fail 'EC2 내부 배포 스크립트를 찾을 수 없습니다.'
 [[ -f "${SCRIPT_DIR}/backup_db.sh" ]] || fail 'SQLite 백업 스크립트를 찾을 수 없습니다.'
 [[ -f "${SCRIPT_DIR}/configure_nginx_logs.sh" ]] || fail 'Nginx 로그 설정 스크립트를 찾을 수 없습니다.'
-[[ "${WAIT_SECONDS}" =~ ^[0-9]+$ ]] || fail '--wait-seconds는 숫자여야 합니다.'
+[[ "${WAIT_SECONDS}" =~ ^[1-9][0-9]{0,5}$ ]] && (( 10#${WAIT_SECONDS} <= 172800 )) || fail '--wait-seconds는 1~172800 사이의 정수여야 합니다.'
+local_wait_seconds=$((WAIT_SECONDS + SSM_DELIVERY_TIMEOUT_SECONDS + SSM_RESULT_GRACE_SECONDS))
 
 LOCAL_LOG_DIR="${LOCAL_LOG_DIR:-${PROJECT_ROOT}/logs}"
 mkdir -p "${LOCAL_LOG_DIR}"
@@ -341,18 +345,19 @@ command_id="$(aws ssm send-command \
     --region "${AWS_REGION_NAME}" \
     --document-name 'AWS-RunShellScript' \
     --instance-ids "${INSTANCE_ID}" \
-    --parameters "commands=${ssm_command}" \
+    --parameters "commands=${ssm_command},executionTimeout=${WAIT_SECONDS}" \
     --comment 'B7-1 EC2 SQLite 배포 자동화' \
-    --timeout-seconds "${WAIT_SECONDS}" \
+    --timeout-seconds "${SSM_DELIVERY_TIMEOUT_SECONDS}" \
     --query 'Command.CommandId' \
     --output text 2>>"${LOCAL_LOG}")"
 [[ -n "${command_id}" && "${command_id}" != 'None' ]] || fail 'SSM 명령 ID를 받지 못했습니다.'
 log_line "SSM 명령 ID: ${command_id}"
 
 log_step 'EC2 배포 완료 대기'
+log_line "SSM 원격 실행 제한: ${WAIT_SECONDS}초; 결과 대기 여유: ${local_wait_seconds}초"
 start_seconds="${SECONDS}"
 status='Pending'
-while (( SECONDS - start_seconds < WAIT_SECONDS )); do
+while (( SECONDS - start_seconds < local_wait_seconds )); do
     status="$(aws ssm get-command-invocation \
         --region "${AWS_REGION_NAME}" \
         --command-id "${command_id}" \
@@ -362,14 +367,14 @@ while (( SECONDS - start_seconds < WAIT_SECONDS )); do
     [[ -n "${status}" && "${status}" != 'None' ]] || status='Pending'
     log_line "[$(date '+%Y-%m-%d %H:%M:%S%z')] SSM 상태: ${status}"
     case "${status}" in
-        Success|Failed|TimedOut|Cancelled|Cancelling)
+        Success|Failed|TimedOut|DeliveryTimedOut|ExecutionTimedOut|Cancelled|Terminated|Undeliverable)
             break
             ;;
     esac
     sleep 3
 done
 
-if [[ "${status}" != 'Success' && "${status}" != 'Failed' && "${status}" != 'TimedOut' && "${status}" != 'Cancelled' && "${status}" != 'Cancelling' ]]; then
+if [[ "${status}" != 'Success' && "${status}" != 'Failed' && "${status}" != 'TimedOut' && "${status}" != 'DeliveryTimedOut' && "${status}" != 'ExecutionTimedOut' && "${status}" != 'Cancelled' && "${status}" != 'Terminated' && "${status}" != 'Undeliverable' ]]; then
     fail "SSM 대기 시간이 초과되었습니다. 명령 ID: ${command_id}"
 fi
 

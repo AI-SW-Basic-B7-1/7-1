@@ -597,7 +597,7 @@ else
 fi
 
 printf '배포 코드 커밋: '
-git -C "${PROJECT_DIR}" rev-parse HEAD
+git -c safe.directory="${PROJECT_DIR}" -C "${PROJECT_DIR}" rev-parse HEAD
 
 NGINX_AVAILABLE="/etc/nginx/sites-available/${NGINX_SITE_NAME}"
 NGINX_ENABLED="/etc/nginx/sites-enabled/${NGINX_SITE_NAME}"

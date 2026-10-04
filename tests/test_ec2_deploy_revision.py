@@ -22,6 +22,8 @@ def fake_aws(tmp_path: Path) -> tuple[dict[str, str], Path]:
         pytest.skip("이 검증은 Bash가 설치된 Linux 환경에서 실행합니다.")
 
     command_capture = tmp_path / "ssm_command.b64"
+    parameters_capture = tmp_path / "ssm_parameters.txt"
+    delivery_timeout_capture = tmp_path / "ssm_delivery_timeout.txt"
     aws_program = tmp_path / "aws"
     aws_program.write_text(
         "#!/usr/bin/env python3\n"
@@ -33,6 +35,9 @@ def fake_aws(tmp_path: Path) -> tuple[dict[str, str], Path]:
         "    print('Online')\n"
         "elif arguments[:2] == ['ssm', 'send-command']:\n"
         "    parameters = arguments[arguments.index('--parameters') + 1]\n"
+        "    pathlib.Path(os.environ['E2E_SSM_PARAMETERS']).write_text(parameters)\n"
+        "    timeout = arguments[arguments.index('--timeout-seconds') + 1]\n"
+        "    pathlib.Path(os.environ['E2E_SSM_DELIVERY_TIMEOUT']).write_text(timeout)\n"
         "    command = parameters.partition('commands=')[2].partition(' | base64 --decode')[0]\n"
         "    pathlib.Path(os.environ['E2E_SSM_CAPTURE']).write_text(command.split()[-1])\n"
         "    print('test-command-id')\n"
@@ -49,6 +54,8 @@ def fake_aws(tmp_path: Path) -> tuple[dict[str, str], Path]:
     environment["REPO_URL"] = "https://example.test/codyssey/b7-1.git"
     environment["LOCAL_LOG_DIR"] = str(tmp_path)
     environment["E2E_SSM_CAPTURE"] = str(command_capture)
+    environment["E2E_SSM_PARAMETERS"] = str(parameters_capture)
+    environment["E2E_SSM_DELIVERY_TIMEOUT"] = str(delivery_timeout_capture)
     return environment, command_capture
 
 
@@ -115,11 +122,19 @@ def test_ubuntu_deploy_installs_aws_cli_from_official_script():
     assert "apt-get install -y awscli" not in ec2_source
 
 
+def test_deploy_logs_revision_for_the_root_owned_safe_directory():
+    """root가 ubuntu 소유 체크아웃에서 배포 커밋을 기록할 때 Git 안전 경로를 지정합니다."""
+    ec2_source = (PROJECT_ROOT / "scripts/ec2/deploy_ec2.sh").read_text(encoding="utf-8")
+
+    assert 'git -c safe.directory="${PROJECT_DIR}" -C "${PROJECT_DIR}" rev-parse HEAD' in ec2_source
+
+
 def test_remote_command_pins_the_requested_revision(fake_aws):
     """원격 checkout 명령에 지정한 SHA와 브랜치 포함 검증을 전달합니다."""
     environment, command_capture = fake_aws
     environment["B7_1_E2E_PRESERVE_CHAT_MARKER"] = "e2e_preserve_123_1"
     environment["B7_1_E2E_READY_MARKER"] = "/run/b7-1-e2e-ready-123-1"
+    environment["WAIT_SECONDS"] = "75"
     revision = "a1b2c3d4e5f678901234567890abcdef12345678"
     result = subprocess.run(
         [
@@ -145,6 +160,9 @@ def test_remote_command_pins_the_requested_revision(fake_aws):
     )
 
     assert result.returncode == 0, result.stderr
+    ssm_parameters = Path(environment["E2E_SSM_PARAMETERS"]).read_text(encoding="utf-8")
+    assert "executionTimeout=75" in ssm_parameters
+    assert Path(environment["E2E_SSM_DELIVERY_TIMEOUT"]).read_text(encoding="utf-8") == "120"
     remote_command = base64.b64decode(command_capture.read_text(encoding="utf-8")).decode("utf-8")
     syntax_check = subprocess.run(
         [shutil.which("bash") or "bash", "-n"],
