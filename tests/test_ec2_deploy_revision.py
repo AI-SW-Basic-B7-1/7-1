@@ -53,6 +53,8 @@ def fake_aws(tmp_path: Path) -> tuple[dict[str, str], Path]:
     )
     aws_program.chmod(0o755)
     environment = os.environ.copy()
+    environment.pop("B7_1_E2E_PRESERVE_CHAT_MARKER", None)
+    environment.pop("B7_1_E2E_READY_MARKER", None)
     environment["PATH"] = f"{tmp_path}{os.pathsep}{environment['PATH']}"
     environment["REPO_URL"] = "https://example.test/codyssey/b7-1.git"
     environment["LOCAL_LOG_DIR"] = str(tmp_path)
