@@ -24,8 +24,10 @@ REQUIRE_E2E_TEST_INSTANCE=0
 E2E_PRESERVE_CHAT_MARKER="${B7_1_E2E_PRESERVE_CHAT_MARKER:-}"
 E2E_READY_MARKER="${B7_1_E2E_READY_MARKER:-}"
 WAIT_SECONDS="${WAIT_SECONDS:-900}"
-# SSM 명령 전달 제한과 원격 실행 제한은 별도로 관리하고, 로컬에는 결과 수신 여유를 둡니다.
+# 원격 작업은 먼저 협조적으로 중단해 롤백하고, SSM 강제 종료 전에 충분한 시간을 둡니다.
 SSM_DELIVERY_TIMEOUT_SECONDS=120
+SSM_ROLLBACK_GRACE_SECONDS=600
+SSM_EXECUTION_RESULT_GRACE_SECONDS=60
 SSM_RESULT_GRACE_SECONDS=60
 
 usage() {
@@ -51,7 +53,7 @@ usage() {
                          테스트 EC2에서 before-start 또는 after-start 복구 실패를 재현
   --require-e2e-test-instance
                          배포 전에 EC2의 root 전용 테스트 표식을 확인
-  --wait-seconds SECONDS  SSM 완료 대기 시간 (기본값: 900)
+  --wait-seconds SECONDS  원격 작업 제한 시간 (기본값: 900, 초과 시 롤백 여유 제공)
   -h, --help              도움말 출력
 
 예시:
@@ -169,8 +171,9 @@ fi
 [[ -f "${SCRIPT_DIR}/deploy_ec2.sh" ]] || fail 'EC2 내부 배포 스크립트를 찾을 수 없습니다.'
 [[ -f "${SCRIPT_DIR}/backup_db.sh" ]] || fail 'SQLite 백업 스크립트를 찾을 수 없습니다.'
 [[ -f "${SCRIPT_DIR}/configure_nginx_logs.sh" ]] || fail 'Nginx 로그 설정 스크립트를 찾을 수 없습니다.'
-[[ "${WAIT_SECONDS}" =~ ^[1-9][0-9]{0,5}$ ]] && (( 10#${WAIT_SECONDS} <= 172800 )) || fail '--wait-seconds는 1~172800 사이의 정수여야 합니다.'
-local_wait_seconds=$((WAIT_SECONDS + SSM_DELIVERY_TIMEOUT_SECONDS + SSM_RESULT_GRACE_SECONDS))
+[[ "${WAIT_SECONDS}" =~ ^[1-9][0-9]{0,5}$ ]] && (( 10#${WAIT_SECONDS} <= 172140 )) || fail '--wait-seconds는 1~172140 사이의 정수여야 합니다.'
+ssm_execution_timeout=$((WAIT_SECONDS + SSM_ROLLBACK_GRACE_SECONDS + SSM_EXECUTION_RESULT_GRACE_SECONDS))
+local_wait_seconds=$((SSM_DELIVERY_TIMEOUT_SECONDS + ssm_execution_timeout + SSM_RESULT_GRACE_SECONDS))
 
 LOCAL_LOG_DIR="${LOCAL_LOG_DIR:-${PROJECT_ROOT}/logs}"
 mkdir -p "${LOCAL_LOG_DIR}"
@@ -338,14 +341,14 @@ remote_command="$(
 
 # Windows용 AWS CLI shorthand 문법이 원격 Bash의 대괄호를 해석하지 않도록 전체 명령을 인코딩합니다.
 remote_command_base64="$(printf '%s' "${remote_command}" | base64 | tr -d '\r\n')"
-ssm_command="printf %s ${remote_command_base64} | base64 --decode | bash"
+ssm_command="printf %s ${remote_command_base64} | base64 --decode | timeout --signal=TERM --kill-after=${SSM_ROLLBACK_GRACE_SECONDS}s ${WAIT_SECONDS}s bash"
 
 log_step 'SSM으로 EC2 배포 명령 전송'
 command_id="$(aws ssm send-command \
     --region "${AWS_REGION_NAME}" \
     --document-name 'AWS-RunShellScript' \
     --instance-ids "${INSTANCE_ID}" \
-    --parameters "commands=${ssm_command},executionTimeout=${WAIT_SECONDS}" \
+    --parameters "commands=${ssm_command},executionTimeout=${ssm_execution_timeout}" \
     --comment 'B7-1 EC2 SQLite 배포 자동화' \
     --timeout-seconds "${SSM_DELIVERY_TIMEOUT_SECONDS}" \
     --query 'Command.CommandId' \
@@ -354,7 +357,7 @@ command_id="$(aws ssm send-command \
 log_line "SSM 명령 ID: ${command_id}"
 
 log_step 'EC2 배포 완료 대기'
-log_line "SSM 원격 실행 제한: ${WAIT_SECONDS}초; 결과 대기 여유: ${local_wait_seconds}초"
+log_line "협조적 제한: ${WAIT_SECONDS}초; 롤백 여유: ${SSM_ROLLBACK_GRACE_SECONDS}초; SSM 강제 제한: ${ssm_execution_timeout}초; 결과 대기: ${local_wait_seconds}초"
 start_seconds="${SECONDS}"
 status='Pending'
 while (( SECONDS - start_seconds < local_wait_seconds )); do

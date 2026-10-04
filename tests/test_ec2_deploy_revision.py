@@ -23,6 +23,7 @@ def fake_aws(tmp_path: Path) -> tuple[dict[str, str], Path]:
 
     command_capture = tmp_path / "ssm_command.b64"
     parameters_capture = tmp_path / "ssm_parameters.txt"
+    command_line_capture = tmp_path / "ssm_command_line.txt"
     delivery_timeout_capture = tmp_path / "ssm_delivery_timeout.txt"
     aws_program = tmp_path / "aws"
     aws_program.write_text(
@@ -36,9 +37,11 @@ def fake_aws(tmp_path: Path) -> tuple[dict[str, str], Path]:
         "elif arguments[:2] == ['ssm', 'send-command']:\n"
         "    parameters = arguments[arguments.index('--parameters') + 1]\n"
         "    pathlib.Path(os.environ['E2E_SSM_PARAMETERS']).write_text(parameters)\n"
+        "    command_line = parameters.partition('commands=')[2].partition(',executionTimeout=')[0]\n"
+        "    pathlib.Path(os.environ['E2E_SSM_COMMAND_LINE']).write_text(command_line)\n"
         "    timeout = arguments[arguments.index('--timeout-seconds') + 1]\n"
         "    pathlib.Path(os.environ['E2E_SSM_DELIVERY_TIMEOUT']).write_text(timeout)\n"
-        "    command = parameters.partition('commands=')[2].partition(' | base64 --decode')[0]\n"
+        "    command = command_line.partition(' | base64 --decode')[0]\n"
         "    pathlib.Path(os.environ['E2E_SSM_CAPTURE']).write_text(command.split()[-1])\n"
         "    print('test-command-id')\n"
         "elif arguments[:2] == ['ssm', 'get-command-invocation']:\n"
@@ -55,6 +58,7 @@ def fake_aws(tmp_path: Path) -> tuple[dict[str, str], Path]:
     environment["LOCAL_LOG_DIR"] = str(tmp_path)
     environment["E2E_SSM_CAPTURE"] = str(command_capture)
     environment["E2E_SSM_PARAMETERS"] = str(parameters_capture)
+    environment["E2E_SSM_COMMAND_LINE"] = str(command_line_capture)
     environment["E2E_SSM_DELIVERY_TIMEOUT"] = str(delivery_timeout_capture)
     return environment, command_capture
 
@@ -161,7 +165,9 @@ def test_remote_command_pins_the_requested_revision(fake_aws):
 
     assert result.returncode == 0, result.stderr
     ssm_parameters = Path(environment["E2E_SSM_PARAMETERS"]).read_text(encoding="utf-8")
-    assert "executionTimeout=75" in ssm_parameters
+    assert "executionTimeout=735" in ssm_parameters
+    ssm_command_line = Path(environment["E2E_SSM_COMMAND_LINE"]).read_text(encoding="utf-8")
+    assert "| timeout --signal=TERM --kill-after=600s 75s bash" in ssm_command_line
     assert Path(environment["E2E_SSM_DELIVERY_TIMEOUT"]).read_text(encoding="utf-8") == "120"
     remote_command = base64.b64decode(command_capture.read_text(encoding="utf-8")).decode("utf-8")
     syntax_check = subprocess.run(
