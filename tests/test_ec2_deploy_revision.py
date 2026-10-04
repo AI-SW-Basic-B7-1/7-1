@@ -133,7 +133,7 @@ def test_deploy_logs_revision_for_the_root_owned_safe_directory():
     assert 'git -c safe.directory="${PROJECT_DIR}" -C "${PROJECT_DIR}" rev-parse HEAD' in ec2_source
 
 
-def test_remote_command_pins_the_requested_revision(fake_aws):
+def test_remote_command_pins_the_requested_revision(tmp_path: Path, fake_aws):
     """원격 checkout 명령에 지정한 SHA와 브랜치 포함 검증을 전달합니다."""
     environment, command_capture = fake_aws
     environment["B7_1_E2E_PRESERVE_CHAT_MARKER"] = "e2e_preserve_123_1"
@@ -192,10 +192,41 @@ def test_remote_command_pins_the_requested_revision(fake_aws):
         remote_command.partition("rollback_remote_state() {")[2]
         .partition("trap rollback_remote_state EXIT")[0]
     )
+    assert 'deploy_pid="${!:-}"' in rollback_trap
     assert 'wait "$deploy_pid" || true' in rollback_trap
     assert rollback_trap.index('wait "$deploy_pid" || true') < rollback_trap.index(
         "git -c safe.directory="
     )
+    rollback_function = (
+        "rollback_remote_state() {"
+        + remote_command.partition("rollback_remote_state() {")[2].partition("\n}\n")[0]
+        + "\n}"
+    )
+    rollback_probe = "\n".join(
+        [
+            "set -u",
+            "deploy_pid=''",
+            "previous_revision=''",
+            'env_temp="$TEST_ENV_TEMP"',
+            "env_backup=''",
+            "env_written=0",
+            rollback_function,
+            "set +e",
+            "false",
+            "rollback_remote_state",
+        ]
+    )
+    rollback_environment = os.environ.copy()
+    rollback_environment["TEST_ENV_TEMP"] = str(tmp_path / "not-created")
+    rollback_result = subprocess.run(
+        [shutil.which("bash") or "bash", "-c", rollback_probe],
+        env=rollback_environment,
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+    assert rollback_result.returncode == 1
+    assert "unbound variable" not in rollback_result.stderr
     deploy_launch = remote_command.index(
         "bash /home/ubuntu/app/B7-1/7-1/scripts/ec2/deploy_ec2.sh &"
     )

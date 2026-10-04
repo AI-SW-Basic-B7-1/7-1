@@ -246,7 +246,7 @@ remote_command="$(
     printf '  local current_revision=""\n'
     printf '  trap - EXIT\n'
     printf '  set +e\n'
-    printf '  if [[ -z ${deploy_pid:-} ]]; then deploy_pid="$!"; fi\n'
+    printf '  if [[ -z ${deploy_pid:-} ]]; then deploy_pid="${!:-}"; fi\n'
     printf '  if [[ -n ${deploy_pid:-} ]]; then wait "$deploy_pid" || true; fi\n'
     printf '  rm -f -- "$env_temp"\n'
     printf '  if [[ $result -ne 0 ]]; then\n'
