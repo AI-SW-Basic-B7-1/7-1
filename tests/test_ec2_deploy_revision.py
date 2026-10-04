@@ -104,6 +104,17 @@ def test_after_start_requires_db_preservation_handshake_before_aws(fake_aws):
     assert not command_capture.exists()
 
 
+def test_ubuntu_deploy_installs_aws_cli_from_official_script():
+    """Ubuntu 배포에서 저장소에 없는 awscli 패키지 대신 AWS 공식 설치기를 사용합니다."""
+    deploy_source = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    ec2_source = (PROJECT_ROOT / "scripts/ec2/deploy_ec2.sh").read_text(encoding="utf-8")
+
+    assert "DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl" in deploy_source
+    assert "curl -fsSL https://awscli.amazonaws.com/v2/install.sh | bash -s -- --system" in deploy_source
+    assert "apt-get install -y awscli" not in deploy_source
+    assert "apt-get install -y awscli" not in ec2_source
+
+
 def test_remote_command_pins_the_requested_revision(fake_aws):
     """원격 checkout 명령에 지정한 SHA와 브랜치 포함 검증을 전달합니다."""
     environment, command_capture = fake_aws

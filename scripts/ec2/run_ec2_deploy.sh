@@ -311,7 +311,11 @@ remote_command="$(
     printf '[[ -d %s ]] || { echo %q; exit 1; }\n' "${project_dir_q}" '애플리케이션 경로가 없습니다.'
     printf 'install -d -m 700 -o root -g root %s\n' "${backup_root_q}"
     printf 'if [[ -f %s/.env && -z $env_backup ]]; then save_env_backup; fi\n' "${project_dir_q}"
-    printf 'if ! command -v aws >/dev/null 2>&1; then apt-get update; DEBIAN_FRONTEND=noninteractive apt-get install -y awscli; fi\n'
+    printf 'if ! command -v aws >/dev/null 2>&1; then\n'
+    printf '  apt-get update\n'
+    printf '  DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl\n'
+    printf '  curl -fsSL https://awscli.amazonaws.com/v2/install.sh | bash -s -- --system\n'
+    printf 'fi\n'
     printf 'env_temp=$(mktemp %s/.env.XXXXXXXX)\n' "${project_dir_q}"
     printf 'aws --region %s ssm get-parameter --name %s --with-decryption --query Parameter.Value --output text > "$env_temp"\n' "${region_q}" "${secret_parameter_q}"
     printf '[[ -s "$env_temp" ]] || { echo %q; exit 1; }\n' 'SecureString 값이 비어 있습니다.'
