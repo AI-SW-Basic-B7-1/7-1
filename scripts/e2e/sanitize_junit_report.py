@@ -1,6 +1,7 @@
 """JUnit XML의 자격 증명·원시 출력·불필요한 속성을 정리합니다."""
 
 import argparse
+import ast
 import os
 import re
 import sys
@@ -15,6 +16,13 @@ PATTERNS = (
     re.compile(r"(?i)(AIza)[A-Za-z0-9_-]{20,}"),
     re.compile(r"(?i)(password|username|access_token|api_key|secret_key)(['\"]?\s*[:=]\s*['\"]?)([^\s,'\"}]+)"),
 )
+REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
+FAILURE_LOCATION_PATTERN = re.compile(
+    r'(?m)^\s*File\s+["\'][^"\']*(?P<path>tests[\\/]e2e[\\/][A-Za-z0-9_.-]+\.py)["\']\s*,\s*line\s+(?P<line>\d+)\s*,\s*in\s+(?P<function>test_[A-Za-z0-9_]+)\s*$'
+)
+PYTEST_FAILURE_LOCATION_PATTERN = re.compile(
+    r'(?m)^\s*(?P<path>tests[\\/]e2e[\\/][A-Za-z0-9_.-]+\.py):(?P<line>\d+):\s*[A-Za-z_][A-Za-z0-9_.]*(?:Error|Exception)\s*$'
+)
 
 
 def redact(value: str, secrets: list[str]) -> str:
@@ -25,6 +33,48 @@ def redact(value: str, secrets: list[str]) -> str:
     value = PATTERNS[1].sub("[JWT REDACTED]", value)
     value = PATTERNS[2].sub(r"\1[REDACTED]", value)
     return PATTERNS[3].sub(r"\1\2[REDACTED]", value)
+
+
+def _validated_failure_location(path: str, line: str, test_name: str) -> tuple[str, str] | None:
+    """저장소 테스트 파일과 테스트 함수 안의 유효한 줄 번호인지 확인합니다."""
+    normalized_path = path.replace("\\", "/")
+    if not re.fullmatch(r"tests/e2e/[A-Za-z0-9_.-]+\.py", normalized_path):
+        return None
+    expected_function = test_name.split("[", 1)[0]
+    if not re.fullmatch(r"test_[A-Za-z0-9_]+", expected_function):
+        return None
+    try:
+        line_number = int(line)
+        source_path = (REPOSITORY_ROOT / normalized_path).resolve()
+        source_path.relative_to(REPOSITORY_ROOT)
+        source = source_path.read_text(encoding="utf-8")
+        syntax_tree = ast.parse(source)
+    except (OSError, RuntimeError, SyntaxError, ValueError):
+        return None
+    if not any(
+        isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name == expected_function
+        and node.lineno <= line_number <= getattr(node, "end_lineno", node.lineno)
+        for node in ast.walk(syntax_tree)
+    ):
+        return None
+    return normalized_path, str(line_number)
+
+
+def _failure_location(detail: str, test_name: str) -> tuple[str, str] | None:
+    """Python traceback 또는 pytest 실패 위치에서 검증된 위치만 추출합니다."""
+    expected_function = test_name.split("[", 1)[0]
+    for pattern in (FAILURE_LOCATION_PATTERN, PYTEST_FAILURE_LOCATION_PATTERN):
+        for match in pattern.finditer(detail):
+            function = match.groupdict().get("function")
+            if function and function != expected_function:
+                continue
+            location = _validated_failure_location(
+                match.group("path"), match.group("line"), test_name
+            )
+            if location:
+                return location
+    return None
 
 
 def sanitize_report(path: Path, secrets: list[str]) -> int:
@@ -43,15 +93,28 @@ def sanitize_report(path: Path, secrets: list[str]) -> int:
             for prop in list(child):
                 if prop.attrib.get("name") != "e2e_scenario":
                     child.remove(prop)
-    for node in root.iter():
-        if node.tag in {"failure", "error"}:
+    for testcase in root.iter("testcase"):
+        for node in (*testcase.findall("failure"), *testcase.findall("error")):
             detail = node.attrib.get("message", "") + "\n" + (node.text or "")
             last_line = next((line.strip() for line in reversed(detail.splitlines()) if line.strip()), "")
             exception = re.match(r"(?:E\s+)?([A-Za-z_][A-Za-z0-9_.]*(?:Error|Exception))(?::|$)", last_line)
             node.attrib["message"] = exception.group(1).rsplit(".", 1)[-1] if exception else "실패 상세 보호됨"
+            location = _validated_failure_location(
+                node.attrib.get("source_file", ""),
+                node.attrib.get("source_line", ""),
+                testcase.attrib.get("name", ""),
+            ) or _failure_location(detail, testcase.attrib.get("name", ""))
+            if location:
+                node.attrib["source_file"], node.attrib["source_line"] = location
+            else:
+                node.attrib.pop("source_file", None)
+                node.attrib.pop("source_line", None)
             node.text = "실패 세부 내용은 민감정보 보호를 위해 제거했습니다."
+            if location:
+                node.text += f" 검증 위치: {location[0]}:{location[1]}"
             for child in list(node):
                 node.remove(child)
+    for node in root.iter():
         if node.text:
             node.text = redact(node.text, secrets)
         if node.tail:

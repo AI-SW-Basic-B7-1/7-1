@@ -84,6 +84,84 @@ def test_junit_sanitizer_removes_credentials_tokens_and_raw_output(tmp_path):
     assert 'name="e2e_scenario" value="F01"' in output
 
 
+def test_junit_sanitizer_keeps_only_relative_failure_location(tmp_path):
+    """Python traceback의 실패 위치만 보존하고 절대 경로와 상세를 지웁니다."""
+    report = tmp_path / "failure-location.xml"
+    report.write_text(
+        '<testsuites><testsuite><testcase name="test_a02_expired_token_clears_session_and_preserves_draft[chromium]">'
+        '<failure message="AssertionError: password=private-password">'
+        'Traceback (most recent call last):\n'
+        '  File "/home/runner/work/7-1/7-1/tests/e2e/test_api_scenarios.py", line 343, '
+        'in test_a02_expired_token_clears_session_and_preserves_draft\n'
+        'AssertionError: access_token=private-token'
+        '</failure></testcase></testsuite></testsuites>',
+        encoding="utf-8",
+    )
+
+    sanitize_report(report, ["private-password", "private-token"])
+    sanitize_report(report, ["private-password", "private-token"])
+    output = report.read_text(encoding="utf-8")
+
+    assert "tests/e2e/test_api_scenarios.py:343" in output
+    assert "/home/runner" not in output
+    assert "private-password" not in output
+    assert "private-token" not in output
+    assert "AssertionError: access_token=" not in output
+
+
+def test_junit_sanitizer_rejects_fake_failure_location(tmp_path):
+    """원문 속 가짜 파일 경로가 검증 위치로 남지 않는지 확인합니다."""
+    report = tmp_path / "fake-location.xml"
+    report.write_text(
+        '<testsuites><testsuite><testcase name="test_a02_expired_token_clears_session_and_preserves_draft[chromium]">'
+        '<failure message="AI answer contains tests/e2e/private-answer-fragment.py:42">'
+        'Traceback (most recent call last):\n'
+        '  File "/tmp/tests/e2e/private-answer-fragment.py", line 42, '
+        'in test_a02_expired_token_clears_session_and_preserves_draft\n'
+        'AI answer contains tests/e2e/private-answer-fragment.py:42'
+        '</failure>'
+        '<error message="AssertionError">'
+        'Traceback (most recent call last):\n'
+        '  File "/tmp/tests/e2e/test_api_scenarios.py", line 9999, '
+        'in test_a02_expired_token_clears_session_and_preserves_draft\n'
+        'AssertionError'
+        '</error></testcase></testsuite></testsuites>',
+        encoding="utf-8",
+    )
+
+    sanitize_report(report, [])
+    output = report.read_text(encoding="utf-8")
+
+    assert "private-answer-fragment.py" not in output
+    assert 'source_file="tests/e2e/private-answer-fragment.py"' not in output
+    assert 'source_file="tests/e2e/test_api_scenarios.py"' not in output
+    assert 'source_line="9999"' not in output
+    assert "/tmp/" not in output
+    assert "검증 위치:" not in output
+
+
+def test_junit_sanitizer_reads_pytest_failure_location(tmp_path):
+    """pytest JUnit의 파일·줄·예외 형식에서 실제 실패 위치를 보존합니다."""
+    report = tmp_path / "pytest-failure-location.xml"
+    report.write_text(
+        '<testsuites><testsuite><testcase name="test_a02_expired_token_clears_session_and_preserves_draft[chromium]">'
+        '<failure message="assert response.status == 401">'
+        '&gt;       assert response.status == 401\n'
+        'E       assert 200 == 401\n\n'
+        'tests/e2e/test_api_scenarios.py:343: AssertionError'
+        '</failure></testcase></testsuite></testsuites>',
+        encoding="utf-8",
+    )
+
+    sanitize_report(report, [])
+    output = report.read_text(encoding="utf-8")
+
+    assert 'source_file="tests/e2e/test_api_scenarios.py"' in output
+    assert 'source_line="343"' in output
+    assert "검증 위치: tests/e2e/test_api_scenarios.py:343" in output
+    assert "assert 200 == 401" not in output
+
+
 def test_junit_sanitizer_replaces_malformed_report_with_safe_failure(tmp_path):
     """정리할 수 없는 보고서 원문이 남지 않도록 안전한 실패 파일로 바꿉니다."""
     report = tmp_path / "truncated.xml"
