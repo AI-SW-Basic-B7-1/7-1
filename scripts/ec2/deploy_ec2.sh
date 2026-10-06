@@ -59,8 +59,10 @@ LOGROTATE_POLICY_EXISTED=0
 ROLLBACK_CONFIG_RETAINED=0
 ROLLBACK_CONFIG_DIR=""
 B7_1_E2E_FAILPOINT="${B7_1_E2E_FAILPOINT:-}"
+B7_1_E2E_OPERATION_LOCKED="${B7_1_E2E_OPERATION_LOCKED:-0}"
 B7_1_E2E_PRESERVE_CHAT_MARKER="${B7_1_E2E_PRESERVE_CHAT_MARKER:-}"
 B7_1_E2E_READY_MARKER="${B7_1_E2E_READY_MARKER:-}"
+B7_1_E2E_READY_TIMEOUT_SECONDS="${B7_1_E2E_READY_TIMEOUT_SECONDS:-300}"
 E2E_FAULT_INJECTION_REACHED=0
 ERROR_OUTPUT_EMITTED=0
 
@@ -84,6 +86,15 @@ fail() {
 }
 
 [[ "$(id -u)" -eq 0 ]] || fail '이 스크립트는 root 권한으로 실행해야 합니다.'
+if [[ -e /etc/b7-1/e2e-test-instance || -L /etc/b7-1/e2e-test-instance ]]; then
+    [[ -f /etc/b7-1/e2e-test-instance && ! -L /etc/b7-1/e2e-test-instance ]] || fail '테스트 EC2 표식이 안전하지 않습니다.'
+    [[ "$(stat -c '%U:%a' /etc/b7-1/e2e-test-instance)" == 'root:600' ]] || fail '테스트 EC2 표식의 소유자 또는 권한이 올바르지 않습니다.'
+    if [[ "${B7_1_E2E_OPERATION_LOCKED}" != 1 ]]; then
+        exec 8>/run/lock/b7-1-e2e-operation.lock
+        flock -n 8 || fail '배포 또는 다른 E2E 작업이 실행 중입니다.'
+    fi
+    [[ ! -e /var/lib/b7-1/e2e/active-run && ! -L /var/lib/b7-1/e2e/active-run ]] || fail 'E2E 장애 시험이 활성 상태라 직접 배포를 시작할 수 없습니다.'
+fi
 case "${B7_1_E2E_FAILPOINT}" in
     '') ;;
     before-start|after-start)
@@ -92,6 +103,7 @@ case "${B7_1_E2E_FAILPOINT}" in
         if [[ "${B7_1_E2E_FAILPOINT}" == after-start ]]; then
             [[ "${B7_1_E2E_PRESERVE_CHAT_MARKER}" =~ ^[A-Za-z0-9_-]{1,120}$ ]] || fail '기동 후 실패 주입에는 검증용 채팅 표식이 필요합니다.'
             [[ "${B7_1_E2E_READY_MARKER}" =~ ^/run/b7-1-e2e-ready-[A-Za-z0-9_-]{1,80}$ ]] || fail '기동 후 실패 주입 준비 표식 경로가 올바르지 않습니다.'
+            [[ "${B7_1_E2E_READY_TIMEOUT_SECONDS}" =~ ^[1-9][0-9]{0,3}$ ]] && (( 10#${B7_1_E2E_READY_TIMEOUT_SECONDS} <= 1800 )) || fail '기동 후 대기 제한 시간이 올바르지 않습니다.'
             rm -f -- "${B7_1_E2E_READY_MARKER}"
         fi
         ;;
@@ -411,6 +423,9 @@ on_exit() {
             if [[ "${B7_1_E2E_FAILPOINT}" == after-start ]]; then
                 preserve_count="$(sqlite3 -readonly "${DB_PATH}" "SELECT count(*) FROM chat_logs WHERE instr(question, '${B7_1_E2E_PRESERVE_CHAT_MARKER}') > 0;" 2>/dev/null || true)"
                 [[ "${preserve_count}" =~ ^[1-9][0-9]*$ ]] || rollback_verified=0
+                if [[ "${result}" =~ ^(124|143)$ && "${preserve_count}" =~ ^[1-9][0-9]*$ && "$(cat "${B7_1_E2E_READY_MARKER}" 2>/dev/null || true)" == ready ]]; then
+                    printf 'E2E_COOPERATIVE_TIMEOUT_REACHED=after-start wait_seconds=%s\n' "${B7_1_E2E_READY_TIMEOUT_SECONDS}" >&3
+                fi
             fi
             if [[ "${rollback_verified}" -eq 1 ]]; then
                 printf 'E2E_ROLLBACK_COMPLETE=1\n' >&3
@@ -819,7 +834,7 @@ run_cmd 'Cron 재시작' systemctl restart cron
 if [[ "${B7_1_E2E_FAILPOINT}" == after-start ]]; then
     install -o root -g root -m 600 /dev/null "${B7_1_E2E_READY_MARKER}"
     printf 'ready\n' > "${B7_1_E2E_READY_MARKER}"
-    for attempt in $(seq 1 300); do
+    for attempt in $(seq 1 "${B7_1_E2E_READY_TIMEOUT_SECONDS}"); do
         preserve_count="$(sqlite3 -readonly "${DB_PATH}" "SELECT count(*) FROM chat_logs WHERE instr(question, '${B7_1_E2E_PRESERVE_CHAT_MARKER}') > 0;" 2>/dev/null || true)"
         ready_state="$(cat "${B7_1_E2E_READY_MARKER}" 2>/dev/null || true)"
         if [[ "${preserve_count}" =~ ^[1-9][0-9]*$ && "${ready_state}" == ack ]]; then

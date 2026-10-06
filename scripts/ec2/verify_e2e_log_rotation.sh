@@ -12,6 +12,7 @@ APP_LOG_DIR="${APP_LOG_DIR:-${PROJECT_DIR}/logs}"
 NGINX_LOG_DIR="${NGINX_LOG_DIR:-/var/log/nginx/b7-1}"
 LOGROTATE_FILE="${LOGROTATE_FILE:-/etc/logrotate.d/b7-1}"
 VERIFY_CHAT_REQUEST_ID="${VERIFY_CHAT_REQUEST_ID:-}"
+EXPECTED_INSTANCE_ID="${EXPECTED_INSTANCE_ID:-}"
 
 [[ "$(id -u)" -eq 0 ]] || { printf '%s\n' 'root 권한이 필요합니다.' >&2; exit 1; }
 [[ -f /etc/b7-1/e2e-test-instance && ! -L /etc/b7-1/e2e-test-instance ]] || {
@@ -20,6 +21,17 @@ VERIFY_CHAT_REQUEST_ID="${VERIFY_CHAT_REQUEST_ID:-}"
 }
 [[ "$(stat -c '%U:%a' /etc/b7-1/e2e-test-instance)" == 'root:600' ]] || {
     printf '%s\n' '테스트 EC2 표시 파일은 root 소유 600 권한이어야 합니다.' >&2
+    exit 1
+}
+[[ "${EXPECTED_INSTANCE_ID}" =~ ^i-[0-9a-f]{17}$ ]] || {
+    printf '%s\n' '기대 테스트 EC2 ID가 올바르지 않습니다.' >&2
+    exit 1
+}
+metadata_token="$(curl -fsS --connect-timeout 2 -X PUT -H 'X-aws-ec2-metadata-token-ttl-seconds: 60' http://169.254.169.254/latest/api/token 2>/dev/null || true)"
+actual_instance="$(curl -fsS --connect-timeout 2 -H "X-aws-ec2-metadata-token: ${metadata_token}" http://169.254.169.254/latest/meta-data/instance-id 2>/dev/null || true)"
+unset metadata_token
+[[ "${actual_instance}" == "${EXPECTED_INSTANCE_ID}" ]] || {
+    printf '%s\n' '현재 인스턴스가 지정 테스트 EC2와 다릅니다.' >&2
     exit 1
 }
 [[ "${VERIFY_BASE_URL}" =~ ^https://([A-Za-z0-9.-]+)(:443)?$ ]] || {
@@ -150,6 +162,23 @@ assert_probe_not_logged() {
     fi
 }
 
+assert_sensitive_fields_not_logged() {
+    local files=()
+    local compressed=()
+
+    shopt -s nullglob
+    files=("${APP_LOG_DIR}"/app.log "${APP_LOG_DIR}"/app.log.[0-9]* "${NGINX_LOG_DIR}"/nginx_access.log "${NGINX_LOG_DIR}"/nginx_access.log.[0-9]*)
+    compressed=("${APP_LOG_DIR}"/app.log*.gz "${NGINX_LOG_DIR}"/nginx_access.log*.gz)
+    if (( ${#files[@]} > 0 )) && grep -hEi 'Bearer[[:space:]]+[A-Za-z0-9._~+/=-]{16,}|eyJ[A-Za-z0-9_-]{12,}\.[A-Za-z0-9_-]{12,}\.[A-Za-z0-9_-]{12,}|AIza[A-Za-z0-9_-]{20,}|(password|access_token|x-goog-api-key|secret_key|question|answer)=[^[:space:]]+' "${files[@]}" >/dev/null 2>&1; then
+        printf '%s\n' '로그에서 비밀값 또는 대화 원문 형태를 발견했습니다.' >&2
+        return 1
+    fi
+    if (( ${#compressed[@]} > 0 )) && zgrep -hEi 'Bearer[[:space:]]+[A-Za-z0-9._~+/=-]{16,}|eyJ[A-Za-z0-9_-]{12,}\.[A-Za-z0-9_-]{12,}\.[A-Za-z0-9_-]{12,}|AIza[A-Za-z0-9_-]{20,}|(password|access_token|x-goog-api-key|secret_key|question|answer)=[^[:space:]]+' "${compressed[@]}" >/dev/null 2>&1; then
+        printf '%s\n' '압축 로그에서 비밀값 또는 대화 원문 형태를 발견했습니다.' >&2
+        return 1
+    fi
+}
+
 before_probe="b7_1_rotation_before_$(openssl rand -hex 16)"
 if [[ -n "${VERIFY_CHAT_REQUEST_ID}" ]]; then
     assert_chat_events "${VERIFY_CHAT_REQUEST_ID}"
@@ -167,5 +196,6 @@ after_id="$(request_id_for_probe "${after_probe}" after)"
 assert_request_logs "${after_id}" "${APP_LOG_DIR}/app.log" "${NGINX_LOG_DIR}/nginx_access.log"
 assert_probe_not_logged "${before_probe}"
 assert_probe_not_logged "${after_probe}"
+assert_sensitive_fields_not_logged
 
 printf '%s\n' '로그 회전 검증 완료: 회전 전후 앱·Nginx 요청 ID 연결, 쿼리 비기록 확인'

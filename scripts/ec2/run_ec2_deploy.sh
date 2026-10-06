@@ -23,6 +23,7 @@ FAILURE_INJECTION=""
 REQUIRE_E2E_TEST_INSTANCE=0
 E2E_PRESERVE_CHAT_MARKER="${B7_1_E2E_PRESERVE_CHAT_MARKER:-}"
 E2E_READY_MARKER="${B7_1_E2E_READY_MARKER:-}"
+E2E_READY_TIMEOUT_SECONDS="${B7_1_E2E_READY_TIMEOUT_SECONDS:-300}"
 WAIT_SECONDS="${WAIT_SECONDS:-900}"
 # 원격 작업은 먼저 협조적으로 중단해 롤백하고, SSM 강제 종료 전에 충분한 시간을 둡니다.
 SSM_DELIVERY_TIMEOUT_SECONDS=120
@@ -158,6 +159,7 @@ done
 }
 [[ -z "${DEPLOY_REVISION}" || "${DEPLOY_REVISION}" =~ ^[0-9a-fA-F]{40}$ ]] || fail '--revision은 40자리 Git SHA여야 합니다.'
 [[ -z "${FAILURE_INJECTION}" || "${FAILURE_INJECTION}" == before-start || "${FAILURE_INJECTION}" == after-start ]] || fail '--failure-injection은 before-start 또는 after-start여야 합니다.'
+[[ "${E2E_READY_TIMEOUT_SECONDS}" =~ ^[1-9][0-9]{0,3}$ ]] && (( 10#${E2E_READY_TIMEOUT_SECONDS} <= 1800 )) || fail 'B7_1_E2E_READY_TIMEOUT_SECONDS는 1~1800 사이의 정수여야 합니다.'
 if [[ "${FAILURE_INJECTION}" == after-start ]]; then
     [[ "${E2E_PRESERVE_CHAT_MARKER}" =~ ^[A-Za-z0-9_-]{1,120}$ ]] || fail '기동 후 실패 시험에는 DB 저장 확인용 B7_1_E2E_PRESERVE_CHAT_MARKER 환경변수가 필요합니다.'
     [[ "${E2E_READY_MARKER}" =~ ^/run/b7-1-e2e-ready-[A-Za-z0-9_-]{1,80}$ ]] || fail '기동 후 실패 시험에는 /run/b7-1-e2e-ready-* 형식의 B7_1_E2E_READY_MARKER 환경변수가 필요합니다.'
@@ -234,6 +236,15 @@ remote_command="$(
         printf '[[ -f /etc/b7-1/e2e-test-instance && ! -L /etc/b7-1/e2e-test-instance ]] || { echo %q; exit 1; }\n' '테스트 EC2 표식이 없습니다.'
         printf '[[ "$(stat -c '\''%%U:%%a'\'' /etc/b7-1/e2e-test-instance)" == '\''root:600'\'' ]] || { echo %q; exit 1; }\n' '테스트 EC2 표식의 소유자 또는 권한이 올바르지 않습니다.'
     fi
+    printf 'operation_lock_held=0\n'
+    printf 'if [[ -e /etc/b7-1/e2e-test-instance || -L /etc/b7-1/e2e-test-instance ]]; then\n'
+    printf '  [[ -f /etc/b7-1/e2e-test-instance && ! -L /etc/b7-1/e2e-test-instance ]] || { echo %q; exit 1; }\n' '테스트 EC2 표식이 안전하지 않습니다.'
+    printf '  [[ "$(stat -c '\''%%U:%%a'\'' /etc/b7-1/e2e-test-instance)" == '\''root:600'\'' ]] || { echo %q; exit 1; }\n' '테스트 EC2 표식의 소유자 또는 권한이 올바르지 않습니다.'
+    printf '  exec 9>/run/lock/b7-1-e2e-operation.lock\n'
+    printf '  flock -n 9 || { echo %q; exit 1; }\n' '배포 또는 다른 E2E 작업이 실행 중입니다.'
+    printf '  [[ ! -e /var/lib/b7-1/e2e/active-run && ! -L /var/lib/b7-1/e2e/active-run ]] || { echo %q; exit 1; }\n' 'E2E 장애 시험이 활성 상태라 배포를 시작할 수 없습니다.'
+    printf '  operation_lock_held=1\n'
+    printf 'fi\n'
     printf "previous_revision=''\n"
     printf "previous_branch=''\n"
     printf "env_backup=''\n"
@@ -336,9 +347,9 @@ remote_command="$(
     printf "env_temp=''\n"
     printf 'env_written=1\n'
     printf '[[ -f %s/requirements.txt ]] || { echo %q; exit 1; }\n' "${project_dir_q}" 'requirements.txt가 프로젝트 경로에 없습니다.'
-    printf 'APP_USER=%s PROJECT_DIR=%s LOG_DIR=%q RUN_TESTS=%q PREVIOUS_REVISION="$previous_revision" PREVIOUS_BRANCH="$previous_branch" ENV_BACKUP_PATH="$env_backup" B7_1_E2E_FAILPOINT=%q B7_1_E2E_PRESERVE_CHAT_MARKER=%q B7_1_E2E_READY_MARKER=%q bash %s &\n' \
+    printf 'APP_USER=%s PROJECT_DIR=%s LOG_DIR=%q RUN_TESTS=%q PREVIOUS_REVISION="$previous_revision" PREVIOUS_BRANCH="$previous_branch" ENV_BACKUP_PATH="$env_backup" B7_1_E2E_OPERATION_LOCKED="$operation_lock_held" B7_1_E2E_FAILPOINT=%q B7_1_E2E_PRESERVE_CHAT_MARKER=%q B7_1_E2E_READY_MARKER=%q B7_1_E2E_READY_TIMEOUT_SECONDS=%q bash %s &\n' \
         "${app_user_q}" "${project_dir_q}" '/var/log/b7-1' "${RUN_TESTS}" "${FAILURE_INJECTION}" \
-        "${E2E_PRESERVE_CHAT_MARKER}" "${E2E_READY_MARKER}" "${deploy_script_q}"
+        "${E2E_PRESERVE_CHAT_MARKER}" "${E2E_READY_MARKER}" "${E2E_READY_TIMEOUT_SECONDS}" "${deploy_script_q}"
     printf 'deploy_pid=$!\n'
     printf 'wait "$deploy_pid"\n'
     printf "deploy_pid=''\n"
