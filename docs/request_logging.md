@@ -55,7 +55,6 @@ tail -f logs/app.log
 
 운영체제별 로그 검증 스크립트 정비는 이슈 #17의 별도 작업으로 남습니다.
 
-<<<<<<< HEAD
 ## EC2 배포와 로그 설정
 
 `scripts/ec2/deploy_ec2.sh`는 기본 사이트와 서비스 설정을 작성한 뒤
@@ -111,7 +110,7 @@ venv/bin/python -m pytest tests/test_ec2_logging_config.py -q
 
 참고: [Nginx 로그 재열기](https://nginx.org/en/docs/control.html),
 [logrotate 공식 매뉴얼](https://github.com/logrotate/logrotate/blob/main/logrotate.8.in).
-=======
+
 ## EC2 점검
 
 프로젝트 루트에서 다음 명령을 실행합니다. 서비스 설정 변경·재시작·고의 장애는
@@ -126,9 +125,18 @@ sudo bash scripts/ec2/check_error_logging.sh
 확인하므로 통과 메시지가 모든 장애 로그 검증 완료를 의미하지는 않습니다.
 `PROJECT_DIR`, `LOG_DIR`, `BASE_URL`, `SERVICE_NAME`으로 환경을 지정할 수 있습니다.
 
-현재 저장소의 `deploy_ec2.sh`는 표준 출력을 journal로 설정합니다.
-서버에 별도 적용한 설정이 있다면 스크립트가 출력한 `StandardOutput`과
-`StandardError`를 기준으로 판단합니다. 로그가 journal에만 있다고 장애는 아닙니다.
+`deploy_ec2.sh`의 기본 서비스 파일에는 journal 설정이 있지만, 이어서 설치하는
+`90-b7-1-logging.conf` 드롭인이 이를 덮어씁니다. 배포 완료 후의 유효 설정은
+`StandardOutput=append`, `StandardError=inherit`이며 표준 출력과 오류는
+`logs/server.log`에 기록됩니다. 앱 이벤트는 `logs/app.log`에도 기록되므로
+두 파일에 중복될 수 있습니다. 기존 journal 기록은 이동하지 않으며, Systemd의
+서비스 시작·종료 기록은 계속 journal에서 확인할 수 있습니다.
+이전 배포나 수동 설정 서버는 실제 출력 설정을 먼저 확인합니다. 현재 배포를 적용한
+뒤에도 출력이 journal이면 로그 드롭인의 적용 여부를 점검해야 합니다.
+
+실제 EC2 회전과 기록 지속 확인 절차는
+[배포 매뉴얼의 로그 회전 검증](ec2_deployment_manual.md#85-실제-ec2-로그-회전-검증)을 따릅니다.
+로컬 대역 테스트 통과만으로 실제 서버 검증을 완료 처리하지 않습니다.
 
 실제 장애가 재발하면 발생 시각과 `X-Request-ID`를 확보한 뒤 제한된 터미널에서
 `logs/app.log`와 회전 로그를 확인합니다. 같은 요청의 오류 이벤트 바로 다음에
@@ -136,4 +144,3 @@ sudo bash scripts/ec2/check_error_logging.sh
 서비스 출력이 journal이면 `sudo journalctl -u chatbot.service -n 100 --no-pager`로,
 파일이면 `logs/server.log`로 확인합니다. 운영 서버에서 DB 잠금이나 권한 변경으로
 고의 장애를 만들지 않습니다.
->>>>>>> develop
