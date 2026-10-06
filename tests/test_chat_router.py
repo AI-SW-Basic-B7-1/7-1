@@ -7,11 +7,63 @@ import aiosqlite
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from app.ai_service import AITimeoutError
+from app.ai_service import AIServiceError, AITimeoutError
 from app.auth import create_access_token
-from app.database import get_db, get_db_connection, init_db
+from app.database import ConversationAccessError, get_db, get_db_connection, init_db
 from app.main import app
 from app.routers import chat_router
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("path", ["/api/chat", "/api/me/chats"])
+async def test_database_connection_failure_returns_safe_500(chat_client, tmp_path, path):
+    """열 수 없는 DB 경로의 연결 실패가 안전한 오류 응답으로 변환됩니다."""
+    original_dependency = app.dependency_overrides[get_db]
+
+    async def unavailable_database():
+        """파일 대신 디렉터리를 열어 운영체제와 무관하게 연결 실패를 재현합니다."""
+        connection = await get_db_connection(tmp_path)
+        try:
+            yield connection
+        finally:
+            await connection.close()
+
+    app.dependency_overrides[get_db] = unavailable_database
+    try:
+        kwargs = {"json": {"question": "질문"}} if path == "/api/chat" else {}
+        response = await chat_client.request(
+            "POST" if path == "/api/chat" else "GET", path,
+            headers=authorization_header("user_one"), **kwargs,
+        )
+        assert response.status_code == 500
+        assert response.json() == {"detail": "서버 내부 오류가 발생했습니다."}
+        assert response.headers["X-Request-ID"]
+    finally:
+        app.dependency_overrides[get_db] = original_dependency
+
+    assert (await chat_client.get(
+        "/api/me/chats", headers=authorization_header("user_one"),
+    )).status_code == 200
+
+
+@pytest.mark.anyio
+async def test_history_query_failure_returns_safe_500(chat_client, monkeypatch):
+    """대화 이력 조회 실패를 숨김없이 기록하되 응답에 내부 정보를 노출하지 않습니다."""
+    async def fail_query(*args, **kwargs):
+        """조회 중 발생한 DB 오류를 재현합니다."""
+        raise aiosqlite.OperationalError("노출 금지 테이블 정보")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(chat_router, "get_chat_logs_by_user", fail_query)
+        response = await chat_client.get(
+            "/api/me/chats", headers=authorization_header("user_one"),
+        )
+    assert response.status_code == 500
+    assert response.json() == {"detail": "서버 내부 오류가 발생했습니다."}
+    assert response.headers["X-Request-ID"]
+    assert (await chat_client.get(
+        "/api/me/chats", headers=authorization_header("user_one"),
+    )).status_code == 200
 
 
 @pytest.fixture
@@ -182,3 +234,47 @@ async def test_db_failure_returns_500_without_stopping_server(
     assert response.json() == {"detail": "대화 기록을 저장하지 못했습니다."}
     assert health.status_code == 200
     assert error_log.call_args.args[0] == "db_save_failed user_id=%s error=%s"
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "target,error_type,expected_status,expected_detail",
+    [
+        ("generate_chat_response", AIServiceError, 502,
+         "AI 응답을 생성하지 못했습니다. 잠시 후 다시 시도해 주세요."),
+        ("generate_chat_response", RuntimeError, 500, "서버 내부 오류가 발생했습니다."),
+        ("generate_chat_response", ValueError, 500, "서버 내부 오류가 발생했습니다."),
+        ("save_chat_log", ConversationAccessError, 404,
+         "접근할 수 있는 대화방을 찾지 못했습니다."),
+        ("save_chat_log", ValueError, 500, "서버 내부 오류가 발생했습니다."),
+        ("conversation_belongs_to_user", RuntimeError, 500,
+         "서버 내부 오류가 발생했습니다."),
+        ("conversation_belongs_to_user", aiosqlite.DatabaseError, 500,
+         "대화 기록을 불러오지 못했습니다."),
+    ],
+)
+async def test_error_classification_and_safe_response(
+    chat_client, monkeypatch, target, error_type, expected_status, expected_detail,
+):
+    """오류를 정확히 분류하고 내부 정보 노출 없이 후속 요청을 처리합니다."""
+    async def raise_error(*args, **kwargs):
+        """응답에 노출되면 안 되는 내부 오류를 재현합니다."""
+        raise error_type("노출 금지 내부 정보")
+
+    monkeypatch.setattr(chat_router, target, raise_error)
+    payload = {"question": "오류 분류 질문"}
+    if target == "conversation_belongs_to_user":
+        payload["conversation_id"] = 1
+
+    response = await chat_client.post(
+        "/api/chat", headers=authorization_header("user_one"), json=payload,
+    )
+
+    assert response.status_code == expected_status
+    assert response.json() == {"detail": expected_detail}
+    assert response.headers["X-Request-ID"]
+    history = await chat_client.get(
+        "/api/me/chats", headers=authorization_header("user_one"),
+    )
+    assert history.json() == []
+    assert (await chat_client.get("/api/health")).status_code == 200

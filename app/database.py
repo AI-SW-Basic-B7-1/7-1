@@ -8,6 +8,10 @@ import aiosqlite
 from app.config import settings
 
 
+class ConversationAccessError(Exception):
+    """사용자가 접근할 수 없는 대화방에 저장을 시도한 경우의 예외."""
+
+
 def get_database_path() -> Path:
     """환경설정의 DATABASE_URL에서 SQLite DB 파일 경로를 반환합니다."""
     database_url = settings.DATABASE_URL
@@ -261,7 +265,7 @@ async def save_chat_log(
             if not await conversation_belongs_to_user(
                 connection, conversation_id, user_id
             ):
-                raise ValueError("접근할 수 있는 대화방을 찾지 못했습니다.")
+                raise ConversationAccessError("접근할 수 있는 대화방을 찾지 못했습니다.")
 
         cursor = await connection.execute(
             """

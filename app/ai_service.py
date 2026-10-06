@@ -8,8 +8,10 @@ from app.config import settings
 class AITimeoutError(Exception):
     """AI API가 제한 시간 안에 응답하지 못한 경우의 예외."""
 
+
 class AIServiceError(Exception):
     """AI API 호출에 실패한 경우의 예외."""
+
 
 async def generate_chat_response(
     question: str,
@@ -79,16 +81,17 @@ async def generate_chat_response(
             "Gemini API 네트워크 요청에 실패했습니다."
         ) from exc
 
-  
     try:
         data = response.json()
         answer = data["candidates"][0]["content"]["parts"][0]["text"]
     except (ValueError, KeyError, IndexError, TypeError) as exc:
-        raise ValueError(
+        raise AIServiceError(
             "Gemini 응답 형식이 올바르지 않습니다."
         ) from exc
 
+    if not isinstance(answer, str):
+        raise AIServiceError("Gemini 응답 형식이 올바르지 않습니다.")
     if not answer.strip():
-        raise ValueError("Gemini 응답이 비어 있습니다.")
+        raise AIServiceError("Gemini 응답이 비어 있습니다.")
 
     return answer.strip()

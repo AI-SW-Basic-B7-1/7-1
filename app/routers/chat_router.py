@@ -5,9 +5,10 @@ from time import perf_counter
 import aiosqlite
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 
-from app.ai_service import AITimeoutError, generate_chat_response
+from app.ai_service import AIServiceError, AITimeoutError, generate_chat_response
 from app.auth import get_current_user
 from app.database import (
+    ConversationAccessError,
     conversation_belongs_to_user,
     get_chat_logs_by_user,
     get_db,
@@ -40,7 +41,7 @@ async def chat_router_status() -> dict[str, str]:
         401: {"description": "미인증 또는 유효하지 않은 토큰", "model": ErrorDetailResponse},
         404: {"description": "접근할 수 없는 대화방", "model": ErrorDetailResponse},
         422: {"description": "질문 길이 또는 형식 오류", "model": ErrorDetailResponse},
-        500: {"description": "DB 저장 오류", "model": ErrorDetailResponse},
+        500: {"description": "DB 처리 또는 내부 서버 오류", "model": ErrorDetailResponse},
         502: {"description": "AI 서비스 오류", "model": ErrorDetailResponse},
         504: {"description": "AI 응답 지연 타임아웃", "model": ErrorDetailResponse},
     },
@@ -76,7 +77,7 @@ async def send_chat_message(
             history = await get_recent_chat_logs_by_conversation(db, conversation_id)
     except HTTPException:
         raise
-    except Exception as exc:
+    except aiosqlite.Error as exc:
         chat_logger.error("db_read_failed user_id=%s error=%s", user_id, exc, exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -93,7 +94,7 @@ async def send_chat_message(
             status_code=status.HTTP_504_GATEWAY_TIMEOUT,
             detail="현재 AI 응답이 지연되고 있습니다. 잠시 후 다시 시도해 주세요.",
         ) from exc
-    except Exception as exc:
+    except AIServiceError as exc:
         chat_logger.error("ai_call_failed request_id=%s error=%s", log_request_id, exc, exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
@@ -109,12 +110,12 @@ async def send_chat_message(
         chat_log_id, saved_conversation_id = await save_chat_log(
             db, user_id, question, answer, latency_ms, conversation_id
         )
-    except ValueError as exc:
+    except ConversationAccessError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(exc),
+            detail="접근할 수 있는 대화방을 찾지 못했습니다.",
         ) from exc
-    except Exception as exc:
+    except aiosqlite.Error as exc:
         chat_logger.error("db_save_failed user_id=%s error=%s", user_id, exc, exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

@@ -1,15 +1,18 @@
 """공통 예외 처리와 표준 로거 구성 회귀 테스트 모듈."""
 
 import logging
+import io
 from logging.handlers import RotatingFileHandler
 from unittest.mock import Mock
 
 import pytest
 from fastapi import FastAPI
+from fastapi.exceptions import RequestValidationError
 from starlette.requests import Request
 
 from app.exception_handlers import ExceptionHandlerRegistrar
-from app.logger import app_logger, chat_logger
+from app.logger import SensitiveDataFormatter, app_logger, chat_logger
+from app.config import settings
 
 
 def test_standard_logger_has_console_and_file_handlers():
@@ -17,6 +20,76 @@ def test_standard_logger_has_console_and_file_handlers():
     assert any(type(handler) is logging.StreamHandler for handler in app_logger.handlers)
     assert any(isinstance(handler, RotatingFileHandler) for handler in app_logger.handlers)
     assert chat_logger.parent is app_logger
+
+
+@pytest.mark.parametrize(
+    "error,expected",
+    [
+        (
+            {"type": "string_too_short", "loc": ("body", "username")},
+            "아이디는 최소 3자 이상이어야 합니다.",
+        ),
+        (
+            {
+                "type": "value_error",
+                "loc": ("body", "username"),
+                "ctx": {"error": ValueError("아이디는 공백일 수 없습니다.")},
+            },
+            "아이디는 공백일 수 없습니다.",
+        ),
+        (
+            {
+                "type": "value_error",
+                "loc": ("body", "unknown"),
+                "ctx": {"error": ValueError("외부에 노출하면 안 되는 입력값")},
+            },
+            "요청 데이터 형식이 올바르지 않습니다.",
+        ),
+    ],
+)
+def test_validation_detail_uses_only_allowed_messages(error, expected):
+    """알려진 검증 오류만 구체화하고 임의 오류 내용은 외부에 노출하지 않습니다."""
+    registrar = ExceptionHandlerRegistrar(FastAPI())
+    validation_error = RequestValidationError([error])
+
+    assert registrar._get_validation_detail(validation_error) == expected
+
+
+def test_formatter_redacts_message_and_chained_traceback(monkeypatch):
+    """콘솔·파일 포맷에서 비밀값을 가리고 예외 종류와 호출 경로는 유지합니다."""
+    monkeypatch.setattr(settings, "SECRET_KEY", "test-signing-secret")
+    monkeypatch.setattr(settings, "GEMINI_API_KEY", "test-provider-secret")
+    output = io.StringIO()
+    handler = logging.StreamHandler(output)
+    handler.setFormatter(SensitiveDataFormatter("%(message)s"))
+    logger = logging.Logger("redaction-test")
+    logger.addHandler(handler)
+    try:
+        try:
+            raise ValueError("test-provider-secret Bearer private-token password='private password'")
+        except ValueError as exc:
+            raise RuntimeError('test-signing-secret {"access_token": "private-access"}') from exc
+    except RuntimeError:
+        logger.exception("test-provider-secret api_key=private-key request_id=trace-id")
+    finally:
+        handler.close()
+    text = output.getvalue()
+    for secret in (
+        "test-signing-secret", "test-provider-secret", "private-token",
+        "private password", "private-access", "private-key",
+    ):
+        assert secret not in text
+    assert "Traceback" in text
+    assert "ValueError" in text
+    assert "RuntimeError" in text
+    assert "request_id=trace-id" in text
+    assert "[REDACTED]" in text
+    configured_handlers = [
+        handler for handler in app_logger.handlers
+        if type(handler) is logging.StreamHandler or isinstance(handler, RotatingFileHandler)
+    ]
+    assert len(configured_handlers) == 2
+    assert all(isinstance(handler.formatter, SensitiveDataFormatter) for handler in configured_handlers)
 
 
 @pytest.mark.anyio
