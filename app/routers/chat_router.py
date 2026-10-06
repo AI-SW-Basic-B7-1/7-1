@@ -3,10 +3,11 @@
 from time import perf_counter
 
 import aiosqlite
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
 
 from app.ai_service import AIServiceError, AITimeoutError, generate_chat_response
 from app.auth import get_current_user
+from app.config import settings
 from app.database import (
     ConversationAccessError,
     conversation_belongs_to_user,
@@ -15,12 +16,41 @@ from app.database import (
     get_recent_chat_logs_by_conversation,
     save_chat_log,
 )
+from app.jev_service import JevServiceError, judge_answer
 from app.logger import chat_logger
 from app.models import UserInDB
 from app.schemas import ChatLogItem, ChatRequest, ChatResponse, ErrorDetailResponse
 
 
 router = APIRouter(prefix="/api", tags=["chat"])
+
+
+async def log_jev_decision(question: str, history: list, answer: str, request_id: str) -> None:
+    """저장된 Gemini 답변을 응답과 독립적으로 판정하고 결과만 기록합니다."""
+    started_at = perf_counter()
+    try:
+        decision = await judge_answer(question, history, answer)
+    except JevServiceError as exc:
+        error_type = exc.error_type
+    except Exception:
+        # 부가 판정 계층의 예기치 않은 오류도 원래 답변을 막지 않습니다.
+        error_type = "unexpected"
+    else:
+        chat_logger.info(
+            "jev_decision request_id=%s action=%s confidence=%.3f latency_ms=%s model=%s",
+            request_id,
+            decision.action,
+            decision.confidence,
+            max(0, round((perf_counter() - started_at) * 1000)),
+            decision.model,
+        )
+        return
+    chat_logger.warning(
+        "jev_failed request_id=%s error_type=%s latency_ms=%s",
+        request_id,
+        error_type,
+        max(0, round((perf_counter() - started_at) * 1000)),
+    )
 
 
 @router.get("/chat/status", summary="채팅 라우터 연결 상태 확인")
@@ -49,6 +79,7 @@ async def chat_router_status() -> dict[str, str]:
 async def send_chat_message(
     chat_request: ChatRequest,
     request: Request,
+    background_tasks: BackgroundTasks,
     current_user: UserInDB = Depends(get_current_user),
     db: aiosqlite.Connection = Depends(get_db),
 ) -> ChatResponse:
@@ -123,6 +154,8 @@ async def send_chat_message(
         ) from exc
 
     chat_logger.info("db_save_success user_id=%s chat_id=%s", user_id, chat_log_id)
+    if settings.JEV_MODE == "shadow":
+        background_tasks.add_task(log_jev_decision, question, history, answer, log_request_id)
     return ChatResponse(
         conversation_id=saved_conversation_id,
         answer=answer,
