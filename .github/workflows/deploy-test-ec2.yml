@@ -1,197 +1,424 @@
-name: 테스트 EC2 배포 및 브라우저 E2E
+name: 테스트 EC2 배포 및 실제 HTTPS E2E
 
 on:
   workflow_dispatch:
     inputs:
       branch:
-        description: 배포 대상 원격 브랜치
+        description: 고정 배포 브랜치
         required: true
-        default: develop
+        default: feat/auth-ec2-ko
         type: string
       revision:
-        description: 브랜치에서 검증할 정확한 40자리 커밋 SHA
+        description: 배포할 후보 커밋의 정확한 40자리 SHA
         required: true
         type: string
 
 permissions:
   contents: read
 
+concurrency:
+  group: b7-1-test-ec2-${{ vars.E2E_EC2_INSTANCE_ID }}
+  cancel-in-progress: false
+
 jobs:
   deploy-and-verify:
-    name: 지정 SHA를 테스트 EC2에 배포하고 HTTPS E2E 실행
+    name: 고정 SHA 배포·장애 복구·운영 E2E
     environment: e2e
     runs-on: ubuntu-latest
+    timeout-minutes: 360
     permissions:
       contents: read
       id-token: write
     env:
-      AWS_REGION: ${{ vars.E2E_AWS_REGION }}
-      AWS_ROLE_ARN: ${{ vars.E2E_AWS_ROLE_ARN }}
-      EC2_INSTANCE_ID: ${{ vars.E2E_EC2_INSTANCE_ID }}
+      E2E_AWS_REGION: ${{ vars.E2E_AWS_REGION }}
+      E2E_AWS_ROLE_ARN: ${{ vars.E2E_AWS_ROLE_ARN }}
+      E2E_EC2_INSTANCE_ID: ${{ vars.E2E_EC2_INSTANCE_ID }}
       E2E_SECRET_PARAMETER: ${{ vars.E2E_SECRET_PARAMETER }}
       E2E_BASE_URL: ${{ vars.E2E_BASE_URL }}
+      E2E_DEPLOY_BRANCH: feat/auth-ec2-ko
+      E2E_BASELINE_SHA: 2bb7da6bb9337d3177b4ddd3d929c867173a2f5d
+      E2E_DEPLOY_REVISION: ${{ inputs.revision }}
+      E2E_RUN_ID: ${{ github.run_id }}_${{ github.run_attempt }}
+      E2E_MODE: deployment
+      E2E_REPORT_DIR: .artifacts/e2e
+      E2E_STATE_FILE: .artifacts/e2e/state.json
+      E2E_EVIDENCE_FILE: .artifacts/e2e/evidence.jsonl
+      E2E_SSM_COMMAND_ID_FILE: .artifacts/e2e/ssm-command-ids.txt
+      E2E_GEMINI_RATE_LIMIT_FILE: .artifacts/e2e/gemini-rate-limit.txt
+      E2E_MIN_GEMINI_INTERVAL_SECONDS: "5"
+      E2E_CONTEXT_EXPECTED_FILE: .artifacts/e2e/context-expected.json
+      E2E_PRESERVED_REQUEST_ID_FILE: .artifacts/e2e/preserved-chat-request-id.txt
+
     steps:
-      - name: 저장소의 지정 SHA 확인
+      - name: 후보 SHA 저장소 확인
         uses: actions/checkout@v4
         with:
           ref: ${{ inputs.revision }}
           fetch-depth: 0
-      - name: 배포 대상을 확인
+
+      - name: 실행 ref·기준 A·후보 B·대상 환경 검증
         env:
-          DEPLOY_BRANCH: ${{ inputs.branch }}
-          DEPLOY_REVISION: ${{ inputs.revision }}
+          REQUESTED_BRANCH: ${{ inputs.branch }}
+          REQUESTED_REVISION: ${{ inputs.revision }}
         run: |
           set -euo pipefail
-          [[ "$DEPLOY_REVISION" =~ ^[0-9a-fA-F]{40}$ ]]
-          test "$(git rev-parse HEAD)" = "$(printf '%s' "$DEPLOY_REVISION" | tr '[:upper:]' '[:lower:]')"
-          git fetch origin "$DEPLOY_BRANCH"
-          git merge-base --is-ancestor "$DEPLOY_REVISION" "origin/$DEPLOY_BRANCH"
-          test -n "$AWS_REGION"
-          test -n "$AWS_ROLE_ARN"
-          test -n "$EC2_INSTANCE_ID"
-          test -n "$E2E_SECRET_PARAMETER"
-          test -n "$E2E_BASE_URL"
+          test "$GITHUB_REF" = "refs/heads/feat/auth-ec2-ko"
+          test "$REQUESTED_BRANCH" = "feat/auth-ec2-ko"
+          [[ "$REQUESTED_REVISION" =~ ^[0-9a-fA-F]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$(printf '%s' "$REQUESTED_REVISION" | tr '[:upper:]' '[:lower:]')"
+          git fetch origin feat/auth-ec2-ko
+          git merge-base --is-ancestor "$E2E_BASELINE_SHA" origin/feat/auth-ec2-ko
+          git merge-base --is-ancestor "$REQUESTED_REVISION" origin/feat/auth-ec2-ko
+          test "$E2E_BASELINE_SHA" != "$REQUESTED_REVISION"
+          test "$E2E_AWS_REGION" = ap-northeast-2
+          [[ "$E2E_EC2_INSTANCE_ID" =~ ^i-[0-9a-f]{17}$ ]]
+          [[ "$E2E_SECRET_PARAMETER" == /b7-1/e2e/environment ]]
           [[ "$E2E_BASE_URL" =~ ^https://[A-Za-z0-9.-]+(:443)?/?$ ]]
-      - name: Python 설치
+          mkdir -p .artifacts/e2e
+          printf 'E2E_RUN_METADATA {"run_id":"%s","baseline_sha":"%s","candidate_sha":"%s","branch":"%s","instance_id":"%s","base_url":"%s"}\n' \
+            "$E2E_RUN_ID" "$E2E_BASELINE_SHA" "$REQUESTED_REVISION" "$E2E_DEPLOY_BRANCH" "$E2E_EC2_INSTANCE_ID" "$E2E_BASE_URL" \
+            > .artifacts/e2e/run-metadata.jsonl
+
+      - name: Python 브라우저 의존성 설치
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: 브라우저 테스트 의존성 설치
+      - name: Playwright 의존성 설치
         run: python -m pip install -r requirements-e2e.txt
       - name: Chromium 설치
         run: python -m playwright install --with-deps chromium
-      - name: 복구 후에도 재사용할 임시 E2E 계정 생성
+
+      - name: 실행 중에도 재사용할 임시 계정 준비
         run: |
+          set -euo pipefail
           password="E2e_$(openssl rand -hex 12)a1"
           echo "::add-mask::$password"
-          printf 'E2E_ACCOUNT_USERNAME=e2e_%s_%s\n' "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" >> "$GITHUB_ENV"
+          printf 'E2E_ACCOUNT_USERNAME=e2e_%s\n' "$E2E_RUN_ID" >> "$GITHUB_ENV"
           printf 'E2E_ACCOUNT_PASSWORD=%s\n' "$password" >> "$GITHUB_ENV"
-          printf 'E2E_REQUEST_ID_FILE=%s/e2e-request-id.txt\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
-          printf 'E2E_PRESERVED_REQUEST_ID_FILE=%s/e2e-preserved-chat-request-id.txt\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
-      - name: GitHub OIDC로 AWS 단기 자격 획득
+
+      - name: GitHub OIDC 역할 자격 획득
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ env.AWS_ROLE_ARN }}
-          aws-region: ${{ env.AWS_REGION }}
-      - name: 고정 SHA를 SSM으로 배포
-        env:
-          DEPLOY_BRANCH: ${{ inputs.branch }}
-          DEPLOY_REVISION: ${{ inputs.revision }}
-        run: bash scripts/ec2/run_ec2_deploy.sh --instance-id "$EC2_INSTANCE_ID" --region "$AWS_REGION" --branch "$DEPLOY_BRANCH" --revision "$DEPLOY_REVISION" --secret-parameter "$E2E_SECRET_PARAMETER" --require-e2e-test-instance
-      - name: HTTPS 브라우저 통합 테스트
-        run: |
-          mkdir -p .artifacts/e2e
-          python -m pytest -q tests/e2e --browser chromium --output=.artifacts/e2e --junitxml=.artifacts/e2e/report.xml
-      - name: 기동 전 실패를 주입해 DB와 이전 서비스 복구 확인
-        env:
-          DEPLOY_BRANCH: ${{ inputs.branch }}
-          DEPLOY_REVISION: ${{ inputs.revision }}
+          role-to-assume: ${{ env.E2E_AWS_ROLE_ARN }}
+          aws-region: ${{ env.E2E_AWS_REGION }}
+
+      - name: G4a OIDC·SSM·전용 서버·환경·기본 도구 준비
         run: |
           set -euo pipefail
-          output_file="$(mktemp)"
-          if bash scripts/ec2/run_ec2_deploy.sh --instance-id "$EC2_INSTANCE_ID" --region "$AWS_REGION" --branch "$DEPLOY_BRANCH" --revision "$DEPLOY_REVISION" --secret-parameter "$E2E_SECRET_PARAMETER" --failure-injection before-start --require-e2e-test-instance >"$output_file" 2>&1; then
-            cat "$output_file"
-            echo '기동 전 실패 주입 배포가 예상과 달리 성공했습니다.' >&2
-            exit 1
-          fi
-          grep -Fq 'E2E_FAULT_INJECTION_REACHED=before-start' "$output_file" || { cat "$output_file"; exit 1; }
-          grep -Fq 'E2E_ROLLBACK_COMPLETE=1' "$output_file" || { cat "$output_file"; exit 1; }
-      - name: 기동 전 롤백 뒤 로그인과 기존 기록 확인
+          caller_arn="$(aws sts get-caller-identity --query Arn --output text)"
+          [[ "$caller_arn" == *":assumed-role/ptrip-test-e2e-github-actions/"* ]]
+          bash scripts/e2e/send_ssm_script.sh scripts/ec2/e2e_instance_preflight.sh
+
+      - name: 기준 A 배포 전 AWS OIDC 자격 갱신
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.E2E_AWS_ROLE_ARN }}
+          aws-region: ${{ env.E2E_AWS_REGION }}
+
+      - name: G4a 기준 A 정상 배포로 서버 기준 상태 준비
         env:
-          E2E_EXISTING_ACCOUNT: "1"
-        run: python -m pytest -q tests/e2e --browser chromium --output=.artifacts/e2e --junitxml=.artifacts/e2e/before-start-recovery.xml
-      - name: 기동 후 실패를 주입해 새 DB 보존과 설정 복구 확인
-        timeout-minutes: 20
-        env:
-          DEPLOY_BRANCH: ${{ inputs.branch }}
-          DEPLOY_REVISION: ${{ inputs.revision }}
-          B7_1_E2E_PRESERVE_CHAT_MARKER: e2e_preserve_${{ github.run_id }}_${{ github.run_attempt }}
-          B7_1_E2E_READY_MARKER: /run/b7-1-e2e-ready-${{ github.run_id }}-${{ github.run_attempt }}
+          AWS_REGION: ${{ env.E2E_AWS_REGION }}
         run: |
           set -euo pipefail
-          output_file="$(mktemp)"
-          bash scripts/ec2/run_ec2_deploy.sh --instance-id "$EC2_INSTANCE_ID" --region "$AWS_REGION" --branch "$DEPLOY_BRANCH" --revision "$DEPLOY_REVISION" --secret-parameter "$E2E_SECRET_PARAMETER" --failure-injection after-start --require-e2e-test-instance >"$output_file" 2>&1 &
-          deploy_pid=$!
-          remote_ready_command="for attempt in \$(seq 1 330); do if [[ -f '$B7_1_E2E_READY_MARKER' ]] && [[ \$(cat '$B7_1_E2E_READY_MARKER') == ready ]]; then printf '%s\\n' E2E_AFTER_START_READY; exit 0; fi; sleep 1; done; exit 1"
-          ready_parameters="$(jq -cn --arg command "$remote_ready_command" '{commands: [$command]}')"
-          ready_command_id="$(aws ssm send-command --region "$AWS_REGION" --document-name AWS-RunShellScript --instance-ids "$EC2_INSTANCE_ID" --parameters "$ready_parameters" --timeout-seconds 360 --query 'Command.CommandId' --output text)"
-          wait_ssm_command() {
-            local command_id="$1"
-            local deadline=$((SECONDS + 360))
-            local status='Pending'
-            while (( SECONDS < deadline )); do
-              status="$(aws ssm get-command-invocation --region "$AWS_REGION" --command-id "$command_id" --instance-id "$EC2_INSTANCE_ID" --query Status --output text 2>/dev/null || true)"
-              case "$status" in
-                Success) return 0 ;;
-                Failed|Cancelled|TimedOut) break ;;
-              esac
-              sleep 3
-            done
-            aws ssm get-command-invocation --region "$AWS_REGION" --command-id "$command_id" --instance-id "$EC2_INSTANCE_ID" --query '{status:Status,stdout:StandardOutputContent,stderr:StandardErrorContent}' --output json || true
-            return 1
-          }
-          if ! wait_ssm_command "$ready_command_id"; then
-            wait "$deploy_pid" || true
-            cat "$output_file"
-            echo '기동 후 브라우저 쓰기 대기 상태를 확인하지 못했습니다.' >&2
-            exit 1
-          fi
-          if E2E_EXISTING_ACCOUNT=1 E2E_PRESERVE_CHAT_MARKER="$B7_1_E2E_PRESERVE_CHAT_MARKER" E2E_REQUEST_ID_FILE="$E2E_PRESERVED_REQUEST_ID_FILE" python -m pytest -q tests/e2e --browser chromium --output=.artifacts/e2e --junitxml=.artifacts/e2e/after-start-recovery.xml; then
-            handshake_value=ack
-          else
-            handshake_value=abort
-          fi
-          remote_handshake_command="[[ -f '$B7_1_E2E_READY_MARKER' ]] && printf '%s\\n' '$handshake_value' > '$B7_1_E2E_READY_MARKER'"
-          handshake_parameters="$(jq -cn --arg command "$remote_handshake_command" '{commands: [$command]}')"
-          handshake_command_id="$(aws ssm send-command --region "$AWS_REGION" --document-name AWS-RunShellScript --instance-ids "$EC2_INSTANCE_ID" --parameters "$handshake_parameters" --timeout-seconds 60 --query 'Command.CommandId' --output text)"
-          if ! wait_ssm_command "$handshake_command_id"; then
-            wait "$deploy_pid" || true
-            cat "$output_file"
-            echo '기동 후 DB 보존 시험 완료 신호를 전달하지 못했습니다.' >&2
-            exit 1
-          fi
-          if wait "$deploy_pid"; then
-            cat "$output_file"
-            echo '기동 후 실패 주입 배포가 예상과 달리 성공했습니다.' >&2
-            exit 1
-          fi
-          grep -Fq 'E2E_FAULT_INJECTION_REACHED=after-start' "$output_file" || { cat "$output_file"; exit 1; }
-          grep -Fq 'E2E_ROLLBACK_COMPLETE=1' "$output_file" || { cat "$output_file"; exit 1; }
-          [[ "$handshake_value" == ack ]] || { cat "$output_file"; exit 1; }
-      - name: 기동 후 롤백 뒤 로그인과 보존 기록 확인
+          bash scripts/ec2/run_ec2_deploy.sh \
+            --instance-id "$E2E_EC2_INSTANCE_ID" \
+            --region "$E2E_AWS_REGION" \
+            --branch "$E2E_DEPLOY_BRANCH" \
+            --revision "$E2E_BASELINE_SHA" \
+            --secret-parameter "$E2E_SECRET_PARAMETER" \
+            --require-e2e-test-instance
+          actual="$(E2E_SSM_TIMEOUT_SECONDS=120 bash scripts/e2e/run_ssm_command.sh \
+            'git -c safe.directory=/home/ubuntu/app/B7-1/7-1 -C /home/ubuntu/app/B7-1/7-1 rev-parse HEAD')"
+          test "$actual" = "$E2E_BASELINE_SHA"
+
+      - name: 후보 B 배포 전 AWS OIDC 자격 갱신
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.E2E_AWS_ROLE_ARN }}
+          aws-region: ${{ env.E2E_AWS_REGION }}
+
+      - name: G4b 후보 B 정확한 SHA 배포
         env:
-          E2E_EXISTING_ACCOUNT: "1"
-        run: python -m pytest -q tests/e2e --browser chromium --output=.artifacts/e2e --junitxml=.artifacts/e2e/after-rollback-recovery.xml
-      - name: 채팅 로그 이벤트 및 로그 회전 전후 요청 추적 검증
+          AWS_REGION: ${{ env.E2E_AWS_REGION }}
         run: |
           set -euo pipefail
-          request_id="$(<"$E2E_PRESERVED_REQUEST_ID_FILE")"
+          bash scripts/ec2/run_ec2_deploy.sh \
+            --instance-id "$E2E_EC2_INSTANCE_ID" \
+            --region "$E2E_AWS_REGION" \
+            --branch "$E2E_DEPLOY_BRANCH" \
+            --revision "$E2E_DEPLOY_REVISION" \
+            --secret-parameter "$E2E_SECRET_PARAMETER" \
+            --require-e2e-test-instance
+          actual="$(E2E_SSM_TIMEOUT_SECONDS=120 bash scripts/e2e/run_ssm_command.sh \
+            'git -c safe.directory=/home/ubuntu/app/B7-1/7-1 -C /home/ubuntu/app/B7-1/7-1 rev-parse HEAD')"
+          test "$actual" = "$E2E_DEPLOY_REVISION"
+
+      - name: G5 정상·인증·입력·화면·격리 시나리오
+        run: |
+          set -euo pipefail
+          bash scripts/e2e/run_browser_suite.sh G5-normal.xml \
+            A01 A03 A04 A05 I01 I02 I03 N01 N02 N03 N04 O01 V01 V02
+
+      - name: JWT 만료 A02 및 복원 F05
+        uses: ./.github/actions/e2e-fault-phase
+        with:
+          mode: jwt-expiry
+          scenario: A02
+          region: ${{ env.E2E_AWS_REGION }}
+          instance-id: ${{ env.E2E_EC2_INSTANCE_ID }}
+          role-arn: ${{ env.E2E_AWS_ROLE_ARN }}
+
+      - name: Gemini upstream 502 F01 및 복원 F05
+        uses: ./.github/actions/e2e-fault-phase
+        with:
+          mode: gemini-error
+          scenario: F01
+          region: ${{ env.E2E_AWS_REGION }}
+          instance-id: ${{ env.E2E_EC2_INSTANCE_ID }}
+          role-arn: ${{ env.E2E_AWS_ROLE_ARN }}
+
+      - name: 지연 HTTPS proxy 504 F02 및 복원 F05
+        uses: ./.github/actions/e2e-fault-phase
+        with:
+          mode: proxy-timeout
+          scenario: F02
+          region: ${{ env.E2E_AWS_REGION }}
+          instance-id: ${{ env.E2E_EC2_INSTANCE_ID }}
+          role-arn: ${{ env.E2E_AWS_ROLE_ARN }}
+
+      - name: SQLite 읽기 거부 500 F03 및 복원 F05
+        uses: ./.github/actions/e2e-fault-phase
+        with:
+          mode: db-read
+          scenario: F03
+          region: ${{ env.E2E_AWS_REGION }}
+          instance-id: ${{ env.E2E_EC2_INSTANCE_ID }}
+          role-arn: ${{ env.E2E_AWS_ROLE_ARN }}
+
+      - name: SQLite 저장 거부 500 F04 및 복원 F05
+        uses: ./.github/actions/e2e-fault-phase
+        with:
+          mode: db-write
+          scenario: F04
+          region: ${{ env.E2E_AWS_REGION }}
+          instance-id: ${{ env.E2E_EC2_INSTANCE_ID }}
+          role-arn: ${{ env.E2E_AWS_ROLE_ARN }}
+
+      - name: 실제 outbound 문맥 I04 및 복원 F05
+        uses: ./.github/actions/e2e-fault-phase
+        with:
+          mode: observe-context
+          scenario: I04
+          region: ${{ env.E2E_AWS_REGION }}
+          instance-id: ${{ env.E2E_EC2_INSTANCE_ID }}
+          role-arn: ${{ env.E2E_AWS_ROLE_ARN }}
+
+      - name: R01 시험 전 AWS OIDC 자격 갱신
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.E2E_AWS_ROLE_ARN }}
+          aws-region: ${{ env.E2E_AWS_REGION }}
+
+      - name: G7 후보 B before-start 롤백 전 기준 A 복원
+        env:
+          AWS_REGION: ${{ env.E2E_AWS_REGION }}
+        run: |
+          set -euo pipefail
+          bash scripts/ec2/run_ec2_deploy.sh \
+            --instance-id "$E2E_EC2_INSTANCE_ID" \
+            --region "$E2E_AWS_REGION" \
+            --branch "$E2E_DEPLOY_BRANCH" \
+            --revision "$E2E_BASELINE_SHA" \
+            --secret-parameter "$E2E_SECRET_PARAMETER" \
+            --require-e2e-test-instance
+          actual="$(E2E_SSM_TIMEOUT_SECONDS=120 bash scripts/e2e/run_ssm_command.sh \
+            'git -c safe.directory=/home/ubuntu/app/B7-1/7-1 -C /home/ubuntu/app/B7-1/7-1 rev-parse HEAD')"
+          test "$actual" = "$E2E_BASELINE_SHA"
+          E2E_SSM_TIMEOUT_SECONDS=120 bash scripts/e2e/run_ssm_command.sh \
+            'systemctl is-active --quiet chatbot.service && curl -fsS --max-time 5 http://127.0.0.1:8000/api/health >/dev/null'
+
+      - name: G7 R01 before-start 롤백과 기준 기록 보존
+        env:
+          AWS_REGION: ${{ env.E2E_AWS_REGION }}
+        run: bash scripts/e2e/run_before_start_rollback.sh
+
+      - name: R02 시험 전 AWS OIDC 자격 갱신
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.E2E_AWS_ROLE_ARN }}
+          aws-region: ${{ env.E2E_AWS_REGION }}
+
+      - name: G7 R02 after-start 저장 handshake와 기록 보존
+        env:
+          AWS_REGION: ${{ env.E2E_AWS_REGION }}
+          B7_1_E2E_PRESERVE_CHAT_MARKER: e2e_preserve_${{ github.run_id }}_${{ github.run_attempt }}_r02
+          B7_1_E2E_READY_MARKER: /run/b7-1-e2e-ready-${{ github.run_id }}-${{ github.run_attempt }}-r02
+        run: |
+          set -euo pipefail
+          E2E_ROLLBACK_MODE=after-start bash scripts/e2e/run_after_start_rollback.sh
+
+      - name: R03 시험 전 AWS OIDC 자격 갱신
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.E2E_AWS_ROLE_ARN }}
+          aws-region: ${{ env.E2E_AWS_REGION }}
+
+      - name: G7 R03 협조적 시간 초과 뒤 내부 롤백 확인
+        env:
+          AWS_REGION: ${{ env.E2E_AWS_REGION }}
+          B7_1_E2E_PRESERVE_CHAT_MARKER: e2e_preserve_${{ github.run_id }}_${{ github.run_attempt }}_r03
+          B7_1_E2E_READY_MARKER: /run/b7-1-e2e-ready-${{ github.run_id }}-${{ github.run_attempt }}-r03
+        run: |
+          set -euo pipefail
+          E2E_ROLLBACK_MODE=timeout bash scripts/e2e/run_after_start_rollback.sh
+
+      - name: 최종 B 배포 전 AWS OIDC 자격 갱신
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.E2E_AWS_ROLE_ARN }}
+          aws-region: ${{ env.E2E_AWS_REGION }}
+
+      - name: G8 후보 B 최종 정상 배포
+        env:
+          AWS_REGION: ${{ env.E2E_AWS_REGION }}
+        run: |
+          set -euo pipefail
+          bash scripts/ec2/run_ec2_deploy.sh \
+            --instance-id "$E2E_EC2_INSTANCE_ID" \
+            --region "$E2E_AWS_REGION" \
+            --branch "$E2E_DEPLOY_BRANCH" \
+            --revision "$E2E_DEPLOY_REVISION" \
+            --secret-parameter "$E2E_SECRET_PARAMETER" \
+            --require-e2e-test-instance
+          actual="$(E2E_SSM_TIMEOUT_SECONDS=120 bash scripts/e2e/run_ssm_command.sh \
+            'git -c safe.directory=/home/ubuntu/app/B7-1/7-1 -C /home/ubuntu/app/B7-1/7-1 rev-parse HEAD')"
+          test "$actual" = "$E2E_DEPLOY_REVISION"
+
+      - name: G8 R04 최종 B에서 실제 Gemini·DB 기록 검증
+        run: |
+          set -euo pipefail
+          E2E_EXISTING_ACCOUNT=1 E2E_SCENARIO_ALIAS=R04 \
+            bash scripts/e2e/run_browser_suite.sh R04-final.xml F05 R04
+
+      - name: O02 검사 전 AWS OIDC 자격 갱신
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.E2E_AWS_ROLE_ARN }}
+          aws-region: ${{ env.E2E_AWS_REGION }}
+
+      - name: O02 외부 파일·포트 노출 검사
+        run: |
+          set -euo pipefail
+          python scripts/e2e/check_public_surface.py "$E2E_BASE_URL"
+          remote='set -eu; listener="$(ss -ltn sport = :8000 | awk "NR > 1 {print \$4}")"; test "$listener" = 127.0.0.1:8000; printf "%s\\n" E2E_INTERNAL_API_BINDING=loopback'
+          E2E_SSM_TIMEOUT_SECONDS=120 bash scripts/e2e/run_ssm_command.sh "bash -c $(printf '%q' "$remote")"
+          printf '{"scenario_id":"O02","status":"passed"}\n' >> .artifacts/e2e/operations.jsonl
+
+      - name: O03 검사 전 AWS OIDC 자격 갱신
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.E2E_AWS_ROLE_ARN }}
+          aws-region: ${{ env.E2E_AWS_REGION }}
+
+      - name: O03 요청별 오류·성공 이벤트와 민감값 비기록 검사
+        run: |
+          set -euo pipefail
+          bash scripts/e2e/verify_deployment_logs.sh
+          printf '{"scenario_id":"O03","status":"passed"}\n' >> .artifacts/e2e/operations.jsonl
+
+      - name: O04 검사 전 AWS OIDC 자격 갱신
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.E2E_AWS_ROLE_ARN }}
+          aws-region: ${{ env.E2E_AWS_REGION }}
+
+      - name: O04 실제 로그 회전 전후 요청 연결 검사
+        run: |
+          set -euo pipefail
+          request_id="$(<.artifacts/e2e/preserved-chat-request-id.txt)"
           [[ "$request_id" =~ ^[[:xdigit:]]{8}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{12}$ ]]
-          base_url_q="$(printf '%q' "$E2E_BASE_URL")"
-          request_id_q="$(printf '%q' "$request_id")"
-          remote_command="set -Eeuo pipefail; project_dir=\$(systemctl show chatbot.service -p WorkingDirectory --value); [[ -n \"\$project_dir\" ]]; PROJECT_DIR=\"\$project_dir\" VERIFY_BASE_URL=${base_url_q} VERIFY_CHAT_REQUEST_ID=${request_id_q} bash \"\$project_dir/scripts/ec2/verify_e2e_log_rotation.sh\""
-          parameters="$(jq -cn --arg command "$remote_command" '{commands: [$command]}')"
-          command_id="$(aws ssm send-command --region "$AWS_REGION" --document-name AWS-RunShellScript --instance-ids "$EC2_INSTANCE_ID" --parameters "$parameters" --timeout-seconds 180 --query 'Command.CommandId' --output text)"
-          start_seconds="$SECONDS"
-          status='Pending'
-          while (( SECONDS - start_seconds < 180 )); do
-            status="$(aws ssm get-command-invocation --region "$AWS_REGION" --command-id "$command_id" --instance-id "$EC2_INSTANCE_ID" --query Status --output text 2>/dev/null || true)"
-            case "$status" in
-              Success) break ;;
-              Failed|Cancelled|TimedOut) break ;;
-            esac
-            sleep 5
-          done
-          if [[ "$status" != Success ]]; then
-            aws ssm get-command-invocation --region "$AWS_REGION" --command-id "$command_id" --instance-id "$EC2_INSTANCE_ID" --query '{status:Status,stdout:StandardOutputContent,stderr:StandardErrorContent}' --output json || true
+          printf -v remote 'EXPECTED_INSTANCE_ID=%q PROJECT_DIR=/home/ubuntu/app/B7-1/7-1 VERIFY_BASE_URL=%q VERIFY_CHAT_REQUEST_ID=%q bash /home/ubuntu/app/B7-1/7-1/scripts/ec2/verify_e2e_log_rotation.sh' \
+            "$E2E_EC2_INSTANCE_ID" "$E2E_BASE_URL" "$request_id"
+          E2E_SSM_TIMEOUT_SECONDS=300 bash scripts/e2e/run_ssm_command.sh "$remote"
+          printf '{"scenario_id":"O04","status":"passed"}\n' >> .artifacts/e2e/operations.jsonl
+
+      - name: O05 검사 전 AWS OIDC 자격 갱신
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.E2E_AWS_ROLE_ARN }}
+          aws-region: ${{ env.E2E_AWS_REGION }}
+
+      - name: O05 DB 백업 사본 복원·무결성·쓰기 검사
+        run: |
+          set -euo pipefail
+          printf -v remote 'EXPECTED_INSTANCE_ID=%q E2E_RUN_ID=%q bash /home/ubuntu/app/B7-1/7-1/scripts/ec2/verify_e2e_backup_restore.sh' \
+            "$E2E_EC2_INSTANCE_ID" "$E2E_RUN_ID"
+          E2E_SSM_TIMEOUT_SECONDS=300 bash scripts/e2e/run_ssm_command.sh "$remote"
+          printf '{"scenario_id":"O05","status":"passed"}\n' >> .artifacts/e2e/operations.jsonl
+
+      - name: O06 검사 전 AWS OIDC 자격 갱신
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.E2E_AWS_ROLE_ARN }}
+          aws-region: ${{ env.E2E_AWS_REGION }}
+
+      - name: O06 Cron 실행·O07 Certbot dry-run·O08 자원 상태 검사
+        run: |
+          set -euo pipefail
+          printf -v remote 'EXPECTED_INSTANCE_ID=%q E2E_RUN_ID=%q bash /home/ubuntu/app/B7-1/7-1/scripts/ec2/verify_e2e_operations.sh' \
+            "$E2E_EC2_INSTANCE_ID" "$E2E_RUN_ID"
+          result="$(E2E_SSM_TIMEOUT_SECONDS=1800 bash scripts/e2e/run_ssm_command.sh "$remote")"
+          if [[ "$result" =~ E2E_O06_CRON_VERIFIED=1\ temporary_schedule_observed=1\ daily_0400_observed=([01])\ timezone=([A-Za-z0-9_+./-]+) ]]; then
+            daily_0400_observed="${BASH_REMATCH[1]}"
+            server_timezone="${BASH_REMATCH[2]}"
+          else
+            echo 'O06 Cron 실행 증거를 읽을 수 없습니다.' >&2
             exit 1
           fi
-          aws ssm get-command-invocation --region "$AWS_REGION" --command-id "$command_id" --instance-id "$EC2_INSTANCE_ID" --query StandardOutputContent --output text
-      - name: 비밀값이 없는 테스트 보고서 보관
+          grep -Fq 'E2E_O07_CERTBOT_VERIFIED=1' <<<"$result"
+          grep -Fq 'E2E_O08_RESOURCES' <<<"$result"
+          printf '%s\n' "$result" > .artifacts/e2e/operations-detail.txt
+          if [[ "$daily_0400_observed" == 1 ]]; then
+            printf '{"scenario_id":"O06","status":"passed","daily_0400_observed":true,"timezone":"%s"}\n' "$server_timezone" >> .artifacts/e2e/operations.jsonl
+          else
+            printf '{"scenario_id":"O06","status":"partial","daily_0400_observed":false,"timezone":"%s"}\n' "$server_timezone" >> .artifacts/e2e/operations.jsonl
+          fi
+          printf '{"scenario_id":"O07","status":"passed"}\n' >> .artifacts/e2e/operations.jsonl
+          printf '{"scenario_id":"O08","status":"passed"}\n' >> .artifacts/e2e/operations.jsonl
+
+      - name: 필수 JUnit·운영 결과 전체 판정
         if: always()
+        run: python scripts/e2e/validate_run_reports.py .artifacts/e2e
+
+      - name: 종료 복구 전 AWS OIDC 자격 갱신
+        if: always()
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.E2E_AWS_ROLE_ARN }}
+          aws-region: ${{ env.E2E_AWS_REGION }}
+
+      - name: 업로드 전 모든 JUnit 보고서 최종 정리
+        if: always()
+        id: sanitize-artifacts
+        run: |
+          set -euo pipefail
+          while IFS= read -r -d '' report; do
+            python scripts/e2e/sanitize_junit_report.py "$report"
+          done < <(find .artifacts/e2e -maxdepth 1 -type f -name '*.xml' -print0)
+
+      - name: 임시 서비스 장애 설정 원복 확인
+        if: always()
+        run: |
+          set -euo pipefail
+          printf -v remote 'if [[ -x /usr/local/sbin/b7-1-e2e-control-%q ]]; then EXPECTED_INSTANCE_ID=%q /usr/local/sbin/b7-1-e2e-control-%q restore %q; else printf "E2E_FAULT_ALREADY_RESTORED=1\\n"; fi' \
+            "$E2E_RUN_ID" "$E2E_EC2_INSTANCE_ID" "$E2E_RUN_ID" "$E2E_RUN_ID"
+          E2E_SSM_TIMEOUT_SECONDS=180 bash scripts/e2e/run_ssm_command.sh "bash -c $(printf '%q' "$remote")"
+
+      - name: 비밀값을 제거한 실행 결과 보관
+        if: always() && steps.sanitize-artifacts.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
-          name: deployed-e2e-report
-          path: .artifacts/e2e/*report.xml
-          if-no-files-found: ignore
+          name: deployed-e2e-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .artifacts/e2e
+          if-no-files-found: error
           retention-days: 7

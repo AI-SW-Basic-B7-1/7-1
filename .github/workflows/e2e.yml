@@ -34,13 +34,15 @@ jobs:
         run: node --test tests/frontend/*.test.mjs
       - name: EC2 셸 문법 확인
         run: |
-          for script in scripts/ec2/*.sh; do
+          for script in scripts/ec2/*.sh scripts/e2e/*.sh; do
             bash -n "$script"
           done
 
   browser:
     name: 격리 SQLite 브라우저 E2E
     runs-on: ubuntu-latest
+    env:
+      E2E_MODE: local
     steps:
       - name: 저장소 확인
         uses: actions/checkout@v4
@@ -55,12 +57,31 @@ jobs:
       - name: 테스트 보고서 디렉터리 준비
         run: mkdir -p .artifacts/e2e
       - name: 실제 브라우저 회원가입·채팅·복원 E2E
-        run: python -m pytest -q tests/e2e --browser chromium --output=.artifacts/e2e --junitxml=.artifacts/e2e/report.xml
-      - name: 실패 보고서 보관
-        if: failure()
+        run: |
+          set +e
+          python -m pytest -q tests/e2e --browser chromium \
+            --tracing=off --video=off --screenshot=off \
+            --output=.artifacts/e2e/playwright --junitxml=.artifacts/e2e/local.xml \
+            >"$RUNNER_TEMP/e2e-pytest-output.txt" 2>&1
+          status=$?
+          rm -f -- "$RUNNER_TEMP/e2e-pytest-output.txt"
+          printf 'E2E_PYTEST_EXIT=%s\n' "$status"
+          exit "$status"
+      - name: JUnit 자격 증명과 원시 출력 정리
+        if: always()
+        id: sanitize-report
+        run: python scripts/e2e/sanitize_junit_report.py .artifacts/e2e/local.xml
+        continue-on-error: false
+      - name: 필수 로컬 브라우저 시나리오 보고서 확인
+        if: always()
+        run: >-
+          python scripts/e2e/validate_junit_report.py .artifacts/e2e/local.xml
+          --required A01 A03 A04 A05 I01 I02 I03 N01 N02 N03 N04 O01 V01 V02
+      - name: 비밀값이 없는 로컬 브라우저 보고서 보관
+        if: always() && steps.sanitize-report.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
           name: browser-e2e-report
-          path: .artifacts/e2e/report.xml
-          if-no-files-found: ignore
+          path: .artifacts/e2e
+          if-no-files-found: error
           retention-days: 7
