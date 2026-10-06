@@ -127,23 +127,29 @@ def test_chat_events_are_found_after_app_log_rotation(tmp_path: Path):
             elif command == "sleep":
                 pass
             elif command == "curl":
-                header_path = Path(arguments[arguments.index("-D") + 1])
-                counter_path = Path(os.environ["CURL_COUNTER"])
-                count = int(counter_path.read_text() or "0") if counter_path.exists() else 0
-                count += 1
-                counter_path.write_text(str(count))
-                request_id = (
-                    "11111111-1111-1111-1111-111111111111"
-                    if count == 1 else "22222222-2222-2222-2222-222222222222"
-                )
-                header_path.write_text(f"HTTP/2 200\\r\\nX-Request-ID: {request_id}\\r\\n\\r\\n")
-                for path in (
-                    Path(os.environ["APP_LOG_DIR"]) / "app.log",
-                    Path(os.environ["NGINX_LOG_DIR"]) / "nginx_access.log",
-                ):
-                    with path.open("a") as output:
-                        output.write(f"INFO http_request_started request_id={request_id}\\n")
-                print("200", end="")
+                url = arguments[-1]
+                if url.endswith("/latest/api/token"):
+                    print("metadata-token", end="")
+                elif url.endswith("/latest/meta-data/instance-id"):
+                    print("i-0123456789abcdef0", end="")
+                else:
+                    header_path = Path(arguments[arguments.index("-D") + 1])
+                    counter_path = Path(os.environ["CURL_COUNTER"])
+                    count = int(counter_path.read_text() or "0") if counter_path.exists() else 0
+                    count += 1
+                    counter_path.write_text(str(count))
+                    request_id = (
+                        "11111111-1111-1111-1111-111111111111"
+                        if count == 1 else "22222222-2222-2222-2222-222222222222"
+                    )
+                    header_path.write_text(f"HTTP/2 200\\r\\nX-Request-ID: {request_id}\\r\\n\\r\\n")
+                    for path in (
+                        Path(os.environ["APP_LOG_DIR"]) / "app.log",
+                        Path(os.environ["NGINX_LOG_DIR"]) / "nginx_access.log",
+                    ):
+                        with path.open("a") as output:
+                            output.write(f"INFO http_request_started request_id={request_id}\\n")
+                    print("200", end="")
             elif command == "logrotate" and "--force" in arguments:
                 for active, rotated in (
                     (Path(os.environ["APP_LOG_DIR"]) / "app.log", Path(os.environ["APP_LOG_DIR"]) / "app.log.1"),
@@ -168,6 +174,7 @@ def test_chat_events_are_found_after_app_log_rotation(tmp_path: Path):
         PATH=str(commands) + os.pathsep + environment.get("PATH", ""),
         VERIFY_BASE_URL="https://example.test",
         VERIFY_CHAT_REQUEST_ID="01234567-89ab-cdef-0123-456789abcdef",
+        EXPECTED_INSTANCE_ID="i-0123456789abcdef0",
         APP_LOG_DIR=str(app_logs),
         NGINX_LOG_DIR=str(nginx_logs),
         LOGROTATE_FILE=str(logrotate_file),
