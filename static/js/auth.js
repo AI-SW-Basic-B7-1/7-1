@@ -1,4 +1,5 @@
 import { ApiError, health, login, register } from "./api.js";
+import { passwordValidationError } from "./password-validation.js";
 
 const TOKEN_KEY = "access_token";
 let activeLoginController = null;
@@ -65,8 +66,10 @@ export function clearSession() {
 function clearFeedback() {
   elements.loginError.hidden = true;
   elements.loginError.textContent = "";
+  delete elements.loginError.dataset.passwordValidation;
   elements.registerError.hidden = true;
   elements.registerError.textContent = "";
+  delete elements.registerError.dataset.passwordValidation;
   elements.authNotice.hidden = true;
   elements.authNotice.textContent = "";
   elements.loginUsername.setAttribute("aria-invalid", "false");
@@ -159,6 +162,24 @@ function showRegisterError(message) {
   elements.registerPassword.setAttribute("aria-invalid", "true");
 }
 
+function validatePasswordField(input, error, minimumCharacters = 0) {
+  const message = passwordValidationError(input.value, { minimumCharacters });
+  if (message) {
+    error.textContent = message;
+    error.hidden = false;
+    error.dataset.passwordValidation = "true";
+    input.setAttribute("aria-invalid", "true");
+    return false;
+  }
+  if (error.dataset.passwordValidation === "true") {
+    error.hidden = true;
+    error.textContent = "";
+    delete error.dataset.passwordValidation;
+    input.setAttribute("aria-invalid", "false");
+  }
+  return true;
+}
+
 function visibleModalControls() {
   return [...elements.modal.querySelectorAll("button, input")].filter(
     (control) => !control.disabled && !control.hidden && !control.closest("[hidden]"),
@@ -192,6 +213,9 @@ function handleModalKeydown(event) {
 
 async function handleLoginSubmit(event) {
   event.preventDefault();
+  if (!validatePasswordField(elements.loginPassword, elements.loginError)) {
+    return;
+  }
   activeLoginController?.abort();
   const controller = new AbortController();
   activeLoginController = controller;
@@ -235,6 +259,9 @@ async function handleLoginSubmit(event) {
 
 async function handleRegisterSubmit(event) {
   event.preventDefault();
+  if (!validatePasswordField(elements.registerPassword, elements.registerError, 4)) {
+    return;
+  }
   activeRegisterController?.abort();
   const controller = new AbortController();
   activeRegisterController = controller;
@@ -342,6 +369,12 @@ function initializeAuth() {
   elements.logoutButton.addEventListener("click", handleLogout);
   elements.loginForm.addEventListener("submit", handleLoginSubmit);
   elements.registerForm.addEventListener("submit", handleRegisterSubmit);
+  elements.loginPassword.addEventListener("input", () => {
+    validatePasswordField(elements.loginPassword, elements.loginError);
+  });
+  elements.registerPassword.addEventListener("input", () => {
+    validatePasswordField(elements.registerPassword, elements.registerError);
+  });
   elements.modal.addEventListener("keydown", handleModalKeydown);
   elements.showRegisterButton.addEventListener("click", showRegisterView);
   elements.showLoginButton.addEventListener("click", () => showLoginView());
