@@ -25,7 +25,7 @@ if [[ "${1:-}" == '--help' ]]; then
         '선택 설정: SERVICE_NAME (기본값: chatbot.service)' \
         '선택 설정: SITE_CONFIG (기본값: /etc/nginx/sites-enabled/chatbot)' \
         '선택 설정: VERIFY_BASE_URL (기본값: http://127.0.0.1)' \
-        '단일 server 블록 사이트만 지원합니다. 기존 로그는 이동하지 않습니다.' \
+        '단일 사이트의 HTTP·HTTPS server 블록을 지원합니다. 기존 로그는 이동하지 않습니다.' \
         'chatbot.service의 출력 경로를 설정하고 서비스를 재시작합니다.' \
         '주의: 재시작 중 요청이 중단될 수 있습니다. 회전 정책은 configure_log_rotation.sh가 설치합니다.'
     exit 0
@@ -106,20 +106,20 @@ awk -v begin="${BEGIN_MARKER}" -v end="${END_MARKER}" \
     -v format_begin="${FORMAT_BEGIN}" -v format_end="${FORMAT_END}" '
     index($0, format_begin) { if (inside || format_seen++) exit 2; inside=2; next }
     index($0, format_end) { if (inside != 2) exit 2; inside=0; next }
-    index($0, begin) { if (inside || seen++) exit 2; inside=1; next }
+    index($0, begin) { if (inside) exit 2; inside=1; next }
     index($0, end) { if (inside != 1) exit 2; inside=0; next }
     !inside { print }
     END { if (inside) exit 2 }
 ' "${SITE_CONFIG}" > "${WORK_DIR}/base"
 
-# 임의의 Nginx 문법을 재작성하지 않고 제공된 단일 사이트 구조만 지원합니다.
+# 임의의 Nginx 문법을 재작성하지 않고 제공된 단일 사이트의 server 블록들을 지원합니다.
 awk '
     /^[[:space:]]*server[[:space:]]*\{[[:space:]]*$/ { servers++ }
     /^[[:space:]]*(access_log|error_log|include)[[:space:]]/ { conflict=1 }
     /^[[:space:]]*location[[:space:]].*\/logs/ { conflict=1 }
-    END { if (servers != 1 || conflict) exit 1 }
+    END { if (servers < 1 || conflict) exit 1 }
 ' "${WORK_DIR}/base" || {
-    printf '%s\n' '단일 server 구조가 아니거나 기존 로그/include/로그 경로 설정이 있습니다. 수동 확인이 필요합니다.' >&2
+    printf '%s\n' 'server 블록이 없거나 기존 로그/include/로그 경로 설정이 있습니다. 수동 확인이 필요합니다.' >&2
     exit 1
 }
 

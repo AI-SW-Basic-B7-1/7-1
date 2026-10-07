@@ -217,6 +217,39 @@ def test_prepare_and_verify_do_not_restart_services(script_environment):
     assert "systemctl daemon-reload" not in calls
 
 
+def test_prepare_supports_http_and_https_server_blocks_idempotently(script_environment):
+    """HTTP·HTTPS server 블록마다 로그 설정을 넣고 반복 적용해도 중복하지 않습니다."""
+    run, _, site, _, _ = script_environment
+    site.write_text(
+        "server {\n"
+        "    listen 80;\n"
+        "    server_name test.local;\n"
+        "    location / { return 301 https://test.local$request_uri; }\n"
+        "}\n"
+        "server {\n"
+        "    listen 443 ssl;\n"
+        "    server_name test.local;\n"
+        "    ssl_certificate /tmp/fullchain.pem;\n"
+        "    location / { proxy_pass http://127.0.0.1:8000; }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+
+    previous = None
+    for _ in range(2):
+        result = run(action="--prepare")
+        assert result.returncode == 0, result.stderr
+        contents = site.read_text(encoding="utf-8")
+        assert contents.count("log_format b7_1_request_trace") == 1
+        assert contents.count("# BEGIN B7-1 MANAGED LOGGING") == 2
+        assert contents.count("access_log ") == 2
+        assert contents.count("location = /logs { return 404; }") == 2
+        assert contents.count("location ^~ /logs/ { return 404; }") == 2
+        if previous is not None:
+            assert contents == previous
+        previous = contents
+
+
 @pytest.mark.parametrize("site_name,service", [("chatbot", "chatbot.service"), ("travel", "travel.service")])
 @pytest.mark.parametrize("failure", ["none", "reapply", "first"])
 def test_deploy_configuration_sequence(script_environment, site_name, service, failure):
