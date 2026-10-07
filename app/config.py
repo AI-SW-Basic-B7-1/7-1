@@ -50,6 +50,15 @@ class Settings:
     GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite")
     AI_TIMEOUT_SECONDS: float = float(os.getenv("AI_TIMEOUT_SECONDS", "8.0"))
 
+    # [한국관광공사 반려동물 동반여행 API 설정]
+    KOR_PET_TOUR_SERVICE_KEY: str = os.getenv(
+        "KOR_PET_TOUR_SERVICE_KEY",
+        "",
+    )
+
+    PET_TOUR_API_TIMEOUT_SECONDS: float = float(
+        os.getenv("PET_TOUR_API_TIMEOUT_SECONDS", "8.0")
+    )
     # [Jev AI 관찰 모드 설정]
     TYPESAFE_API_KEY: str = os.getenv("TYPESAFE_API_KEY", "")
     JEV_MODE: str = os.getenv("JEV_MODE", "off").strip().lower()
