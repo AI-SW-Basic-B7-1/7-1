@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="description" content="반려동물과 국내여행을 준비하는 사용자를 위한 AI 채팅 서비스">
+    <title>AI Assistant | 반려동물 국내여행</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+  </head>
+  <body class="pet-travel">
+    <div class="app-shell">
+      <aside id="sidebar" class="sidebar" aria-label="대화 메뉴">
+        <div class="sidebar-top">
+          <div class="brand" aria-label="AI Assistant">
+            <span class="brand-mark" aria-hidden="true">
+              <svg viewBox="0 0 32 32" fill="currentColor"><circle cx="8" cy="11" r="2.4"/><circle cx="14" cy="7" r="2.4"/><circle cx="21" cy="8" r="2.4"/><circle cx="26" cy="14" r="2.4"/><path d="M16 13c-3 0-4 2.7-6.5 5.3C7 21 8.3 26 12.3 26c1.4 0 2.2-.7 3.7-.7s2.3.7 3.7.7c4 0 5.3-5 2.8-7.7C20 15.7 19 13 16 13Z"/></svg>
+            </span>
+            <span><strong id="brand-name">AI Assistant</strong><small id="brand-tagline">반려동물과 함께하는 국내여행</small></span>
+          </div>
+          <button id="sidebar-close-button" class="sidebar-toggle sidebar-close" type="button" aria-label="사이드바 닫기">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M5 5l14 14M19 5 5 19"></path></svg>
+          </button>
+        </div>
+        <button id="new-question-button" class="new-chat-link" type="button">
+          <span id="new-question-label">새 대화</span><span aria-hidden="true">＋</span>
+        </button>
+        <p id="sidebar-section-label" class="sidebar-label">대화방</p>
+        <nav id="conversation-list" class="conversation-list" aria-labelledby="sidebar-section-label"></nav>
+        <p id="conversation-list-empty" class="conversation-list-empty" aria-live="polite">저장된 대화방이 없습니다.</p>
+        <div class="sidebar-spacer"></div>
+        <div class="sidebar-foot">
+          <span class="sidebar-avatar" aria-hidden="true">↗</span>
+          <span id="sidebar-foot-text">여행 계획을 이어가 보세요</span>
+        </div>
+      </aside>
+      <button id="sidebar-backdrop" class="sidebar-backdrop" type="button" aria-label="대화 메뉴 닫기" hidden></button>
+
+      <div class="workspace">
+        <header class="app-header">
+          <div class="header-start">
+            <button id="sidebar-open-button" class="sidebar-toggle sidebar-open" type="button" aria-label="대화 메뉴 열기" aria-controls="sidebar" aria-expanded="false" hidden>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"></path></svg>
+            </button>
+            <div class="breadcrumb"><span id="breadcrumb-workspace">나의 여행</span><span aria-hidden="true">/</span><strong id="breadcrumb-current">여행 상담</strong></div>
+          </div>
+          <div class="session-actions">
+            <span id="ai-mode-badge" class="mode-badge" hidden></span>
+            <button id="open-login-button" class="button button-secondary" type="button">로그인</button>
+            <button id="logout-button" class="button button-secondary" type="button" hidden>로그아웃</button>
+          </div>
+        </header>
+
+        <main class="chat-panel" aria-labelledby="chat-title">
+          <section class="chat-heading">
+            <div class="chat-heading-inner">
+              <p id="hero-eyebrow" class="eyebrow">PET TRAVEL · 국내여행</p>
+              <h1 id="chat-title">함께 떠날 여행을 준비해요.</h1>
+              <p id="chat-subtitle" class="chat-subtitle">지역과 일정, 반려동물의 조건을 알려주면 여행 계획을 함께 정리할 수 있어요.</p>
+            </div>
+            <span
+              id="connection-status"
+              class="connection-status"
+              data-state="checking"
+              role="status"
+              aria-live="polite"
+              aria-atomic="true"
+              title="서버 연결 확인 중"
+            >
+              <span class="connection-dot" aria-hidden="true"></span>
+              <span id="connection-status-label" class="visually-hidden">서버 연결 확인 중</span>
+            </span>
+          </section>
+
+          <section id="message-list" class="message-list" aria-label="대화 내용" aria-busy="false">
+            <div id="empty-state" class="empty-state">
+              <p id="trip-start-eyebrow" class="trip-start-eyebrow">여행 준비의 첫 단계</p>
+              <p class="empty-state-title">어떤 여행을 꿈꾸고 있나요?</p>
+              <p id="empty-state-description">로그인하면 여행 질문을 남기고 대화방에서 이어갈 수 있습니다.</p>
+              <ol class="trip-start-steps" role="list" aria-label="질문에 담으면 좋은 정보">
+                <li><span aria-hidden="true">01</span><div><strong id="trip-step-region">여행할 지역</strong><small id="trip-step-region-help">어느 지역으로 떠나나요?</small></div></li>
+                <li><span aria-hidden="true">02</span><div><strong id="trip-step-schedule">일정과 이동</strong><small id="trip-step-schedule-help">언제, 얼마나 머무나요?</small></div></li>
+                <li><span aria-hidden="true">03</span><div><strong id="trip-step-pet">반려동물 조건</strong><small id="trip-step-pet-help">종류와 크기, 필요한 배려를 알려주세요.</small></div></li>
+              </ol>
+            </div>
+          </section>
+
+          <div id="loading-indicator" class="loading-indicator" role="status" hidden>
+            <span class="loading-dot" aria-hidden="true"></span>
+            <span class="loading-dot" aria-hidden="true"></span>
+            <span class="loading-dot" aria-hidden="true"></span>
+            <span id="loading-message">이전 대화를 불러오고 있습니다.</span>
+          </div>
+
+          <button id="latest-button" class="latest-button" type="button" hidden>↓ 최신 답변으로</button>
+
+          <div class="composer-area">
+            <div id="suggestion-list" class="suggestion-list" aria-label="질문 제안"></div>
+            <p id="travel-data-notice" class="travel-data-notice">현재 관광공사 여행 데이터는 연결되지 않았습니다. 답변은 일반 AI 지식에 기반하며, 장소별 동반 조건은 방문 전 확인해 주세요.</p>
+            <form id="chat-form" class="composer" aria-busy="false">
+              <label class="visually-hidden" for="question-input">질문</label>
+              <div class="composer-field">
+                <textarea
+                  id="question-input"
+                  name="question"
+                  rows="2"
+                  placeholder="로그인 후 질문을 입력해 주세요."
+                  aria-describedby="question-counter"
+                  aria-invalid="false"
+                  disabled
+                ></textarea>
+                <button id="send-button" class="button button-primary send-button" type="submit" disabled aria-label="질문 전송">
+                  <span class="send-button-label">전송</span>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12 14-8-4 16-4-6-6-2Zm6 2 8-10"></path></svg>
+                </button>
+              </div>
+              <div class="composer-footer">
+                <span id="composer-hint">Enter로 전송 · Shift+Enter로 줄바꿈</span>
+                <span id="question-counter" class="question-counter">0 / 500</span>
+              </div>
+            </form>
+          </div>
+        </main>
+      </div>
+    </div>
+
+    <section
+      id="auth-modal"
+      class="modal-backdrop"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="auth-title"
+      hidden
+    >
+      <div class="modal-card">
+        <button id="close-auth-button" class="icon-button" type="button" aria-label="닫기">
+          ×
+        </button>
+        <p class="eyebrow">계정으로 시작하기</p>
+        <h2 id="auth-title">로그인</h2>
+        <div id="auth-content" class="auth-content">
+          <p id="auth-notice" class="form-notice" aria-live="polite" hidden></p>
+          <form id="login-form" class="auth-form" method="post">
+            <label for="login-username">아이디</label>
+            <input
+              id="login-username"
+              name="username"
+              type="text"
+              autocomplete="username"
+              aria-describedby="login-error"
+              required
+            >
+            <label for="login-password">비밀번호</label>
+            <input
+              id="login-password"
+              name="password"
+              type="password"
+              autocomplete="current-password"
+              maxlength="72"
+              aria-describedby="login-password-help login-error"
+              required
+            >
+            <small id="login-password-help" class="auth-password-help">비밀번호는 UTF-8 기준 72바이트까지 사용할 수 있습니다.</small>
+            <p id="login-error" class="form-error" aria-live="polite" hidden></p>
+            <button id="login-submit-button" class="button button-primary button-block" type="submit">
+              로그인
+            </button>
+          </form>
+          <p id="register-switch" class="auth-switch-hint">
+            처음 방문하셨나요?
+            <button id="show-register-button" class="text-button" type="button">회원가입</button>
+          </p>
+          <form id="register-form" class="auth-form" method="post" hidden>
+            <label for="register-username">아이디</label>
+            <input
+              id="register-username"
+              name="username"
+              type="text"
+              autocomplete="username"
+              aria-describedby="register-error"
+              required
+            >
+            <label for="register-password">비밀번호</label>
+            <input
+              id="register-password"
+              name="password"
+              type="password"
+              autocomplete="new-password"
+              minlength="4"
+              maxlength="72"
+              aria-describedby="register-password-help register-error"
+              required
+            >
+            <small id="register-password-help" class="auth-password-help">비밀번호는 최소 4자이며 UTF-8 기준 72바이트까지 사용할 수 있습니다.</small>
+            <p id="register-error" class="form-error" aria-live="polite" hidden></p>
+            <button
+              id="register-submit-button"
+              class="button button-primary button-block"
+              type="submit"
+            >
+              회원가입
+            </button>
+          </form>
+          <p id="login-switch" class="auth-switch-hint" hidden>
+            이미 계정이 있나요?
+            <button id="show-login-button" class="text-button" type="button">로그인</button>
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <div id="toast-region" class="toast-region" aria-live="assertive"></div>
+    <script type="module" src="/static/js/auth.js"></script>
+    <script type="module" src="/static/js/app.js"></script>
+    <script type="module" src="/static/js/shell.js"></script>
+  </body>
+</html>

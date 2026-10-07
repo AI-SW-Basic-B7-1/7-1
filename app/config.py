@@ -1,0 +1,67 @@
+"""FastAPI 애플리케이션 환경설정 관리 모듈.
+
+본 모듈은 .env 환경변수 파일 및 시스템 환경변수에서 설정값을 로드하며,
+설정값이 누락된 경우 안전한 기본값(Default)을 제공합니다.
+"""
+
+import os
+from math import isfinite
+from pathlib import Path
+from dotenv import load_dotenv
+
+# 프로젝트 루트 경로 (.env 위치) 탐색 및 로드
+BASE_DIR = Path(__file__).resolve().parent.parent
+STATIC_DIR = BASE_DIR / "static"
+INDEX_HTML = STATIC_DIR / "index.html"
+LOG_DIR = BASE_DIR / "logs"
+LOG_FILE = LOG_DIR / "app.log"
+ENV_PATH = BASE_DIR / ".env"
+if ENV_PATH.exists():
+    load_dotenv(dotenv_path=ENV_PATH)
+else:
+    load_dotenv()
+
+
+def _jev_timeout_seconds() -> float:
+    """Jev 설정 오류가 기본 채팅의 시작을 막지 않도록 안전한 값을 사용합니다."""
+    try:
+        value = float(os.getenv("JEV_TIMEOUT_SECONDS", "2.0"))
+    except ValueError:
+        return 2.0
+    return value if isfinite(value) and value > 0 else 2.0
+
+
+class Settings:
+    """애플리케이션 전역 설정 클래스."""
+
+    # [JWT 보안 설정]
+    SECRET_KEY: str = os.getenv("SECRET_KEY", "")
+    ALGORITHM: str = os.getenv("ALGORITHM", "HS256")
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "1440"))
+
+    # [데이터베이스 경로 설정]
+    DATABASE_URL: str = os.getenv("DATABASE_URL", "sqlite:///./data/chatbot.db")
+
+    # [Gemini AI API 설정]
+    GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
+    GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite")
+    AI_TIMEOUT_SECONDS: float = float(os.getenv("AI_TIMEOUT_SECONDS", "8.0"))
+
+    # [한국관광공사 반려동물 동반여행 API 설정]
+    KOR_PET_TOUR_SERVICE_KEY: str = os.getenv(
+        "KOR_PET_TOUR_SERVICE_KEY",
+        "",
+    )
+
+    PET_TOUR_API_TIMEOUT_SECONDS: float = float(
+        os.getenv("PET_TOUR_API_TIMEOUT_SECONDS", "8.0")
+    )
+    # [Jev AI 관찰 모드 설정]
+    TYPESAFE_API_KEY: str = os.getenv("TYPESAFE_API_KEY", "")
+    JEV_MODE: str = os.getenv("JEV_MODE", "off").strip().lower()
+    JEV_MODEL: str = os.getenv("JEV_MODEL", "jev-1.13.0")
+    JEV_TIMEOUT_SECONDS: float = _jev_timeout_seconds()
+
+
+# 전역 설정 싱글톤 인스턴스
+settings = Settings()

@@ -7,11 +7,16 @@ __pycache__/
 # 보안 및 환경 변수 (절대 깃허브 업로드 금지!)
 .env
 .env.local
+.env.*
+!.env.example
 
 # SQLite 데이터베이스 파일 (과제 제약조건 충족)
 *.db
+*.db-*
 *.sqlite
+*.sqlite-*
 *.sqlite3
+*.sqlite3-*
 data/*.db
 
 # 로그 파일
@@ -22,3 +27,4 @@ logs/
 .DS_Store
 .vscode/
 .idea/
+.pytest_cache/
