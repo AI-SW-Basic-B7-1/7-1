@@ -132,6 +132,11 @@ async def send_chat_message(
         ) from exc
 
     chat_logger.info(
+        "ai_call_start user_id=%s request_id=%s",
+        user_id,
+        log_request_id,
+    )
+    chat_logger.info(
         "ai_parameter_extract_start "
         "user_id=%s request_id=%s",
         user_id,

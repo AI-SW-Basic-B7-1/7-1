@@ -5,6 +5,7 @@ JWT(JSON Web Token) 액세스 토큰 발급 및 페이로드 검증 유틸리티
 """
 
 from datetime import datetime, timedelta, timezone
+from math import isfinite
 from typing import Any, Dict, Optional
 import aiosqlite
 import bcrypt
@@ -95,7 +96,18 @@ def decode_access_token(token: str) -> Optional[Dict[str, Any]]:
             token,
             settings.SECRET_KEY,
             algorithms=[settings.ALGORITHM],
+            options={"require": ["exp", "sub"]},
         )
+        username = payload.get("sub")
+        expiration = payload.get("exp")
+        if (
+            not isinstance(username, str)
+            or not username.strip()
+            or isinstance(expiration, bool)
+            or not isinstance(expiration, (int, float))
+            or not isfinite(expiration)
+        ):
+            return None
         return payload
     except Exception:
         return None

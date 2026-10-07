@@ -146,17 +146,41 @@ def script_environment(tmp_path):
         elif command == "logrotate":
             if mode == "rotation_failure" and Path(args[-1]) == root / "rotation/logrotate.conf":
                 sys.exit(1)
+        elif command == "certbot":
+            certificate_dir = root / "letsencrypt/live" / os.environ["SITE_DOMAIN"]
+            certificate_dir.mkdir(parents=True, exist_ok=True)
+            (certificate_dir / "fullchain.pem").write_text("테스트 인증서")
+            (certificate_dir / "privkey.pem").write_text("테스트 개인 키")
         elif command == "curl":
             url = urlsplit(args[-1])
             if url.path == "/api/health":
-                probe = parse_qs(url.query)["probe"][0]
+                query = parse_qs(url.query)
+                if "probe" not in query:
+                    candidate = Path(os.environ["SITE_CONFIG"]).read_text()
+                    status = "200"
+                    if url.scheme == "http":
+                        if "return 301 https://" in candidate:
+                            status = "301"
+                        elif "return 503;" in candidate:
+                            status = "503"
+                    elif "listen 443 ssl;" not in candidate:
+                        status = "503"
+                    print(status if "-w" in args else "ok", end="")
+                    sys.exit(0)
+                probe = query["probe"][0]
                 with (root / "probes").open("a") as output:
                     output.write(probe + "\n")
                 request_id = str(uuid.uuid4())
                 header_id = "invalid" if mode == "invalid_header" else request_id
                 headers = Path(args[args.index("-D") + 1])
-                headers.write_text("HTTP/1.1 200 OK\r\nX-Request-ID: " + header_id + "\r\n\r\n")
                 status = "302" if mode == "redirect" else "200"
+                if url.scheme == "http":
+                    candidate = Path(os.environ["SITE_CONFIG"]).read_text()
+                    if "return 301 https://" in candidate:
+                        status = "301"
+                    elif "return 503;" in candidate:
+                        status = "503"
+                headers.write_text("HTTP/1.1 " + status + "\r\nX-Request-ID: " + header_id + "\r\n\r\n")
                 access_id = "other" if mode == "access_mismatch" else request_id
                 app_id = "other" if mode == "app_mismatch" else request_id
                 nginx_id = "a" * (33 if mode == "invalid_nginx_id" else 32)
@@ -180,7 +204,7 @@ def script_environment(tmp_path):
             sys.exit(2)
     '''), encoding="utf-8")
     driver.chmod(0o755)
-    for name in ("nginx", "systemctl", "curl", "realpath", "readlink", "sleep", "chmod", "install", "logrotate"):
+    for name in ("nginx", "systemctl", "curl", "realpath", "readlink", "sleep", "chmod", "install", "logrotate", "certbot"):
         (commands / name).symlink_to(driver)
 
     def run(mode="success", action=None):
@@ -217,8 +241,51 @@ def test_prepare_and_verify_do_not_restart_services(script_environment):
     assert "systemctl daemon-reload" not in calls
 
 
+def test_prepare_supports_http_and_https_server_blocks_idempotently(script_environment):
+    """HTTP·HTTPS server 블록마다 로그 설정을 넣고 반복 적용해도 중복하지 않습니다."""
+    run, _, site, _, _ = script_environment
+    site.write_text(
+        "server {\n"
+        "    listen 80;\n"
+        "    server_name test.local;\n"
+        "    location / { return 301 https://test.local$request_uri; }\n"
+        "}\n"
+        "server {\n"
+        "    listen 443 ssl;\n"
+        "    server_name test.local;\n"
+        "    ssl_certificate /tmp/fullchain.pem;\n"
+        "    location / { proxy_pass http://127.0.0.1:8000; }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+
+    previous = None
+    for _ in range(2):
+        result = run(action="--prepare")
+        assert result.returncode == 0, result.stderr
+        contents = site.read_text(encoding="utf-8")
+        assert contents.count("log_format b7_1_request_trace") == 1
+        assert contents.count("# BEGIN B7-1 MANAGED LOGGING") == 2
+        assert contents.count("access_log ") == 2
+        assert contents.count("location = /logs { return 404; }") == 2
+        assert contents.count("location ^~ /logs/ { return 404; }") == 2
+        if previous is not None:
+            assert contents == previous
+        previous = contents
+
+
+def test_logging_verification_runs_after_https_is_enabled():
+    """로그 검증은 인증서 발급과 HTTPS Nginx 적용 뒤 도메인 주소로 실행합니다."""
+    source = (SCRIPT_PATH.parent / "deploy_ec2.sh").read_text(encoding="utf-8")
+    certificate_step = source.index("run_cmd 'Let’s Encrypt 인증서 발급·갱신'")
+    https_reload_step = source.index("run_cmd 'HTTPS Nginx 설정 적용' systemctl reload nginx")
+    verification_step = source.index("VERIFY_BASE_URL=\"https://${SITE_DOMAIN}\"")
+
+    assert certificate_step < https_reload_step < verification_step
+
+
 @pytest.mark.parametrize("site_name,service", [("chatbot", "chatbot.service"), ("travel", "travel.service")])
-@pytest.mark.parametrize("failure", ["none", "reapply", "first"])
+@pytest.mark.parametrize("failure", ["none", "reapply", "first", "existing_certificate"])
 def test_deploy_configuration_sequence(script_environment, site_name, service, failure):
     """배포의 실제 설정 구간을 실행해 최초 배포·재배포·실패 복원을 확인합니다."""
     _, root, _, _, _ = script_environment
@@ -228,12 +295,18 @@ def test_deploy_configuration_sequence(script_environment, site_name, service, f
         directory.mkdir(parents=True, exist_ok=True)
     source = (SCRIPT_PATH.parent / "deploy_ec2.sh").read_text(encoding="utf-8")
     # 패키지 설치와 DB 작업은 제외하고 설정 트랜잭션 구간을 그대로 실행합니다.
-    section = source[source.index('NGINX_AVAILABLE='):source.index("run_cmd 'DB 백업 디렉터리 생성'")]
+    initial_start = source.index('NGINX_AVAILABLE=')
+    initial_end = source.index("run_cmd 'DB 백업 디렉터리 생성'")
+    https_start = source.index("run_cmd 'ACME 챌린지 웹루트 생성'", initial_end)
+    https_end = source.index('[[ -f "${DB_PATH}" ]] || fail', https_start)
+    section = source[initial_start:initial_end] + source[https_start:https_end]
     section = section.replace("/etc/nginx", str(nginx)).replace("/etc/systemd/system", str(root / "systemd"))
+    section = section.replace("/etc/letsencrypt", str(root / "letsencrypt"))
+    section = section.replace("/var/www/certbot", str(root / "certbot"))
     section = section.replace("/etc/b7-1", str(root / "rotation")).replace("/etc/cron.d", str(root / "cron"))
     wrapper = root / "deploy-config.sh"
     wrapper.write_text(
-        'set -Eeuo pipefail\nrun_cmd() { shift; "$@"; }\nfail() { exit 1; }\n'
+        'set -Eeuo pipefail\nrun_cmd() { shift; "$@"; }\nlog_step() { :; }\nfail() { exit 1; }\n'
         + section + '\nCONFIG_COMMITTED=1\n', encoding="utf-8",
     )
     site = nginx / "sites-available" / site_name
@@ -244,10 +317,11 @@ def test_deploy_configuration_sequence(script_environment, site_name, service, f
         PATH=str(root / "commands") + os.pathsep + env.get("PATH", ""),
         PROJECT_DIR=str(project), APP_USER="ubuntu", ENV_FILE=str(project / ".env"),
         SERVICE_NAME=service, NGINX_SITE_NAME=site_name,
+        SITE_DOMAIN="test.local",
         SITE_CONFIG=str(site), TEST_ROOT=str(root), TEST_MODE="fresh",
         LOGGING_SCRIPT=str(project / "scripts/ec2/configure_nginx_logs.sh"),
         ROTATION_SCRIPT=str(project / "scripts/ec2/configure_log_rotation.sh"),
-        VERIFY_BASE_URL="http://test.local", TMPDIR=str(root),
+        VERIFY_BASE_URL="https://test.local", TMPDIR=str(root),
     )
     def execute():
         """대역 명령으로 배포 설정 구간을 실행합니다."""
@@ -258,6 +332,7 @@ def test_deploy_configuration_sequence(script_environment, site_name, service, f
         env.update(TEST_MODE="query_leak", TEST_INIT_INACTIVE="1")
         result = execute()
         assert result.returncode != 0
+        assert (root / "probes").read_text(encoding="utf-8").splitlines()
         for path in (site, unit, dropin, nginx / "sites-enabled" / site_name,
                      root / "rotation/logrotate.conf", root / "cron/b7-1-logrotate"):
             assert not path.exists() and not path.is_symlink()
@@ -265,15 +340,35 @@ def test_deploy_configuration_sequence(script_environment, site_name, service, f
         assert not (root / "nginx.active").exists()
         return
 
+    if failure == "existing_certificate":
+        certificate_dir = root / "letsencrypt/live/test.local"
+        certificate_dir.mkdir(parents=True)
+        (certificate_dir / "fullchain.pem").write_text("테스트 인증서", encoding="utf-8")
+        (certificate_dir / "privkey.pem").write_text("테스트 개인 키", encoding="utf-8")
+        result = execute()
+        assert result.returncode == 0, result.stderr
+        contents = site.read_text(encoding="utf-8")
+        assert "listen 443 ssl;" in contents
+        assert "return 301 https://test.local" in contents
+        assert "return 503;" not in contents
+        assert "--resolve test.local:443:127.0.0.1" in (root / "calls").read_text()
+        return
+
     for _ in range(2):
         result = execute()
         assert result.returncode == 0, result.stderr
-        assert site.read_text().count("log_format b7_1_request_trace") == 1
-        assert "location ^~ /logs/" in site.read_text()
+        contents = site.read_text()
+        assert contents.count("log_format b7_1_request_trace") == 1
+        assert "location ^~ /logs/" in contents
+        assert "location ^~ /logs/ { return 404; }" in contents
+        assert "listen 443 ssl;" in contents
+        assert "return 301 https://test.local" in contents
+        assert "return 503;" not in contents
     calls = (root / "calls").read_text()
     assert calls.count("systemctl restart " + service) == 2
     assert calls.count("systemctl restart nginx") == 2
-    assert "systemctl reload nginx" not in calls
+    assert calls.count("systemctl reload nginx") == 2
+    assert "--resolve test.local:443:127.0.0.1" in calls
     if failure == "reapply":
         paths = (site, unit, dropin, root / "rotation/logrotate.conf", root / "cron/b7-1-logrotate")
         before = [path.read_bytes() for path in paths]
@@ -297,6 +392,7 @@ def test_script_applies_and_reapplies_with_distinct_probes(script_environment):
     probes = (root / "probes").read_text().splitlines()
     assert len(probes) == len(set(probes)) == 2
     calls = (root / "calls").read_text()
+    assert "--resolve test.local:80:127.0.0.1" in calls
     for path in ("/logs", "/logs/", "/logs/app.log", "/logs/app.log.1",
                  "/logs/server.log", "/logs/nginx_access.log"):
         assert f"http://test.local{path}\n" in calls

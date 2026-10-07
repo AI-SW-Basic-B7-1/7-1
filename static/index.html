@@ -155,9 +155,11 @@
               name="password"
               type="password"
               autocomplete="current-password"
-              aria-describedby="login-error"
+              maxlength="72"
+              aria-describedby="login-password-help login-error"
               required
             >
+            <small id="login-password-help" class="auth-password-help">비밀번호는 UTF-8 기준 72바이트까지 사용할 수 있습니다.</small>
             <p id="login-error" class="form-error" aria-live="polite" hidden></p>
             <button id="login-submit-button" class="button button-primary button-block" type="submit">
               로그인
@@ -183,9 +185,12 @@
               name="password"
               type="password"
               autocomplete="new-password"
-              aria-describedby="register-error"
+              minlength="4"
+              maxlength="72"
+              aria-describedby="register-password-help register-error"
               required
             >
+            <small id="register-password-help" class="auth-password-help">비밀번호는 최소 4자이며 UTF-8 기준 72바이트까지 사용할 수 있습니다.</small>
             <p id="register-error" class="form-error" aria-live="polite" hidden></p>
             <button
               id="register-submit-button"

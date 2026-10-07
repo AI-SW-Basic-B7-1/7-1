@@ -68,7 +68,7 @@ async def test_history_query_failure_returns_safe_500(chat_client, monkeypatch):
 
 
 @pytest.fixture
-async def chat_client(tmp_path, monkeypatch) -> AsyncGenerator[AsyncClient, None]:
+async def chat_client(tmp_path, monkeypatch, mock_missing_pet_tour_parameters) -> AsyncGenerator[AsyncClient, None]:
     """사용자 두 명이 저장된 임시 DB 기반 API 클라이언트를 제공합니다."""
     database_path = tmp_path / "test_chat.db"
     await init_db(database_path)
@@ -91,7 +91,13 @@ async def chat_client(tmp_path, monkeypatch) -> AsyncGenerator[AsyncClient, None
         finally:
             await connection.close()
 
-    async def mock_generate_chat_response(question: str, history: list) -> str:
+    async def mock_generate_chat_response(
+        question: str,
+        history: list,
+        *,
+        system_instruction: str | None = None,
+        extra_context: str | None = None,
+    ) -> str:
         """외부 API 호출 없이 테스트 답변을 반환합니다."""
         return f"테스트 답변: {question}"
 
@@ -219,7 +225,7 @@ async def test_chat_timeout_returns_504_and_logs_failure(
     monkeypatch,
 ):
     """AI 제한 시간 초과 시 504와 실패 로그를 반환하는지 검증합니다."""
-    async def raise_timeout(question: str, history: list) -> str:
+    async def raise_timeout(question: str, history: list, **kwargs) -> str:
         """AI 제한 시간 초과 예외를 발생시킵니다."""
         raise AITimeoutError("테스트 시간 초과")
 

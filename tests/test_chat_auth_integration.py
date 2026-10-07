@@ -12,14 +12,14 @@ import aiosqlite
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from app.ai_service import AIServiceError, AITimeoutError
+from app.ai_service import AIServiceError, AITimeoutError, NO_PARAMETER_SYSTEM_INSTRUCTION
 from app.auth import create_access_token
 from app.database import get_db, init_db
 from app.main import app
 
 
 @pytest.fixture
-async def test_client(tmp_path) -> AsyncGenerator[AsyncClient, None]:
+async def test_client(tmp_path, mock_missing_pet_tour_parameters) -> AsyncGenerator[AsyncClient, None]:
     """격리된 테스트용 SQLite DB와 AsyncClient를 제공하는 pytest fixture."""
     test_db_file = tmp_path / "test_chat_auth.db"
     test_db_path = str(test_db_file)
@@ -177,7 +177,9 @@ async def test_chat_success_and_db_persistence(
         headers=headers,
     )
     assert response.status_code == 200
-    mock_generate_chat_response.assert_awaited_once_with(question, [])
+    mock_generate_chat_response.assert_awaited_once()
+    assert mock_generate_chat_response.await_args.args == (question, [])
+    assert mock_generate_chat_response.await_args.kwargs["system_instruction"] == NO_PARAMETER_SYSTEM_INSTRUCTION
 
     data = response.json()
     assert "answer" in data
@@ -389,4 +391,5 @@ async def test_new_conversation_excludes_other_topic_context(
         headers=headers,
     )
     assert first.json()["conversation_id"] != second.json()["conversation_id"]
-    mock_generate_chat_response.assert_awaited_once_with("두 번째 주제", [])
+    mock_generate_chat_response.assert_awaited_once()
+    assert mock_generate_chat_response.await_args.args == ("두 번째 주제", [])

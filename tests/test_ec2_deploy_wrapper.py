@@ -1,0 +1,126 @@
+"""SSM 배포 명령 생성과 중단 복구 계약을 검증합니다."""
+
+import os
+import shlex
+import shutil
+import subprocess
+from pathlib import Path
+
+import pytest
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_acme_webroot_is_created_before_certificate_request():
+    """Certbot 실행 전 웹루트 소유권과 접근 권한을 설정합니다."""
+    source = (PROJECT_ROOT / "scripts/ec2/deploy_ec2.sh").read_text(encoding="utf-8")
+    create_step = "run_cmd 'ACME 챌린지 웹루트 생성' install -d -o root -g www-data -m 2755 /var/www/certbot"
+    certificate_step = "run_cmd 'Let’s Encrypt 인증서 발급·갱신' certbot certonly --webroot"
+
+    assert source.index(create_step) < source.index(certificate_step)
+
+
+@pytest.mark.parametrize("service_was_active", [False, True])
+def test_sigterm_runs_remote_rollback_and_restores_service_state(tmp_path, service_was_active):
+    """생성된 원격 명령이 TERM을 받은 배포를 정리하고 서비스 상태를 복원합니다."""
+    bash = shutil.which("bash")
+    if not bash:
+        pytest.skip("Bash가 필요한 원격 명령 생성 테스트입니다.")
+    try:
+        subprocess.run(
+            [bash, "--version"],
+            capture_output=True,
+            check=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        pytest.skip("현재 실행 환경에서 Bash를 시작할 수 없습니다.")
+
+    source = (PROJECT_ROOT / "scripts/ec2/run_ec2_deploy.sh").read_text(encoding="utf-8")
+    marker = 'remote_command="$(\n'
+    start = source.index(marker) + len(marker)
+    end = source.index('\n)"\n\n# Windows용 AWS CLI', start)
+    builder = source[start:end]
+    path = str(tmp_path)
+    values = {
+        "clone_dir_q": path,
+        "project_dir_q": path,
+        "repo_url_q": "https://example.invalid/repository.git",
+        "branch_q": "main",
+        "secret_parameter_q": "/test/environment",
+        "region_q": "ap-northeast-2",
+        "app_user_q": "ubuntu",
+        "deploy_script_q": str(tmp_path / "deploy_ec2.sh"),
+        "clone_parent_q": str(tmp_path.parent),
+    }
+    assignments = "\n".join(
+        f"{name}={shlex.quote(value)}" for name, value in values.items()
+    )
+    generation_result = subprocess.run(
+        [bash],
+        input=(
+            assignments
+            + "\nRUN_TESTS=0\nquote_for_remote() { printf %q \"$1\"; }\n"
+            + builder
+            + "\nprintf '%s\\n' \"$remote_command\"\n"
+        ),
+        text=True,
+        capture_output=True,
+    )
+    assert generation_result.returncode == 0, generation_result.stderr
+    generated = generation_result.stdout
+
+    calls = tmp_path / "calls.log"
+    commands = tmp_path / "commands"
+    commands.mkdir()
+    systemctl = commands / "systemctl"
+    systemctl.write_text(
+        "#!/usr/bin/env bash\n"
+        "printf 'systemctl %s\\n' \"$*\" >> \"$TEST_CALLS\"\n"
+        "if [[ \"$1\" == is-active ]]; then [[ \"$SERVICE_ACTIVE\" == 1 ]]; exit; fi\n",
+        encoding="utf-8",
+    )
+    systemctl.chmod(0o755)
+    for name in ("git", "chown"):
+        command = commands / name
+        command.write_text(
+            "#!/usr/bin/env bash\n"
+            f"printf '{name} %s\\n' \"$*\" >> \"$TEST_CALLS\"\n",
+            encoding="utf-8",
+        )
+        command.chmod(0o755)
+
+    remote_prefix = generated.split("\ninstall -d -m 755 -o root -g root", 1)[0]
+    scenario = (
+        "\ncode_updated=1\nprevious_revision=old-revision\nprevious_branch=main\n"
+        "sleep 30 &\ndeployment_pid=$!\nkill -0 \"${deployment_pid}\"\nsleep 0.2\nkill -TERM $$\n"
+    )
+    environment = dict(
+        os.environ,
+        PATH=str(commands) + os.pathsep + os.environ.get("PATH", ""),
+        TEST_CALLS=str(calls),
+        SERVICE_ACTIVE="1" if service_was_active else "0",
+    )
+    result = subprocess.run(
+        [bash],
+        input=remote_prefix + scenario,
+        text=True,
+        capture_output=True,
+        env=environment,
+        timeout=10,
+    )
+
+    assert result.returncode == 143
+    recorded = calls.read_text(encoding="utf-8")
+    assert "git -c safe.directory=" in recorded
+    assert "systemctl daemon-reload" in recorded
+    service_commands = [
+        line for line in recorded.splitlines() if line.startswith("systemctl ")
+    ]
+    expected_service_command = (
+        "systemctl restart chatbot.service"
+        if service_was_active
+        else "systemctl stop chatbot.service"
+    )
+    assert service_commands[-1] == expected_service_command

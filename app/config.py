@@ -35,10 +35,7 @@ class Settings:
     """애플리케이션 전역 설정 클래스."""
 
     # [JWT 보안 설정]
-    SECRET_KEY: str = os.getenv(
-        "SECRET_KEY",
-        "your_super_secret_jwt_key_here_codessey_b7_1_security_default",
-    )
+    SECRET_KEY: str = os.getenv("SECRET_KEY", "")
     ALGORITHM: str = os.getenv("ALGORITHM", "HS256")
     ACCESS_TOKEN_EXPIRE_MINUTES: int = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "1440"))
 

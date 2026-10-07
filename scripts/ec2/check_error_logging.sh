@@ -4,11 +4,51 @@ set -euo pipefail
 
 PROJECT_DIR="${PROJECT_DIR:-$(cd "$(dirname "$0")/../.." && pwd)}"
 SERVICE_NAME="${SERVICE_NAME:-chatbot.service}"
-BASE_URL="${BASE_URL:-http://127.0.0.1}"
 LOG_DIR="${LOG_DIR:-${PROJECT_DIR}/logs}"
 INCIDENT_REQUEST_ID="${INCIDENT_REQUEST_ID:-}"
 
-for command in systemctl curl awk grep mktemp; do
+read_env_value() {
+    local key="$1"
+    local raw
+    raw="$(grep -E "^[[:space:]]*${key}[[:space:]]*=" "${PROJECT_DIR}/.env" | head -n 1 || true)"
+    raw="${raw#*=}"
+    raw="${raw#"${raw%%[![:space:]]*}"}"
+    raw="${raw%"${raw##*[![:space:]]}"}"
+    raw="${raw#\"}"
+    raw="${raw%\"}"
+    raw="${raw#\'}"
+    raw="${raw%\'}"
+    printf '%s' "${raw}"
+}
+
+SITE_DOMAIN="${SITE_DOMAIN:-$(read_env_value SITE_DOMAIN)}"
+if [[ -n "${SITE_DOMAIN}" ]]; then
+    [[ "${SITE_DOMAIN}" =~ ^[A-Za-z0-9.-]+$ ]] || {
+        printf '%s\n' 'SITE_DOMAIN 형식이 올바르지 않습니다.' >&2
+        exit 1
+    }
+    BASE_URL="${BASE_URL:-https://${SITE_DOMAIN}}"
+else
+    BASE_URL="${BASE_URL:-http://127.0.0.1}"
+fi
+BASE_URL="${BASE_URL%/}"
+[[ "${BASE_URL}" =~ ^https?://[A-Za-z0-9._:-]+$ ]] || {
+    printf '%s\n' '검증 주소는 경로가 없는 HTTP 또는 HTTPS 주소여야 합니다.' >&2
+    exit 1
+}
+CURL_RESOLVE_ARGS=()
+if [[ "${BASE_URL}" =~ ^https://([A-Za-z0-9.-]+)(:[0-9]+)?$ ]]; then
+    base_host="${BASH_REMATCH[1]}"
+    base_port='443'
+    if [[ "${BASE_URL}" =~ :([0-9]+)$ ]]; then
+        base_port="${BASH_REMATCH[1]}"
+    fi
+    if [[ "${base_host}" != '127.0.0.1' && "${base_host}" != 'localhost' ]]; then
+        CURL_RESOLVE_ARGS=(--resolve "${base_host}:${base_port}:127.0.0.1")
+    fi
+fi
+
+for command in systemctl curl awk grep mktemp sleep; do
     command -v "$command" >/dev/null || { printf '필수 명령 없음: %s\n' "$command" >&2; exit 1; }
 done
 systemctl is-active --quiet "$SERVICE_NAME" || {
@@ -20,6 +60,7 @@ systemctl show "$SERVICE_NAME" -p StandardOutput -p StandardError
 headers="$(mktemp)"
 trap 'rm -f "$headers"' EXIT
 curl --fail --silent --show-error --max-time 10 \
+    "${CURL_RESOLVE_ARGS[@]}" \
     -D "$headers" -o /dev/null "${BASE_URL%/}/api/health"
 request_id="$(awk 'tolower($1) == "x-request-id:" {gsub("\r", "", $2); print $2; exit}' "$headers")"
 [[ "$request_id" =~ ^[[:xdigit:]]{8}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{12}$ ]] || {
