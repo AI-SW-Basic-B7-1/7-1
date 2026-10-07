@@ -292,17 +292,29 @@ active
 
 ### 8.3 애플리케이션 로그와 실제 시연
 
-배포 로그와 별도로 앱 이벤트는 프로젝트 기준 `logs/app.log` 및 Systemd journal에 남습니다. 프로젝트 루트에서 다음 명령으로 확인합니다.
+배포 완료 후 앱 이벤트는 프로젝트 기준 `logs/app.log`에, 서비스 표준 출력과
+오류는 `logs/server.log`에 남습니다. 기본 서비스 파일의 journal 설정은 로그
+드롭인의 `StandardOutput=append`, `StandardError=inherit`로 덮어씁니다.
+앱 콘솔 출력은 두 파일에 중복될 수 있습니다. Nginx 접근·오류는 각각
+`logs/nginx_access.log`, `logs/nginx_error.log`에서 확인합니다.
+프로젝트 루트에서 다음 명령으로 실제 적용 설정과 기록을 확인합니다.
 
 ~~~bash
 grep -E 'request_received|ai_call_start|ai_call_success|ai_call_failed|db_save_success|db_save_failed|db_read_failed' logs/app.log
-sudo journalctl -u chatbot.service --no-pager -n 100
+sudo systemctl show chatbot.service -p StandardOutput -p StandardError
+sudo tail -n 100 logs/server.log
+sudo tail -n 20 logs/nginx_access.log logs/nginx_error.log
+sudo bash scripts/ec2/check_error_logging.sh
 git rev-parse HEAD
 ~~~
 
 `scripts/check_server_logs.sh`와 `.ps1`은 변수 누락으로 [#17](https://github.com/AI-SW-Basic-B7-1/7-1/issues/17)에서 보강해야 합니다. 현재 위 직접 조회를 사용합니다. 실제 키·토큰·사용자 대화가 포함된 출력은 공개 증빙으로 올리지 않습니다.
 
 헬스체크 200은 AI·DB 저장 완료 증빙이 아닙니다. 외부 브라우저에서 가입/로그인 → 실제 AI 답변 → 같은 방 문맥 유지 → 재로그인 후 이력 복원 및 사용자 분리를 확인합니다. 배포 SHA와 검증 시각을 [평가 가이드](evaluation_guide.md)에 기록합니다.
+
+`sudo journalctl -u chatbot.service --no-pager -n 100`은 Systemd의 서비스
+시작·종료 및 이전 journal 출력 기록을 확인하는 보조 명령입니다. 현재 앱 출력을
+찾는 기본 경로는 `logs/server.log`이며, 기존 journal 기록은 이 파일로 이동하지 않습니다.
 
 ### 8.4 백업 예약
 
@@ -312,6 +324,71 @@ git rev-parse HEAD
 ssh -i <PRIVATE_KEY_PATH> ubuntu@15.164.49.77 "sudo cat /etc/cron.d/b7-1-chatbot-backup"
 ssh -i <PRIVATE_KEY_PATH> ubuntu@15.164.49.77 "ls -l /home/ubuntu/db_backups"
 ~~~
+
+### 8.5 실제 EC2 로그 회전 검증
+
+아래 절차는 설치된 운영 로그를 한 차례 강제 회전하며 상태 파일도 갱신합니다.
+예약 실행과 겹치지 않는 저부하 시간에 운영 담당자가 실행합니다. 백업 보관 수에
+도달했다면 가장 오래된 백업이 제거됩니다. `server.log`의 `copytruncate`에는
+짧은 기록 유실 가능성이 있으므로 무손실 검증이라고 표현하지 않습니다.
+서비스 재시작이나 고의 장애는 만들지 않습니다.
+
+먼저 EC2 프로젝트 루트에서 정책·예약과 서비스 상태를 확인합니다.
+
+~~~bash
+sudo systemctl is-active chatbot.service nginx.service cron.service
+sudo cat /etc/cron.d/b7-1-logrotate
+sudo logrotate --debug /etc/b7-1/logrotate.conf
+sudo systemctl show chatbot.service -p StandardOutput -p StandardError
+~~~
+
+모두 정상일 때 같은 Bash 세션에서 다음을 실행합니다. 중간 명령이 실패하면
+후속 단계를 중단하고 출력 원인을 확인합니다. 경로와 서비스 이름은 실제 배포에 맞춥니다.
+
+~~~bash
+bash
+set -euo pipefail
+headers=$(mktemp)
+trap 'rm -f "$headers"' EXIT
+pid_before=$(systemctl show chatbot.service -p MainPID --value)
+inode_before=$(stat -c '%i' logs/server.log)
+curl --fail --silent --show-error -D "$headers" http://127.0.0.1/api/health
+before_id=$(awk 'tolower($1)=="x-request-id:" {gsub("\r", "", $2); print $2}' "$headers")
+test -n "$before_id"
+sleep 1
+sudo grep -F "request_id=$before_id" logs/nginx_access.log
+sudo grep -F "request_id=$before_id" logs/server.log
+
+sudo logrotate --verbose --force --state /var/lib/b7-1-logrotate/status /etc/b7-1/logrotate.conf
+sleep 2
+curl --fail --silent --show-error -D "$headers" http://127.0.0.1/api/health
+after_id=$(awk 'tolower($1)=="x-request-id:" {gsub("\r", "", $2); print $2}' "$headers")
+test -n "$after_id"
+test "$before_id" != "$after_id"
+sleep 1
+sudo grep -F "request_id=$before_id" logs/nginx_access.log.1
+sudo grep -F "request_id=$before_id" logs/server.log.1
+sudo grep -F "request_id=$after_id" logs/nginx_access.log
+sudo grep -F "request_id=$after_id" logs/server.log
+sudo grep -F "request_id=$after_id" logs/app.log
+test "$pid_before" = "$(systemctl show chatbot.service -p MainPID --value)"
+test "$inode_before" = "$(stat -c '%i' logs/server.log)"
+sudo readlink "/proc/$pid_before/fd/1" "/proc/$pid_before/fd/2"
+sudo ls -li logs/nginx_access.log* logs/nginx_error.log* logs/server.log*
+date -Is
+git rev-parse HEAD
+exit
+~~~
+
+통과 기준은 회전 전 요청이 `.1`에 남고, 회전 후 요청이 현재 접근 로그·
+서버 로그·앱 로그에 같은 ID로 남는 것입니다.
+서비스 PID와 서버 로그 inode가 바뀌지 않고, 표준 출력·오류의 참조 대상이
+현재 `server.log`인지도 확인합니다.
+`nginx_error.log`가 비어 있다면 `notifempty`로 회전하지 않는 것이 정상입니다.
+실제 오류 기록 지속은 자연 발생 시 별도로 확인하며 이 헬스체크만으로 검증 완료 처리하지 않습니다.
+
+로컬 대역 테스트와 실제 EC2 결과를 구분하여 실행 시각·커밋 SHA·
+회전 결과·회전 전후 요청 ID를 PR에 기록합니다. 개인정보나 비밀값은 첨부하지 않습니다.
 
 ## 9. 보안 주의사항
 
