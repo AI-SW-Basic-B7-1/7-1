@@ -30,7 +30,7 @@ fail() {
 id "${APP_USER}" >/dev/null 2>&1 || fail "애플리케이션 사용자 계정을 찾을 수 없습니다: ${APP_USER}"
 [[ -d "${PROJECT_DIR}" ]] || fail "프로젝트 디렉터리를 찾을 수 없습니다: ${PROJECT_DIR}"
 [[ -f "${PROJECT_DIR}/requirements.txt" ]] || fail "requirements.txt를 찾을 수 없습니다: ${PROJECT_DIR}"
-[[ -f "${ENV_FILE}" ]] || fail '.env 파일이 없습니다. SSM 실행 시 --env-file을 사용하거나 서버에 먼저 배치해야 합니다.'
+[[ -f "${ENV_FILE}" ]] || fail '.env 파일이 없습니다. SSM 실행 시 Parameter Store SecureString을 전달해야 합니다.'
 LOGGING_SCRIPT="${PROJECT_DIR}/scripts/ec2/configure_nginx_logs.sh"
 [[ -f "${LOGGING_SCRIPT}" ]] || fail '로그 설정 스크립트가 없습니다.'
 ROTATION_SCRIPT="${PROJECT_DIR}/scripts/ec2/configure_log_rotation.sh"
@@ -95,14 +95,21 @@ env_value() {
 
 log_step '운영 환경변수 필수 항목 확인'
 secret_key="$(env_value SECRET_KEY)"
+algorithm="$(env_value ALGORITHM)"
 gemini_api_key="$(env_value GEMINI_API_KEY)"
 database_url="$(env_value DATABASE_URL)"
+SITE_DOMAIN="$(env_value SITE_DOMAIN)"
+[[ -n "${algorithm}" ]] || algorithm='HS256'
 [[ -n "${secret_key}" ]] || fail 'SECRET_KEY가 비어 있습니다.'
+secret_key_bytes="$(printf '%s' "${secret_key}" | wc -c)"
+[[ "${secret_key_bytes}" -ge 32 ]] || fail 'SECRET_KEY는 UTF-8 기준 32바이트 이상이어야 합니다.'
+[[ "${algorithm}" == 'HS256' ]] || fail 'ALGORITHM은 HS256이어야 합니다.'
 [[ -n "${gemini_api_key}" ]] || fail 'GEMINI_API_KEY가 비어 있습니다.'
 [[ -n "${database_url}" ]] || fail 'DATABASE_URL이 비어 있습니다.'
-[[ "${secret_key}" != *'your_super_secret_jwt_key_here'* ]] || fail 'SECRET_KEY에 예시값이 남아 있습니다.'
+[[ -n "${SITE_DOMAIN}" && "${SITE_DOMAIN}" =~ ^[A-Za-z0-9.-]+$ && "${SITE_DOMAIN}" != .* && "${SITE_DOMAIN}" != *. ]] || fail 'SITE_DOMAIN에 HTTPS용 도메인을 설정해야 합니다.'
+[[ "${secret_key,,}" != *'your_super_secret_jwt_key_here'* ]] || fail 'SECRET_KEY에 예시값이 남아 있습니다.'
 [[ "${gemini_api_key}" != *'여기에_본인의_Gemini_API_Key'* ]] || fail 'GEMINI_API_KEY에 예시값이 남아 있습니다.'
-unset secret_key gemini_api_key database_url
+unset secret_key secret_key_bytes algorithm gemini_api_key database_url
 
 run_cmd 'EC2 시간대 설정' timedatectl set-timezone Asia/Seoul
 configured_timezone="$(timedatectl show --property=Timezone --value)"
@@ -111,7 +118,7 @@ configured_timezone="$(timedatectl show --property=Timezone --value)"
 export DEBIAN_FRONTEND=noninteractive
 run_cmd '패키지 목록 갱신' apt-get update
 run_cmd '기본 패키지 업그레이드' apt-get upgrade -y
-run_cmd '배포 필수 패키지 설치' apt-get install -y ca-certificates curl cron git logrotate nginx openssl python3 python3-pip python3-venv sqlite3
+run_cmd '배포 필수 패키지 설치' apt-get install -y ca-certificates certbot cron git logrotate nginx openssl python3 python3-pip python3-venv sqlite3
 
 log_step '2GB Swap 구성'
 if swapon --show=NAME --noheadings | awk '{print $1}' | grep -Fxq "${SWAP_FILE}"; then
@@ -159,13 +166,22 @@ LOGGING_DROPIN="/etc/systemd/system/${SERVICE_NAME}.d/90-b7-1-logging.conf"
 
 # 검증 완료 전까지 설정 원본을 보존합니다. 앱 코드와 DB는 복원 대상이 아닙니다.
 CONFIG_BACKUP="$(mktemp -d)"
-CONFIG_PATHS=("${NGINX_AVAILABLE}" "${NGINX_ENABLED}" /etc/nginx/sites-enabled/default "${SYSTEMD_UNIT}" "${LOGGING_DROPIN}" /etc/b7-1/logrotate.conf /etc/cron.d/b7-1-logrotate)
+CONFIG_PATHS=("${NGINX_AVAILABLE}" "${NGINX_ENABLED}" /etc/nginx/sites-enabled/default "${SYSTEMD_UNIT}" "${LOGGING_DROPIN}" /etc/b7-1/logrotate.conf /etc/cron.d/b7-1-logrotate /etc/letsencrypt/renewal-hooks/deploy/b7-1-nginx-reload)
 CONFIG_COMMITTED=0
 SERVICES_CHANGED=0
+SERVICE_ENABLEMENT_CHANGED=0
 NGINX_WAS_ACTIVE=0
 APP_WAS_ACTIVE=0
+CERTBOT_TIMER_WAS_ACTIVE=0
+NGINX_WAS_ENABLED=0
+APP_WAS_ENABLED=0
+CERTBOT_TIMER_WAS_ENABLED=0
 systemctl is-active --quiet nginx && NGINX_WAS_ACTIVE=1
 systemctl is-active --quiet "${SERVICE_NAME}" && APP_WAS_ACTIVE=1
+systemctl is-active --quiet certbot.timer && CERTBOT_TIMER_WAS_ACTIVE=1
+systemctl is-enabled --quiet nginx && NGINX_WAS_ENABLED=1
+systemctl is-enabled --quiet "${SERVICE_NAME}" && APP_WAS_ENABLED=1
+systemctl is-enabled --quiet certbot.timer && CERTBOT_TIMER_WAS_ENABLED=1
 for index in "${!CONFIG_PATHS[@]}"; do
     path="${CONFIG_PATHS[$index]}"
     if [[ -e "${path}" || -L "${path}" ]]; then
@@ -185,6 +201,12 @@ restore_deploy_config() {
             fi
         done
         systemctl daemon-reload
+        if [[ "${SERVICE_ENABLEMENT_CHANGED}" -eq 1 ]]; then
+            if [[ "${NGINX_WAS_ENABLED}" -eq 1 ]]; then systemctl enable nginx; else systemctl disable nginx; fi
+            if [[ "${APP_WAS_ENABLED}" -eq 1 ]]; then systemctl enable "${SERVICE_NAME}"; else systemctl disable "${SERVICE_NAME}"; fi
+            if [[ "${CERTBOT_TIMER_WAS_ENABLED}" -eq 1 ]]; then systemctl enable certbot.timer; else systemctl disable certbot.timer; fi
+            if [[ "${CERTBOT_TIMER_WAS_ACTIVE}" -eq 1 ]]; then systemctl start certbot.timer; else systemctl stop certbot.timer; fi
+        fi
         if [[ "${SERVICES_CHANGED}" -eq 1 ]]; then
             if [[ "${APP_WAS_ACTIVE}" -eq 1 ]]; then
                 systemctl restart "${SERVICE_NAME}" || printf '%s\n' '앱 서비스 복구 실패' >&2
@@ -205,13 +227,82 @@ restore_deploy_config() {
 trap restore_deploy_config EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
+
+install_https_site() {
+    local site_temp_file
+    site_temp_file="$(mktemp)"
+    cat > "${site_temp_file}" <<EOF
+server {
+    listen 80;
+    server_name ${SITE_DOMAIN};
+
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+
+    location / {
+        return 301 https://${SITE_DOMAIN}\$request_uri;
+    }
+}
+
+server {
+    listen 443 ssl;
+    server_name ${SITE_DOMAIN};
+    ssl_certificate /etc/letsencrypt/live/${SITE_DOMAIN}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${SITE_DOMAIN}/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    client_max_body_size 2M;
+
+    location ~* \\.(db|sqlite|sqlite3|env|git|log)$ {
+        deny all;
+        return 404;
+    }
+
+    location ^~ /data/ {
+        deny all;
+        return 404;
+    }
+
+    location /static/ {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+        expires 1d;
+        add_header Cache-Control "public, no-transform";
+    }
+
+    location / {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_connect_timeout 30s;
+        proxy_read_timeout 30s;
+        proxy_send_timeout 30s;
+    }
+}
+EOF
+    install -o root -g root -m 644 "${site_temp_file}" "${NGINX_AVAILABLE}"
+    rm -f -- "${site_temp_file}"
+}
+
 nginx_temp_file="$(mktemp)"
 cat > "${nginx_temp_file}" <<EOF
 server {
     listen 80;
-    server_name _;
+    server_name ${SITE_DOMAIN};
 
     client_max_body_size 2M;
+
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
 
     # SQLite 데이터베이스와 환경설정 파일의 외부 다운로드를 차단합니다.
     location ~* \\.(db|sqlite|sqlite3|env|git|log)$ {
@@ -280,6 +371,7 @@ run_cmd 'Systemd 서비스 파일 설치' install -o root -g root -m 644 "${syst
 rm -f "${systemd_temp_file}"
 run_cmd 'Nginx·서비스 로그 설정 준비' env SITE_CONFIG="${NGINX_AVAILABLE}" SERVICE_NAME="${SERVICE_NAME}" \
     bash "${LOGGING_SCRIPT}" --prepare
+SERVICE_ENABLEMENT_CHANGED=1
 run_cmd '운영 로그 회전 정책 설치' bash "${ROTATION_SCRIPT}"
 run_cmd '최종 Nginx 문법 검사' nginx -t
 run_cmd 'Systemd 설정 다시 읽기' systemctl daemon-reload
@@ -313,10 +405,26 @@ rm -f "${cron_temp_file}"
 run_cmd 'Cron 부팅 자동 시작 설정' systemctl enable cron
 run_cmd 'Cron 재시작' systemctl restart cron
 
+run_cmd 'Let’s Encrypt 인증서 발급·갱신' certbot certonly --webroot \
+    --webroot-path /var/www/certbot --cert-name "${SITE_DOMAIN}" \
+    --domain "${SITE_DOMAIN}" --non-interactive --agree-tos \
+    --register-unsafely-without-email --keep-until-expiring
+[[ -s "/etc/letsencrypt/live/${SITE_DOMAIN}/fullchain.pem" ]] || fail 'HTTPS 인증서 파일이 없습니다.'
+[[ -s "/etc/letsencrypt/live/${SITE_DOMAIN}/privkey.pem" ]] || fail 'HTTPS 개인 키 파일이 없습니다.'
+install_https_site
+run_cmd 'HTTPS Nginx 로그 설정 준비' env SITE_CONFIG="${NGINX_AVAILABLE}" SERVICE_NAME="${SERVICE_NAME}" \
+    bash "${LOGGING_SCRIPT}" --prepare
+run_cmd 'HTTPS Nginx 문법 검사' nginx -t
+run_cmd 'HTTPS Nginx 설정 적용' systemctl reload nginx
+run_cmd '인증서 자동 갱신 타이머 활성화' systemctl enable --now certbot.timer
+run_cmd '갱신 후크 디렉터리 생성' install -d -o root -g root -m 755 /etc/letsencrypt/renewal-hooks/deploy
+renewal_hook="${CONFIG_BACKUP}/b7-1-nginx-reload"
+printf '%s\n' '#!/usr/bin/env bash' 'systemctl reload nginx' > "${renewal_hook}"
+run_cmd '인증서 갱신 후크 설치' install -o root -g root -m 750 "${renewal_hook}" /etc/letsencrypt/renewal-hooks/deploy/b7-1-nginx-reload
 log_step '서비스 헬스체크 대기'
 health_ok=0
 for attempt in $(seq 1 30); do
-    if curl -fsS --max-time 3 http://127.0.0.1/api/health; then
+    if curl --resolve "${SITE_DOMAIN}:443:127.0.0.1" -fsS --max-time 3 "https://${SITE_DOMAIN}/api/health"; then
         printf '\n'
         health_ok=1
         break
@@ -325,17 +433,20 @@ for attempt in $(seq 1 30); do
 done
 [[ "${health_ok}" -eq 1 ]] || {
     journalctl -u "${SERVICE_NAME}" --no-pager -n 50
-    fail '로컬 헬스체크에 실패했습니다: http://127.0.0.1/api/health'
+    fail "HTTPS 헬스체크에 실패했습니다: https://${SITE_DOMAIN}/api/health"
 }
 
 for static_path in /static/css/style.css /static/js/auth.js /static/js/app.js; do
-    if ! curl -fsS --max-time 5 "http://127.0.0.1${static_path}" -o /dev/null; then
+    if ! curl --resolve "${SITE_DOMAIN}:443:127.0.0.1" -fsS --max-time 5 "https://${SITE_DOMAIN}${static_path}" -o /dev/null; then
         fail "Nginx 정적 파일 점검에 실패했습니다: ${static_path}"
     fi
 done
 
-db_block_status="$(curl -sS --max-time 5 -o /dev/null -w '%{http_code}' http://127.0.0.1/data/chatbot.db || true)"
-[[ "${db_block_status}" == '404' ]] || fail "Nginx의 DB 파일 차단 검증에 실패했습니다. HTTP 상태: ${db_block_status}"
+db_block_status="$(curl --resolve "${SITE_DOMAIN}:443:127.0.0.1" -sS --max-time 5 -o /dev/null -w '%{http_code}' "https://${SITE_DOMAIN}/data/chatbot.db" || true)"
+[[ "${db_block_status}" == '404' ]] || fail "Nginx의 DB 파일 차단 검증에 실패했습니다. HTTPS 상태: ${db_block_status}"
+
+redirect_status="$(curl --resolve "${SITE_DOMAIN}:80:127.0.0.1" -sS --max-time 5 -o /dev/null -w '%{http_code}' "http://${SITE_DOMAIN}/api/health" || true)"
+[[ "${redirect_status}" == '301' || "${redirect_status}" == '308' ]] || fail "HTTP에서 HTTPS로의 리디렉션 검증에 실패했습니다. HTTP 상태: ${redirect_status}"
 
 [[ -f "${DB_PATH}" ]] || fail "헬스체크 이후에도 SQLite 파일이 생성되지 않았습니다: ${DB_PATH}"
 run_cmd 'SQLite 무결성 확인' sqlite3 "${DB_PATH}" 'PRAGMA integrity_check;'
@@ -346,6 +457,7 @@ log_step 'EC2 배포 완료'
 printf '배포 로그: %s\n' "${LOG_FILE}"
 printf '애플리케이션 경로: %s\n' "${PROJECT_DIR}"
 printf 'Systemd 서비스: %s\n' "${SERVICE_NAME}"
-printf 'Nginx 보안 검증: DB 직접 접근 HTTP 404 확인\n'
+printf 'HTTPS 주소: https://%s\n' "${SITE_DOMAIN}"
+printf 'Nginx 보안 검증: HTTP→HTTPS 리디렉션 및 DB 직접 접근 404 확인\n'
 printf 'SQLite 백업 예약: 매일 04:00, 보관 기간 %s일\n' "${RETENTION_DAYS}"
 cat "${LOG_FILE}" >&3
