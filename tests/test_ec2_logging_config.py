@@ -277,6 +277,7 @@ def test_deploy_configuration_sequence(script_environment, site_name, service, f
         PATH=str(root / "commands") + os.pathsep + env.get("PATH", ""),
         PROJECT_DIR=str(project), APP_USER="ubuntu", ENV_FILE=str(project / ".env"),
         SERVICE_NAME=service, NGINX_SITE_NAME=site_name,
+        SITE_DOMAIN="test.local",
         SITE_CONFIG=str(site), TEST_ROOT=str(root), TEST_MODE="fresh",
         LOGGING_SCRIPT=str(project / "scripts/ec2/configure_nginx_logs.sh"),
         ROTATION_SCRIPT=str(project / "scripts/ec2/configure_log_rotation.sh"),
@@ -291,6 +292,7 @@ def test_deploy_configuration_sequence(script_environment, site_name, service, f
         env.update(TEST_MODE="query_leak", TEST_INIT_INACTIVE="1")
         result = execute()
         assert result.returncode != 0
+        assert (root / "probes").read_text(encoding="utf-8").splitlines()
         for path in (site, unit, dropin, nginx / "sites-enabled" / site_name,
                      root / "rotation/logrotate.conf", root / "cron/b7-1-logrotate"):
             assert not path.exists() and not path.is_symlink()
