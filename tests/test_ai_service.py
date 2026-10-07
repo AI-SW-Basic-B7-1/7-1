@@ -4,7 +4,16 @@ import httpx
 import pytest
 
 from app import ai_service
-from app.ai_service import AIServiceError, AITimeoutError, generate_chat_response
+from app.ai_service import (
+    AIServiceError,
+    AITimeoutError,
+    DATA_SYSTEM_INSTRUCTION,
+    NO_PARAMETER_SYSTEM_INSTRUCTION,
+    NO_RESULT_SYSTEM_INSTRUCTION,
+    PARAMETER_SYSTEM_INSTRUCTION,
+    generate_chat_response,
+)
+from app.pet_service import AREA_CODES
 
 
 class FakeResponse:
@@ -44,6 +53,30 @@ class FakeAsyncClient:
             raise self.error
         assert self.response is not None
         return self.response
+
+
+@pytest.mark.parametrize(
+    ("instruction", "preserved_format"),
+    [
+        (NO_PARAMETER_SYSTEM_INSTRUCTION, "기존 항목 형식"),
+        (NO_RESULT_SYSTEM_INSTRUCTION, "기존 답변 형식"),
+        (DATA_SYSTEM_INSTRUCTION, "기존 항목 형식과 답변 내용"),
+    ],
+)
+def test_final_answer_prompts_keep_content_and_avoid_bold_markdown(
+    instruction,
+    preserved_format,
+):
+    """최종 답변 지침은 기존 내용에 굵게 표시하는 Markdown만 금지합니다."""
+    assert preserved_format in instruction
+    assert "굵게 표시하는 Markdown 장식은 사용하지 않는다" in instruction
+
+
+def test_parameter_prompt_uses_gangneung_area_code_from_mapping():
+    """검색 조건 예시의 강릉 지역 코드가 지역 코드표와 일치하는지 검증합니다."""
+    assert AREA_CODES["강원도"] == 32
+    assert "예: 강릉 → 강원도 → 32" in PARAMETER_SYSTEM_INSTRUCTION
+    assert "예: 강릉 → 강원도 → 10" not in PARAMETER_SYSTEM_INSTRUCTION
 
 
 @pytest.mark.anyio

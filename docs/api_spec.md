@@ -1,6 +1,6 @@
 # AI Assistant REST API 명세
 
-> 구현 대조: 2026-09-23, `develop`의 `755e7e2`.
+> 작업 대조: 2026-10-07, `develop`의 `4c67c8` 기반 작업 브랜치.
 > Base URL: `/api`. 로컬 [Swagger UI](http://127.0.0.1:8000/docs), [ReDoc](http://127.0.0.1:8000/redoc).
 > 근거: [schemas.py](../app/schemas.py), [인증 라우터](../app/routers/auth_router.py), [채팅 라우터](../app/routers/chat_router.py), [예외 처리](../app/exception_handlers.py), [DB](../app/database.py).
 
@@ -61,7 +61,7 @@
 {"id":1,"username":"demo_user","created_at":"2026-09-23 10:00:00"}
 ```
 
-토큰 누락·위조·만료·해당 사용자 없음은 401 `{"detail":"인증 토큰이 유효하지 않거나 만료되었습니다."}`와 `WWW-Authenticate: Bearer`를 반환합니다. 프론트는 JWT를 `localStorage`에 저장합니다. 로그아웃 API는 없고 브라우저 토큰을 삭제하며 서버 측 즉시 폐기는 없습니다. 기본 만료는 `ACCESS_TOKEN_EXPIRE_MINUTES=1440`입니다.
+토큰 누락·위조·만료·해당 사용자 없음은 401 `{"detail":"인증 토큰이 유효하지 않거나 만료되었습니다."}`와 `WWW-Authenticate: Bearer`를 반환합니다. 프론트는 JWT를 `localStorage`에 저장합니다. 로그아웃 API는 없고 브라우저 토큰을 삭제하며 서버 측 즉시 폐기는 없습니다. 기본 만료는 `ACCESS_TOKEN_EXPIRE_MINUTES=60`분입니다.
 
 ## 4. 채팅 요청과 저장
 
@@ -90,9 +90,9 @@
 {"conversation_id":1,"question":"제가 방금 무엇을 물어봤나요?"}
 ```
 
-처리 순서는 인증·입력 검증 → 방 소유권 검사 → 같은 방 최근 **5쌍**을 오래된 순서로 조회 → `generate_chat_response(question, history)` → DB 저장 → 응답입니다. 새 방은 history가 비어 있고 AI 성공 후 저장 단계에서 생성됩니다. 타인/없는 방은 AI 호출 전에 404입니다. 저장 함수도 소유권을 재확인합니다.
+처리 순서는 인증·입력 검증 → 방 소유권 검사 → 같은 방 최근 **5쌍**을 오래된 순서로 조회 → Gemini로 검색 조건 추출 → 지역·관광 유형이 있으면 KorPetTourService2 장소 목록 및 상세 조건 조회 → 조건 누락·결과 없음·조회 결과에 맞는 기존 Gemini 답변 프롬프트 적용 → DB 저장 → 응답입니다. 지역이나 관광 유형이 부족하면 관광 API를 호출하지 않고 필요한 정보를 묻습니다. 새 방은 history가 비어 있고 답변 생성 후 저장 단계에서 생성됩니다. 타인/없는 방은 외부 API 호출 전에 404입니다. 저장 함수도 소유권을 재확인합니다.
 
-`latency_ms`는 AI 서비스 함수 구간을 측정한 0 이상의 정수이며 DB 읽기·쓰기와 전체 네트워크 왕복시간은 제외합니다. `AI_TIMEOUT_SECONDS` 기본 8.0은 httpx 네트워크 타임아웃 설정으로, 전체 요청의 절대 마감시간은 아닙니다. AI 실패 시 정상 Q/A는 저장하지 않으며 DB 저장 예외는 롤백합니다.
+`latency_ms`는 Gemini 검색 조건 분석 시작부터 최종 답변 생성까지의 0 이상의 정수입니다. 중간에 수행하는 KorPetTourService2 조회를 포함하고, 앞선 DB 문맥 조회·후속 DB 저장과 브라우저까지의 전체 왕복시간은 포함하지 않습니다. Gemini(`AI_TIMEOUT_SECONDS`)와 관광 API(`PET_TOUR_API_TIMEOUT_SECONDS`)의 개별 HTTP 요청 기본 제한은 각각 15초이며 전체 채팅의 절대 마감시간은 아닙니다. EC2 Nginx `proxy_read_timeout`은 upstream에서 연속된 읽기 사이의 최대 대기시간인 80초로 설정합니다. 여러 외부 호출로 응답이 준비되는 시간이 길어지면 Nginx가 먼저 연결을 종료할 수 있습니다. AI 또는 관광 API 실패 시 정상 Q/A는 저장하지 않으며 DB 저장 예외는 롤백합니다.
 
 | 상태 | 상황 | 실제 `detail` |
 |---|---|---|
@@ -103,7 +103,9 @@
 | 500 | 방 소유권/문맥 DB 조회 실패 | `대화 기록을 불러오지 못했습니다.` |
 | 500 | 대화 DB 저장 실패 | `대화 기록을 저장하지 못했습니다.` |
 | 502 | AI 네트워크·HTTP·응답 형식 등 오류 | `AI 응답을 생성하지 못했습니다. 잠시 후 다시 시도해 주세요.` |
-| 504 | AI 타임아웃 | `현재 AI 응답이 지연되고 있습니다. 잠시 후 다시 시도해 주세요.` |
+| 502 | KorPetTourService2 네트워크·HTTP·응답 오류 | `반려동물 여행 정보를 조회하지 못했습니다. 잠시 후 다시 시도해 주세요.` |
+| 504 | Gemini 타임아웃 | `현재 AI 응답이 지연되고 있습니다. 잠시 후 다시 시도해 주세요.` |
+| 504 | KorPetTourService2 타임아웃 | `관광 정보를 조회하는 데 시간이 걸리고 있습니다. 잠시 후 다시 시도해 주세요.` |
 
 예를 들어 504 본문은 다음과 같습니다. 별도의 `error: AI_TIMEOUT` 필드는 현재 API에 없습니다.
 
@@ -130,4 +132,4 @@
 
 프론트 통신은 [api.js](../static/js/api.js) 한 곳을 사용합니다. 첫 질문 → 응답 ID 수신 → 동일 ID로 후속 요청 → 전체 이력 재조회 계약을 지키고, 메시지 렌더링·계정 전환 경계는 [프론트 가이드](FRONTEND_GUIDE.md)를 따릅니다. 대역 채팅 응답에도 `conversation_id`, `answer`, `latency_ms`를 모두 넣습니다.
 
-여행 장소·좌표·수요 API 및 구조화된 결과 필드는 **미구현**입니다. [여행 명세](pet_travel_spec.md)는 후속 설계이며 이 문서의 현행 엔드포인트 목록에 포함하지 않습니다. 로그·SQL·실제 검증 범위는 [평가 가이드](evaluation_guide.md)에서 확인합니다.
+반려동물 여행 장소·동반 조건은 KorPetTourService2를 통해 현재 채팅 답변에 연결되어 있습니다. 별도 여행 조회 API, 장소 좌표·카드, 지역 수요 API 및 구조화된 결과 필드는 **미구현**이며 [여행 명세](pet_travel_spec.md)는 이 후속 설계를 다룹니다. 로그·SQL·실제 검증 범위는 [평가 가이드](evaluation_guide.md)에서 확인합니다.

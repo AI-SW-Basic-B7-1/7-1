@@ -3,8 +3,8 @@
 반려동물을 데리고 국내여행을 준비하는 사용자가 여행 조건을 질문하고, 장소와 동반 조건을 대화로 확인하도록 만드는 웹 서비스입니다. 기존 AI Assistant의 로그인·채팅·대화방·DB 저장 기능을 기반으로 한국관광공사 반려동물 동반여행 정보를 연결하고, **지역별 관광 자원 수요와 Google Maps API까지 확장 가능한 서비스**를 목표로 합니다.
 
 > **과제**: AI/SW 기초 · Term Project · 필수 · 학습시간 120시간
-> **구현 기준**: 2026-09-23, `develop`의 `755e7e2`
-> **현재 상태**: 범용 Gemini 챗봇 기반 기능은 구현되어 있습니다. **관광공사 두 데이터 서비스 조회·Google Maps 연동·데이터에 근거한 여행 추천은 아직 미구현**이며, 아래 기획과 후속 명세의 대상입니다. 문서 변경만으로 해당 기능이 동작하지는 않습니다.
+> **작업 기준**: 2026-10-07, `develop`의 `4c67c8` 기반 작업 브랜치
+> **현재 상태**: Gemini가 검색 조건을 추출하고 KorPetTourService2 장소·동반 조건을 조회해 근거 기반 답변을 생성합니다. 지역별 관광 자원 수요·Google Maps·장소 카드와 구조화된 응답은 후속 범위입니다.
 
 ## 프로젝트 개요
 
@@ -16,7 +16,7 @@
 
 1. 회원가입·로그인 후 새 대화를 시작합니다.
 2. “5kg 강아지와 강릉에서 하루 여행하고 싶어요”처럼 지역·일정·반려동물 조건을 입력합니다.
-3. 서버가 관광공사에서 장소 후보와 동반 조건을 조회하고, Gemini가 조회된 근거를 바탕으로 안내합니다. **이 단계의 공공데이터 조회는 후속 구현 대상입니다.**
+3. 서버가 관광공사에서 장소 후보와 동반 조건을 조회하고, Gemini가 조회된 근거를 바탕으로 안내합니다.
 4. 확장 기능이 구현되면 지역별 관광 자원 수요를 참고한 지역 비교와 Google Maps 지도에서 장소 위치 확인을 제공합니다. 이 역시 현재 구현된 기능은 아닙니다.
 5. 같은 방에서 “실내 동반도 가능한가요?”라고 질문하면 최근 문맥을 이어갑니다.
 6. 질문·답변을 저장하고 재로그인 후 같은 대화방에서 확인합니다.
@@ -27,11 +27,11 @@
 
 | 데이터·API | 목적과 역할 | 상태 |
 |---|---|---|
-| [한국관광공사_반려동물_동반여행_서비스](https://www.data.go.kr/data/15135102/openapi.do) | 장소 후보·반려동물 동반 조건·주의사항 확인 | 핵심 여행 데이터 연동 계획, 미구현 |
+| [한국관광공사_반려동물_동반여행_서비스](https://www.data.go.kr/data/15135102/openapi.do) | 장소 후보·반려동물 동반 조건·주의사항 확인 | KorPetTourService2 목록·상세 조회와 답변 근거 연결 구현 |
 | [한국관광공사_지역별 관광 자원 수요](https://www.data.go.kr/data/15152138/openapi.do) | 지역의 관광 서비스·문화 자원 수요 지표를 지역 비교와 추천 설명의 보조 근거로 사용 | 확장 계획, 미구현 |
 | [Google Maps Platform — Maps JavaScript API](https://developers.google.com/maps/documentation/javascript/overview) | 확인된 장소 좌표를 지도와 마커로 표시 | 확장 계획, 미구현. 사용할 제품·설정은 PoC로 확정 |
 | [한국관광공사_국문 관광정보 서비스_GW](https://www.data.go.kr/data/15101578/openapi.do) | 필요 시 기본 관광정보 보완 | 추가 후보 |
-| Gemini API | 대화 문맥과 확인된 근거를 바탕으로 답변 생성 | 현재 범용 대화 연결 구현, 여행 근거 결합은 후속 작업 |
+| Gemini API | 대화 문맥과 확인된 근거를 바탕으로 답변 생성 | 검색 조건 추출과 여행 근거 기반 답변 구현 |
 
 지역별 관광 자원 수요는 **지역 단위의 수요 지표**입니다. 개별 장소의 동반 허용 여부·실시간 혼잡도·현재 방문객 수를 알려주는 데이터로 설명하지 않습니다. 원본의 지역 코드·기준 기간·지표 정의·단위를 확인한 뒤 비교하며, 높은 수요를 모든 반려동물 보호자에게 적합하다는 의미로 사용하지 않습니다.
 
@@ -39,7 +39,7 @@ Google Maps는 지도 표시와 경로 계산을 구분합니다. 2026-09-23 [�
 
 [Maps URLs](https://developers.google.com/maps/documentation/urls/get-started)는 키 없이 외부 지도를 여는 링크 방식이며, 이것만 구현하고 Maps API를 연결했다고 표시하지 않습니다. Maps JavaScript API를 사용한다면 [요금·할당량](https://developers.google.com/maps/documentation/javascript/usage-and-billing)과 [키 제한](https://developers.google.com/maps/api-security-best-practices)을 확인합니다. 브라우저용 지도 키는 사용자에게 보일 수 있으므로 웹사이트·API 제한을 적용하고, 서버 전용 키와 분리합니다. 키의 실제 값은 Git에 넣지 않습니다.
 
-각 데이터·API의 역할과 단계별 연결·실패 처리·검증 기준은 [여행 서비스 명세](docs/pet_travel_spec.md)에 정리합니다. 현재 이들 확장 설정을 추가로 넣는 것만으로 기능이 활성화되지는 않습니다.
+지역 수요와 Google Maps의 역할 및 후속 연결 기준은 [여행 서비스 명세](docs/pet_travel_spec.md)에 정리합니다. 반려동물 여행 조회의 실제 API와 필드 구성은 [반려동물 동반 정보 조회](docs/pet_tour_data.md)를 참고합니다.
 
 ## 실행 주소와 문서
 
@@ -66,15 +66,17 @@ flowchart TD
     Browser["브라우저: HTML/CSS/JavaScript"] --> Nginx["Nginx: FastAPI 요청 프록시 (/static/ 포함)"]
     Nginx --> API["FastAPI: 인증·입력 검증·채팅"]
     API --> DB["SQLite: 사용자·대화방·로그"]
-    API --> AI["ai_service: Gemini 호출"]
+    API --> AI["ai_service: 조건 분석·답변 생성"]
+    API --> Pet["pet_service: 장소·동반 조건 조회"]
     AI --> Gemini["Gemini API"]
+    Pet --> Tour["KorPetTourService2"]
     API -. "저장 성공 후 shadow 백그라운드 판정" .-> Jev["jev_service: TypeSafe Jev 호출"]
     API --> Log["콘솔·logs/app.log"]
 ```
 
-로컬에서는 Uvicorn/FastAPI가 `/`와 `/static/`을 제공합니다. EC2에서는 Nginx가 `/`와 `/static/` 요청을 내부 FastAPI로 전달하고, FastAPI가 정적 파일을 제공합니다. 관광공사 데이터 조회와 Google Maps 연동은 위 현재 구조에 아직 포함되지 않습니다.
+로컬에서는 Uvicorn/FastAPI가 `/`와 `/static/`을 제공합니다. EC2에서는 Nginx가 `/`와 `/static/` 요청을 내부 FastAPI로 전달하고, FastAPI가 정적 파일을 제공합니다. 지역·관광 유형을 확인한 채팅 요청은 `pet_service`가 KorPetTourService2 장소 목록과 상세 조건을 조회해 Gemini에 전달합니다. Google Maps 연동은 아직 포함되지 않습니다.
 
-`POST /api/chat`은 JWT와 DB 사용자 확인 → 질문 검증 → 대화방 소유권 확인 → 해당 방 최근 **5쌍** Q/A 조회 → Gemini 호출 → 응답과 대화방을 SQLite에 저장 → 화면에 답변 반환 순서로 처리합니다. `JEV_MODE=shadow`에서는 저장 성공 뒤 백그라운드 작업으로 Jev 판정을 기록합니다. 첫 질문은 `conversation_id`를 생략하며, AI 성공 후 DB 저장 시 새 방이 생성됩니다. 후속 질문은 응답받은 방 ID를 보냅니다. 최근 5쌍은 **AI에 넣는 문맥의 범위**이며, DB 저장 및 내 이력 조회를 5건으로 제한하지 않습니다.
+`POST /api/chat`은 JWT와 DB 사용자 확인 → 질문 검증 → 대화방 소유권 확인 → 해당 방 최근 **5쌍** Q/A 조회 → Gemini 검색 조건 분석 → 조건이 있으면 KorPetTourService2 조회 → Gemini 답변 생성 → 응답과 대화방을 SQLite에 저장 순서로 처리합니다. 지역·관광 유형을 확인할 수 없으면 관광 API를 호출하지 않고 필요한 조건을 질문합니다. `JEV_MODE=shadow`에서는 저장 성공 뒤 백그라운드 작업으로 Jev 판정을 기록합니다. 첫 질문은 `conversation_id`를 생략하며, 답변 생성과 DB 저장에 성공하면 새 방이 생성됩니다. 후속 질문은 응답받은 방 ID를 보냅니다. 최근 5쌍은 **AI에 넣는 문맥의 범위**이며, DB 저장 및 내 이력 조회를 5건으로 제한하지 않습니다.
 
 인증은 FastAPI의 `Depends(get_current_user)`로 적용합니다. 사용자별 대화와 이력을 분리하고, 로그인하지 않은 사용자의 AI 호출을 차단하기 위한 것입니다. 비밀번호는 bcrypt 해시로 저장하고, JWT는 브라우저의 `localStorage`에 보관하고 Bearer 헤더로 전달합니다. 로그아웃은 브라우저 토큰을 삭제하며, 서버 측 토큰 즉시 폐기는 구현되어 있지 않습니다.
 
@@ -142,19 +144,21 @@ Windows PowerShell에서는 활성화 명령을 `./venv/Scripts/Activate.ps1`, �
 |---|---|
 | `SECRET_KEY` | 예시값·코드 기본값을 사용하지 않고 충분히 긴 무작위 값으로 교체 |
 | `ALGORITHM` | 현재 기본 `HS256` |
-| `ACCESS_TOKEN_EXPIRE_MINUTES` | 현재 기본 `1440`분 |
+| `ACCESS_TOKEN_EXPIRE_MINUTES` | 현재 기본 `60`분 |
 | `DATABASE_URL` | 현재 기본 `sqlite:///./data/chatbot.db` |
 | `GEMINI_API_KEY` | 사용 가능한 Gemini API 키를 서버 `.env`에만 입력 |
 | `GEMINI_MODEL` | `.env.example`의 모델명을 본인 계정에서 실제 사용 가능한지 확인 후 설정 |
-| `AI_TIMEOUT_SECONDS` | 현재 기본 `8.0`초, HTTP 클라이언트 타임아웃 설정 |
+| `AI_TIMEOUT_SECONDS` | Gemini HTTP 요청별 기본 타임아웃 `15.0`초 |
+| `KOR_PET_TOUR_SERVICE_KEY` | KorPetTourService2 조회에 필요한 서버 전용 서비스 키 |
+| `PET_TOUR_API_TIMEOUT_SECONDS` | 관광 API HTTP 요청별 기본 타임아웃 `15.0`초 |
 | `TYPESAFE_API_KEY` | Jev 키를 서버 `.env`에만 입력. 키가 없으면 `shadow` 호출은 실패 로그만 남기고 Gemini 답변을 유지 |
 | `JEV_MODE` | 기본 `off`; `shadow`는 Gemini 답변 뒤 Jev 판정을 로그에만 기록 |
 | `JEV_MODEL` | 비교 기준을 고정하는 기본 `jev-1.13.0` |
 | `JEV_TIMEOUT_SECONDS` | Jev 호출의 기본 HTTP 타임아웃 `2.0`초 |
 
-현재 Gemini 런타임에는 키 누락 시 정상 답변을 돌려주는 Mock 대체 기능이 없습니다. 테스트의 AI 대역은 자동화 검증용입니다. 관광공사 두 서비스와 Google Maps의 확장 설정은 아직 런타임에 없으며 [후속 명세](docs/pet_travel_spec.md)에서 제안합니다.
+KorPetTourService2 요청의 기본 `numOfRows`는 5입니다. 현재 Gemini 런타임에는 키 누락 시 정상 답변을 돌려주는 Mock 대체 기능이 없습니다. 테스트 대역은 자동화 검증용이며, 관광 API 키는 서버 설정으로만 제공합니다. 지역별 관광 자원 수요와 Google Maps는 아직 런타임에 연결되지 않았으며 [후속 명세](docs/pet_travel_spec.md)에서 다룹니다.
 
-Jev는 Gemini의 답변을 생성하거나 대체하지 않습니다. `JEV_MODE=shadow`를 명시한 서버에서는 현재 질문·최근 대화·Gemini 답변이 TypeSafe API로 전송되고, `accept`/`retry`/`review` 판정과 호출 지연만 서버 로그에 기록됩니다. 판정과 Jev 장애는 답변·DB 저장·`latency_ms`(Gemini 호출 시간)·프론트 계약을 변경하지 않습니다. 키 설정과 점검·비교 방법은 [Jev 관찰 모드 안내](docs/jev_shadow.md)를 참고합니다.
+Jev는 Gemini의 답변을 생성하거나 대체하지 않습니다. `JEV_MODE=shadow`를 명시한 서버에서는 현재 질문·최근 대화·Gemini 답변이 TypeSafe API로 전송되고, `accept`/`retry`/`review` 판정과 호출 지연만 서버 로그에 기록됩니다. 판정과 Jev 장애는 답변·DB 저장·`latency_ms`·프론트 계약을 변경하지 않습니다. `latency_ms`는 검색 조건 분석부터 관광 API 조회와 최종 답변 생성까지의 시간이며 DB 읽기·쓰기는 제외합니다. 키 설정과 점검·비교 방법은 [Jev 관찰 모드 안내](docs/jev_shadow.md)를 참고합니다.
 
 ```bash
 python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
@@ -171,7 +175,7 @@ python -m pytest -q
 node --test tests/frontend/*.test.mjs
 ```
 
-유효한 인증으로 질문이 비어 있거나 공백뿐이면 `400`, 500자 초과 또는 형식 오류는 `422`, 인증 실패는 `401`, 타인 또는 없는 대화방은 `404`입니다. AI 타임아웃은 `504`, 그 밖의 AI 실패는 `502`, DB 처리 오류는 `500`으로 안내합니다. `AI_TIMEOUT_SECONDS`는 httpx 타임아웃이며 전체 요청이 정확히 8초 이내 끝난다는 보장은 아닙니다.
+유효한 인증으로 질문이 비어 있거나 공백뿐이면 `400`, 500자 초과 또는 형식 오류는 `422`, 인증 실패는 `401`, 타인 또는 없는 대화방은 `404`입니다. AI·관광 API 타임아웃은 `504`, 그 밖의 외부 API 실패는 `502`, DB 처리 오류는 `500`으로 안내합니다. Gemini와 관광 API 각각의 HTTP 요청 타임아웃은 기본 15초이고, Nginx `proxy_read_timeout`은 80초입니다. 이 값은 전체 채팅의 절대 마감시간이 아닙니다. 응답이 준비되는 동안 upstream 데이터가 80초 넘게 오지 않으면 Nginx가 먼저 연결을 종료할 수 있습니다.
 
 서버는 콘솔과 **`logs/app.log`**에 `request_received`, `ai_call_start`, `ai_call_success` 또는 `ai_call_failed`, `db_save_success` 또는 `db_save_failed`를 기록합니다. DB 문맥 조회 오류에는 `db_read_failed`를 기록합니다. 회전 로그는 파일당 5MiB, 백업 3개입니다.
 
@@ -202,12 +206,12 @@ EC2 배포는 [배포 매뉴얼](docs/ec2_deployment_manual.md)의 SSM·Nginx·S
 
 1. 최근 대화 이력과 현재 질문을 Gemini에 전달합니다.
 2. Gemini가 `areaCode=1`, `contentTypeId=12`와 같이 검색 조건을 추출합니다.
-3. `pet_service.py`가 KorPetTourService2 `areaBasedList2`를 호출합니다.
-4. 반환된 `contentid`, `contenttypeid`를 이용해 `detailIntro2`를 호출합니다.
-5. `areaBasedList2`의 장소 기본정보와 `detailIntro2`의 상세정보를 하나의 context로 구성합니다.
+3. `pet_service.py`가 KorPetTourService2 `areaBasedList2`에서 최대 5개 장소를 조회합니다.
+4. 각 장소의 `contentid`, `contenttypeid`로 `detailIntro2`와 `detailPetTour2`를 조회합니다.
+5. 장소 기본정보와 두 상세 응답을 하나의 context로 구성합니다.
 6. Gemini가 해당 context만 근거로 최종 답변을 생성합니다.
 7. 최종 질문·답변을 기존 SQLite 대화 로그에 저장합니다.
 
-Gemini 1차 분석에서 지역 또는 관광 유형을 확인할 수 없는 경우에는 KorPetTourService2를 호출하지 않고 필요한 정보를 다시 질문합니다.
+목록 1회와 장소별 상세 조회 2회로 관광 API 호출은 요청당 최대 11회입니다. 목록은 `numOfRows=5`로 제한하며 페이지를 추가 조회하지 않습니다. Gemini 1차 분석에서 지역 또는 관광 유형을 확인할 수 없는 경우에는 KorPetTourService2를 호출하지 않고 필요한 정보를 다시 질문합니다.
 
 KorPetTourService2 조회 결과가 없는 경우에는 장소를 임의로 생성하지 않고 데이터가 없음을 안내합니다.
