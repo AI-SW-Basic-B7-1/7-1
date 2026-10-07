@@ -13,7 +13,7 @@ from app.routers import chat_router
 
 
 @pytest.fixture
-async def chat_client(tmp_path, monkeypatch) -> AsyncGenerator[AsyncClient, None]:
+async def chat_client(tmp_path, monkeypatch, mock_missing_pet_tour_parameters) -> AsyncGenerator[AsyncClient, None]:
     """주제별 대화 테스트용 사용자와 임시 DB 클라이언트를 제공합니다."""
     database_path = tmp_path / "chat_api.db"
     await init_db(database_path)
@@ -35,7 +35,13 @@ async def chat_client(tmp_path, monkeypatch) -> AsyncGenerator[AsyncClient, None
         finally:
             await test_connection.close()
 
-    async def mock_generate_chat_response(question: str, history: list) -> str:
+    async def mock_generate_chat_response(
+        question: str,
+        history: list,
+        *,
+        system_instruction: str | None = None,
+        extra_context: str | None = None,
+    ) -> str:
         """외부 AI를 호출하지 않고 질문에 대응하는 테스트 답변을 반환합니다."""
         return f"테스트 답변: {question}"
 

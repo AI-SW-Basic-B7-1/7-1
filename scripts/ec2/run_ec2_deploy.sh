@@ -189,7 +189,8 @@ remote_command="$(
     printf '%s\n' 'set -Eeuo pipefail'
     printf 'CLONE_DIR=%s PROJECT_DIR=%s APP_USER=%s\n' "${clone_dir_q}" "${project_dir_q}" "${app_user_q}"
     printf '%s\n' 'previous_revision=""' 'previous_branch=""' 'code_updated=0' \
-        'env_temp=""' 'env_backup=""' 'new_env_installed=0'
+        'env_temp=""' 'env_backup=""' 'new_env_installed=0' 'deployment_pid=""' 'service_was_active=0'
+    printf '%s\n' 'systemctl is-active --quiet chatbot.service && service_was_active=1 || true'
     printf '%s\n' 'rollback_remote() {' \
         '  local result=$?' \
         '  trap - EXIT' \
@@ -216,12 +217,24 @@ remote_command="$(
         '    git -c safe.directory="$CLONE_DIR" -C "$CLONE_DIR" reset --hard "$previous_revision"' \
         '    chown -R "$APP_USER:$APP_USER" "$PROJECT_DIR"' \
         '    systemctl daemon-reload' \
-        '    systemctl restart chatbot.service' \
+        '    if [[ "$service_was_active" -eq 1 ]]; then systemctl restart chatbot.service; else systemctl stop chatbot.service; fi' \
         '    printf "%s\\n" "코드와 환경 파일을 이전 배포 상태로 복원했습니다." >&2' \
         '  fi' \
         '  exit "$result"' \
         '}' \
-        'trap rollback_remote EXIT'
+        'handle_remote_signal() {' \
+        '  local result="$1"' \
+        '  trap - INT TERM' \
+        '  if [[ -n "$deployment_pid" ]]; then' \
+        '    kill -TERM "$deployment_pid" 2>/dev/null || true' \
+        '    wait "$deployment_pid" 2>/dev/null || true' \
+        '    deployment_pid=""' \
+        '  fi' \
+        '  exit "$result"' \
+        '}' \
+        'trap rollback_remote EXIT' \
+        'trap "handle_remote_signal 130" INT' \
+        'trap "handle_remote_signal 143" TERM'
     printf 'install -d -m 755 -o root -g root %s\n' "${clone_parent_q}"
     printf 'if [[ -d %s/.git ]]; then\n' "${clone_dir_q}"
     printf '  tracked_changes="$(git -c safe.directory=%s -C %s status --porcelain --untracked-files=no)"\n' "${clone_dir_q}" "${clone_dir_q}"
@@ -260,8 +273,9 @@ remote_command="$(
     printf 'mv -f -- "${env_temp}" %s/.env\n' "${project_dir_q}"
     printf 'env_temp=""\n'
     printf '[[ -f %s/requirements.txt ]] || { echo %q; exit 1; }\n' "${project_dir_q}" 'requirements.txt가 프로젝트 경로에 없습니다.'
-    printf 'APP_USER=%s PROJECT_DIR=%s LOG_DIR=%q RUN_TESTS=%q bash %s\n' \
+    printf 'APP_USER=%s PROJECT_DIR=%s LOG_DIR=%q RUN_TESTS=%q bash %s &\n' \
         "${app_user_q}" "${project_dir_q}" '/var/log/b7-1' "${RUN_TESTS}" "${deploy_script_q}"
+    printf 'deployment_pid=$!\nwait "${deployment_pid}"\ndeployment_pid=""\n'
 )"
 
 # Windows용 AWS CLI shorthand 문법이 원격 Bash의 대괄호를 해석하지 않도록 전체 명령을 인코딩합니다.
@@ -294,20 +308,44 @@ while (( SECONDS - start_seconds < WAIT_SECONDS )); do
     [[ -n "${status}" && "${status}" != 'None' ]] || status='Pending'
     log_line "[$(date '+%Y-%m-%d %H:%M:%S%z')] SSM 상태: ${status}"
     case "${status}" in
-        Success|Failed|TimedOut|Cancelled|Cancelling)
+        Success|Failed|TimedOut|Cancelled)
             break
             ;;
     esac
     sleep 3
 done
 
-if [[ "${status}" != 'Success' && "${status}" != 'Failed' && "${status}" != 'TimedOut' && "${status}" != 'Cancelled' && "${status}" != 'Cancelling' ]]; then
+if [[ "${status}" != 'Success' && "${status}" != 'Failed' && "${status}" != 'TimedOut' && "${status}" != 'Cancelled' ]]; then
     aws ssm cancel-command \
         --region "${AWS_REGION_NAME}" \
         --command-id "${command_id}" \
         --instance-ids "${INSTANCE_ID}" \
         --output text >>"${LOCAL_LOG}" 2>&1 || true
-    fail "SSM 대기 시간이 초과되었습니다. 명령 ID: ${command_id}"
+    cancel_start="${SECONDS}"
+    while (( SECONDS - cancel_start < 60 )); do
+        status="$(aws ssm get-command-invocation \
+            --region "${AWS_REGION_NAME}" \
+            --command-id "${command_id}" \
+            --instance-id "${INSTANCE_ID}" \
+            --query 'Status' \
+            --output text 2>>"${LOCAL_LOG}" || true)"
+        case "${status}" in
+            Success|Failed|TimedOut|Cancelled)
+                break
+                ;;
+        esac
+        sleep 3
+    done
+    case "${status}" in
+        Success)
+            ;;
+        Failed|TimedOut|Cancelled)
+            fail "EC2 배포가 취소 또는 실패했습니다. SSM 상태: ${status}, 명령 ID: ${command_id}"
+            ;;
+        *)
+            fail "원격 배포 중단을 확인하지 못했습니다. EC2 상태를 확인하세요. 명령 ID: ${command_id}"
+            ;;
+    esac
 fi
 
 log_step 'EC2 배포 출력 수집'

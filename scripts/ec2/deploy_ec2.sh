@@ -405,6 +405,8 @@ rm -f "${cron_temp_file}"
 run_cmd 'Cron 부팅 자동 시작 설정' systemctl enable cron
 run_cmd 'Cron 재시작' systemctl restart cron
 
+run_cmd 'ACME 챌린지 웹루트 생성' install -d -o root -g www-data -m 2755 /var/www/certbot
+
 run_cmd 'Let’s Encrypt 인증서 발급·갱신' certbot certonly --webroot \
     --webroot-path /var/www/certbot --cert-name "${SITE_DOMAIN}" \
     --domain "${SITE_DOMAIN}" --non-interactive --agree-tos \
