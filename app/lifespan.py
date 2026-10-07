@@ -9,8 +9,15 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+from app.config import settings
 from app.database import init_db
 from app.logger import app_logger
+
+
+EXAMPLE_SECRET_KEYS = {
+    "your_super_secret_jwt_key_here",
+    "your_super_secret_jwt_key_here_codessey_b7_1_security_default",
+}
 
 
 class AppLifespanManager:
@@ -21,8 +28,19 @@ class AppLifespanManager:
         self.is_database_initialized = False
 
     async def startup(self) -> None:
-        """애플리케이션 시작 시 SQLite DB를 초기화합니다."""
+        """JWT 운영 설정을 검증한 뒤 SQLite DB를 초기화합니다."""
         self.is_database_initialized = False
+        secret_key = settings.SECRET_KEY.strip()
+        if (
+            len(secret_key.encode("utf-8")) < 32
+            or secret_key.casefold() in EXAMPLE_SECRET_KEYS
+            or settings.ALGORITHM != "HS256"
+        ):
+            app_logger.error("invalid_jwt_configuration")
+            raise RuntimeError(
+                "운영용 SECRET_KEY는 UTF-8 기준 32바이트 이상이어야 하며 "
+                "ALGORITHM은 HS256이어야 합니다."
+            )
         try:
             await init_db()
         except Exception:

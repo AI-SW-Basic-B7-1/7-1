@@ -3,10 +3,12 @@
 비밀번호 bcrypt 해싱/검증 및 JWT 토큰 발급/검증 기능을 종합적으로 검증합니다.
 """
 
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 import time
+import jwt
 import pytest
 
+from app.config import settings
 from app.auth import (
     create_access_token,
     decode_access_token,
@@ -80,3 +82,25 @@ def test_decode_access_token_invalid():
     invalid_token = "invalid.jwt.token.string"
     payload = decode_access_token(invalid_token)
     assert payload is None
+
+
+@pytest.mark.parametrize(
+    "claims",
+    [
+        {"sub": "expired_claims_user"},
+        {"exp": datetime.now(timezone.utc).timestamp() + 60},
+        {"sub": "", "exp": datetime.now(timezone.utc).timestamp() + 60},
+        {"sub": 123, "exp": datetime.now(timezone.utc).timestamp() + 60},
+        {"sub": "expired_claims_user", "exp": "4102444800"},
+    ],
+)
+def test_decode_access_token_rejects_missing_or_malformed_required_claims(
+    claims: dict,
+    monkeypatch,
+):
+    """만료나 사용자 식별 클레임이 누락되거나 올바르지 않은 JWT를 거부합니다."""
+    test_secret_key = "unit-test-signing-key-only-000000000000000000000000"
+    monkeypatch.setattr(settings, "SECRET_KEY", test_secret_key)
+    token = jwt.encode(claims, test_secret_key, algorithm="HS256")
+
+    assert decode_access_token(token) is None
