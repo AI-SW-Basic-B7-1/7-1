@@ -251,7 +251,7 @@ def test_prepare_supports_http_and_https_server_blocks_idempotently(script_envir
 
 
 @pytest.mark.parametrize("site_name,service", [("chatbot", "chatbot.service"), ("travel", "travel.service")])
-@pytest.mark.parametrize("failure", ["none", "reapply", "first"])
+@pytest.mark.parametrize("failure", ["none", "reapply", "first", "existing_certificate"])
 def test_deploy_configuration_sequence(script_environment, site_name, service, failure):
     """배포의 실제 설정 구간을 실행해 최초 배포·재배포·실패 복원을 확인합니다."""
     _, root, _, _, _ = script_environment
@@ -263,6 +263,7 @@ def test_deploy_configuration_sequence(script_environment, site_name, service, f
     # 패키지 설치와 DB 작업은 제외하고 설정 트랜잭션 구간을 그대로 실행합니다.
     section = source[source.index('NGINX_AVAILABLE='):source.index("run_cmd 'DB 백업 디렉터리 생성'")]
     section = section.replace("/etc/nginx", str(nginx)).replace("/etc/systemd/system", str(root / "systemd"))
+    section = section.replace("/etc/letsencrypt", str(root / "letsencrypt"))
     section = section.replace("/etc/b7-1", str(root / "rotation")).replace("/etc/cron.d", str(root / "cron"))
     wrapper = root / "deploy-config.sh"
     wrapper.write_text(
@@ -300,11 +301,26 @@ def test_deploy_configuration_sequence(script_environment, site_name, service, f
         assert not (root / "nginx.active").exists()
         return
 
+    if failure == "existing_certificate":
+        certificate_dir = root / "letsencrypt/live/test.local"
+        certificate_dir.mkdir(parents=True)
+        (certificate_dir / "fullchain.pem").write_text("테스트 인증서", encoding="utf-8")
+        (certificate_dir / "privkey.pem").write_text("테스트 개인 키", encoding="utf-8")
+        result = execute()
+        assert result.returncode == 0, result.stderr
+        contents = site.read_text(encoding="utf-8")
+        assert "listen 443 ssl;" in contents
+        assert "return 301 https://test.local" in contents
+        assert "return 503;" not in contents
+        return
+
     for _ in range(2):
         result = execute()
         assert result.returncode == 0, result.stderr
         assert site.read_text().count("log_format b7_1_request_trace") == 1
         assert "location ^~ /logs/" in site.read_text()
+        assert "return 503;" in site.read_text()
+        assert "proxy_pass http://127.0.0.1:8000;" not in site.read_text()
     calls = (root / "calls").read_text()
     assert calls.count("systemctl restart " + service) == 2
     assert calls.count("systemctl restart nginx") == 2

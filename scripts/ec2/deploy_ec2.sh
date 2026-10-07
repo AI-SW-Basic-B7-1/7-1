@@ -118,7 +118,7 @@ configured_timezone="$(timedatectl show --property=Timezone --value)"
 export DEBIAN_FRONTEND=noninteractive
 run_cmd '패키지 목록 갱신' apt-get update
 run_cmd '기본 패키지 업그레이드' apt-get upgrade -y
-run_cmd '배포 필수 패키지 설치' apt-get install -y ca-certificates certbot cron git logrotate nginx openssl python3 python3-pip python3-venv sqlite3
+run_cmd '배포 필수 패키지 설치' apt-get install -y ca-certificates certbot cron curl git logrotate nginx openssl python3 python3-pip python3-venv sqlite3
 
 log_step '2GB Swap 구성'
 if swapon --show=NAME --noheadings | awk '{print $1}' | grep -Fxq "${SWAP_FILE}"; then
@@ -292,6 +292,9 @@ EOF
     rm -f -- "${site_temp_file}"
 }
 
+if [[ -s "/etc/letsencrypt/live/${SITE_DOMAIN}/fullchain.pem" && -s "/etc/letsencrypt/live/${SITE_DOMAIN}/privkey.pem" ]]; then
+    install_https_site
+else
 nginx_temp_file="$(mktemp)"
 cat > "${nginx_temp_file}" <<EOF
 server {
@@ -317,33 +320,17 @@ server {
     }
 
     location /static/ {
-        # FastAPI가 정적 파일을 제공하므로 Nginx의 홈 디렉터리 권한에 의존하지 않습니다.
-        proxy_pass http://127.0.0.1:8000;
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-        expires 1d;
-        add_header Cache-Control "public, no-transform";
+        return 503;
     }
 
     location / {
-        proxy_pass http://127.0.0.1:8000;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade \$http_upgrade;
-        proxy_set_header Connection "upgrade";
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-        proxy_connect_timeout 30s;
-        proxy_read_timeout 30s;
-        proxy_send_timeout 30s;
+        return 503;
     }
 }
 EOF
 run_cmd 'Nginx 사이트 설정 설치' install -o root -g root -m 644 "${nginx_temp_file}" "${NGINX_AVAILABLE}"
 rm -f "${nginx_temp_file}"
+fi
 run_cmd '기본 Nginx 사이트 비활성화' rm -f /etc/nginx/sites-enabled/default
 run_cmd '챗봇 Nginx 사이트 활성화' ln -sfn "${NGINX_AVAILABLE}" "${NGINX_ENABLED}"
 systemd_temp_file="$(mktemp)"
