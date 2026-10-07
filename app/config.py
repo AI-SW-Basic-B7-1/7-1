@@ -5,6 +5,7 @@
 """
 
 import os
+from math import isfinite
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -19,6 +20,15 @@ if ENV_PATH.exists():
     load_dotenv(dotenv_path=ENV_PATH)
 else:
     load_dotenv()
+
+
+def _jev_timeout_seconds() -> float:
+    """Jev 설정 오류가 기본 채팅의 시작을 막지 않도록 안전한 값을 사용합니다."""
+    try:
+        value = float(os.getenv("JEV_TIMEOUT_SECONDS", "2.0"))
+    except ValueError:
+        return 2.0
+    return value if isfinite(value) and value > 0 else 2.0
 
 
 class Settings:
@@ -49,6 +59,12 @@ class Settings:
     PET_TOUR_API_TIMEOUT_SECONDS: float = float(
         os.getenv("PET_TOUR_API_TIMEOUT_SECONDS", "8.0")
     )
+    # [Jev AI 관찰 모드 설정]
+    TYPESAFE_API_KEY: str = os.getenv("TYPESAFE_API_KEY", "")
+    JEV_MODE: str = os.getenv("JEV_MODE", "off").strip().lower()
+    JEV_MODEL: str = os.getenv("JEV_MODEL", "jev-1.13.0")
+    JEV_TIMEOUT_SECONDS: float = _jev_timeout_seconds()
+
 
 # 전역 설정 싱글톤 인스턴스
 settings = Settings()

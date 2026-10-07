@@ -17,7 +17,7 @@ class SensitiveDataFormatter(logging.Formatter):
 
     def format(self, record: logging.LogRecord) -> str:
         output = super().format(record)
-        secrets = (settings.SECRET_KEY, settings.GEMINI_API_KEY)
+        secrets = (settings.SECRET_KEY, settings.GEMINI_API_KEY, settings.TYPESAFE_API_KEY)
         for secret in sorted(filter(None, secrets), key=len, reverse=True):
             output = output.replace(secret, "[REDACTED]")
         output = re.sub(
@@ -26,7 +26,7 @@ class SensitiveDataFormatter(logging.Formatter):
             output,
         )
         output = re.sub(
-            r'''(?i)(["']?\b(?:password|hashed_password|access_token|api_key|x-goog-api-key|secret_key)["']?\s*[:=]\s*)("[^"]*"|'[^']*'|[^\s&,;]+)''',
+            r'''(?i)(["']?\b(?:password|hashed_password|access_token|api_key|typesafe_api_key|x-goog-api-key|secret_key)["']?\s*[:=]\s*)("[^"]*"|'[^']*'|[^\s&,;]+)''',
             r"\1[REDACTED]",
             output,
         )

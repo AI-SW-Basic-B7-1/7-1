@@ -68,12 +68,13 @@ flowchart TD
     API --> DB["SQLite: 사용자·대화방·로그"]
     API --> AI["ai_service: Gemini 호출"]
     AI --> Gemini["Gemini API"]
+    API -. "저장 성공 후 shadow 백그라운드 판정" .-> Jev["jev_service: TypeSafe Jev 호출"]
     API --> Log["콘솔·logs/app.log"]
 ```
 
 로컬에서는 Uvicorn/FastAPI가 `/`와 `/static/`을 제공합니다. EC2에서는 Nginx가 `/`와 `/static/` 요청을 내부 FastAPI로 전달하고, FastAPI가 정적 파일을 제공합니다. 관광공사 데이터 조회와 Google Maps 연동은 위 현재 구조에 아직 포함되지 않습니다.
 
-`POST /api/chat`은 JWT와 DB 사용자 확인 → 질문 검증 → 대화방 소유권 확인 → 해당 방 최근 **5쌍** Q/A 조회 → Gemini 호출 → 응답과 대화방을 SQLite에 저장 → 화면에 답변 반환 순서로 처리합니다. 첫 질문은 `conversation_id`를 생략하며, AI 성공 후 DB 저장 시 새 방이 생성됩니다. 후속 질문은 응답받은 방 ID를 보냅니다. 최근 5쌍은 **AI에 넣는 문맥의 범위**이며, DB 저장 및 내 이력 조회를 5건으로 제한하지 않습니다.
+`POST /api/chat`은 JWT와 DB 사용자 확인 → 질문 검증 → 대화방 소유권 확인 → 해당 방 최근 **5쌍** Q/A 조회 → Gemini 호출 → 응답과 대화방을 SQLite에 저장 → 화면에 답변 반환 순서로 처리합니다. `JEV_MODE=shadow`에서는 저장 성공 뒤 백그라운드 작업으로 Jev 판정을 기록합니다. 첫 질문은 `conversation_id`를 생략하며, AI 성공 후 DB 저장 시 새 방이 생성됩니다. 후속 질문은 응답받은 방 ID를 보냅니다. 최근 5쌍은 **AI에 넣는 문맥의 범위**이며, DB 저장 및 내 이력 조회를 5건으로 제한하지 않습니다.
 
 인증은 FastAPI의 `Depends(get_current_user)`로 적용합니다. 사용자별 대화와 이력을 분리하고, 로그인하지 않은 사용자의 AI 호출을 차단하기 위한 것입니다. 비밀번호는 bcrypt 해시로 저장하고, JWT는 브라우저의 `localStorage`에 보관하고 Bearer 헤더로 전달합니다. 로그아웃은 브라우저 토큰을 삭제하며, 서버 측 토큰 즉시 폐기는 구현되어 있지 않습니다.
 
@@ -146,8 +147,14 @@ Windows PowerShell에서는 활성화 명령을 `./venv/Scripts/Activate.ps1`, �
 | `GEMINI_API_KEY` | 사용 가능한 Gemini API 키를 서버 `.env`에만 입력 |
 | `GEMINI_MODEL` | `.env.example`의 모델명을 본인 계정에서 실제 사용 가능한지 확인 후 설정 |
 | `AI_TIMEOUT_SECONDS` | 현재 기본 `8.0`초, HTTP 클라이언트 타임아웃 설정 |
+| `TYPESAFE_API_KEY` | Jev 키를 서버 `.env`에만 입력. 키가 없으면 `shadow` 호출은 실패 로그만 남기고 Gemini 답변을 유지 |
+| `JEV_MODE` | 기본 `off`; `shadow`는 Gemini 답변 뒤 Jev 판정을 로그에만 기록 |
+| `JEV_MODEL` | 비교 기준을 고정하는 기본 `jev-1.13.0` |
+| `JEV_TIMEOUT_SECONDS` | Jev 호출의 기본 HTTP 타임아웃 `2.0`초 |
 
-현재 런타임에는 키 누락 시 정상 답변을 돌려주는 Mock 대체 기능이 없습니다. 테스트의 AI 대역은 자동화 검증용입니다. 관광공사 두 서비스와 Google Maps의 확장 설정은 아직 런타임에 없으며 [후속 명세](docs/pet_travel_spec.md)에서 제안합니다.
+현재 Gemini 런타임에는 키 누락 시 정상 답변을 돌려주는 Mock 대체 기능이 없습니다. 테스트의 AI 대역은 자동화 검증용입니다. 관광공사 두 서비스와 Google Maps의 확장 설정은 아직 런타임에 없으며 [후속 명세](docs/pet_travel_spec.md)에서 제안합니다.
+
+Jev는 Gemini의 답변을 생성하거나 대체하지 않습니다. `JEV_MODE=shadow`를 명시한 서버에서는 현재 질문·최근 대화·Gemini 답변이 TypeSafe API로 전송되고, `accept`/`retry`/`review` 판정과 호출 지연만 서버 로그에 기록됩니다. 판정과 Jev 장애는 답변·DB 저장·`latency_ms`(Gemini 호출 시간)·프론트 계약을 변경하지 않습니다. 키 설정과 점검·비교 방법은 [Jev 관찰 모드 안내](docs/jev_shadow.md)를 참고합니다.
 
 ```bash
 python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
