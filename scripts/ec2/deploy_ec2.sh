@@ -118,7 +118,7 @@ configured_timezone="$(timedatectl show --property=Timezone --value)"
 export DEBIAN_FRONTEND=noninteractive
 run_cmd '패키지 목록 갱신' apt-get update
 run_cmd '기본 패키지 업그레이드' apt-get upgrade -y
-run_cmd '배포 필수 패키지 설치' apt-get install -y ca-certificates certbot cron curl git logrotate nginx openssl python3 python3-pip python3-venv sqlite3
+run_cmd '배포 필수 패키지 설치' apt-get install -y acl ca-certificates certbot cron curl git logrotate nginx openssl python3 python3-pip python3-venv sqlite3
 
 log_step '2GB Swap 구성'
 if swapon --show=NAME --noheadings | awk '{print $1}' | grep -Fxq "${SWAP_FILE}"; then
@@ -141,6 +141,7 @@ run_cmd '메모리 및 Swap 상태 기록' free -h
 run_cmd '프로젝트 소유권 정리' chown -R "${APP_USER}:${APP_USER}" "${PROJECT_DIR}"
 run_cmd 'SQLite 데이터 디렉터리 권한 설정' install -d -o "${APP_USER}" -g "${APP_USER}" -m 700 "${PROJECT_DIR}/data"
 run_cmd '애플리케이션 로그 디렉터리 생성' install -d -o "${APP_USER}" -g "${APP_USER}" -m 750 "${PROJECT_DIR}/logs"
+run_cmd 'Nginx 로그 경로 탐색 ACL 설정' setfacl -m u:www-data:--x "${APP_HOME}" "${PROJECT_DIR}/logs"
 run_cmd '운영 환경변수 파일 권한 설정' chmod 600 "${ENV_FILE}"
 
 if [[ -f "${DB_PATH}" ]]; then

@@ -189,13 +189,14 @@ remote_command="$(
     printf '%s\n' 'set -Eeuo pipefail'
     printf 'CLONE_DIR=%s PROJECT_DIR=%s APP_USER=%s\n' "${clone_dir_q}" "${project_dir_q}" "${app_user_q}"
     printf '%s\n' 'previous_revision=""' 'previous_branch=""' 'code_updated=0' \
-        'env_temp=""' 'env_backup=""' 'new_env_installed=0' 'deployment_pid=""' 'service_was_active=0'
+        'env_temp=""' 'env_backup=""' 'awscli_temp=""' 'new_env_installed=0' 'deployment_pid=""' 'service_was_active=0'
     printf '%s\n' 'systemctl is-active --quiet chatbot.service && service_was_active=1 || true'
     printf '%s\n' 'rollback_remote() {' \
         '  local result=$?' \
         '  trap - EXIT' \
         '  set +e' \
         '  rm -f -- "${env_temp:-}"' \
+        '  [[ -z "${awscli_temp:-}" ]] || rm -rf -- "$awscli_temp"' \
         '  if [[ "$result" -ne 0 && ( "$code_updated" -eq 1 || "$new_env_installed" -eq 1 ) ]]; then' \
         '    systemctl stop chatbot.service >/dev/null 2>&1' \
         '  fi' \
@@ -258,7 +259,21 @@ remote_command="$(
     printf '  git clone --branch %s --single-branch %s %s\n' "${branch_q}" "${repo_url_q}" "${clone_dir_q}"
     printf 'fi\n'
     printf 'install -d -m 755 -o %s -g %s %s\n' "${app_user_q}" "${app_user_q}" "${project_dir_q}"
-    printf 'command -v aws >/dev/null 2>&1 || { apt-get update; apt-get install -y awscli; }\n'
+    printf '%s\n' 'if ! command -v aws >/dev/null 2>&1; then' \
+        '  apt-get update' \
+        '  apt-get install -y ca-certificates curl unzip' \
+        '  case "$(uname -m)" in' \
+        '    x86_64) aws_arch=x86_64 ;;' \
+        '    aarch64) aws_arch=aarch64 ;;' \
+        '    *) echo "지원하지 않는 EC2 아키텍처입니다." >&2; exit 1 ;;' \
+        '  esac' \
+        '  awscli_temp="$(mktemp -d /tmp/awscli-install.XXXXXX)"' \
+        '  curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-${aws_arch}.zip" -o "${awscli_temp}/awscliv2.zip"' \
+        '  unzip -q "${awscli_temp}/awscliv2.zip" -d "${awscli_temp}"' \
+        '  "${awscli_temp}/aws/install"' \
+        '  rm -rf -- "${awscli_temp}"' \
+        '  awscli_temp=""' \
+        'fi'
     printf 'env_temp="$(mktemp %s/.env.XXXXXX)"\n' "${project_dir_q}"
     printf 'aws ssm get-parameter --name %s --with-decryption --region %s --query Parameter.Value --output text > "${env_temp}"\n' \
         "${secret_parameter_q}" "${region_q}"
