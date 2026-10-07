@@ -367,9 +367,6 @@ run_cmd '챗봇 서비스 부팅 자동 시작 설정' systemctl enable "${SERVI
 SERVICES_CHANGED=1
 run_cmd '챗봇 서비스 재시작' systemctl restart "${SERVICE_NAME}"
 run_cmd 'Nginx 재시작' systemctl restart nginx
-run_cmd '로그 기록·요청 추적·외부 경로 차단 검증' env SITE_CONFIG="${NGINX_AVAILABLE}" SERVICE_NAME="${SERVICE_NAME}" \
-    bash "${LOGGING_SCRIPT}" --verify
-
 if ! systemctl is-active --quiet "${SERVICE_NAME}"; then
     journalctl -u "${SERVICE_NAME}" --no-pager -n 50
     fail "챗봇 서비스가 실행 중이 아닙니다: ${SERVICE_NAME}"
@@ -405,6 +402,9 @@ run_cmd 'HTTPS Nginx 로그 설정 준비' env SITE_CONFIG="${NGINX_AVAILABLE}" 
     bash "${LOGGING_SCRIPT}" --prepare
 run_cmd 'HTTPS Nginx 문법 검사' nginx -t
 run_cmd 'HTTPS Nginx 설정 적용' systemctl reload nginx
+run_cmd 'HTTPS 로그 기록·요청 추적·외부 경로 차단 검증' \
+    env SITE_CONFIG="${NGINX_AVAILABLE}" SERVICE_NAME="${SERVICE_NAME}" \
+        VERIFY_BASE_URL="https://${SITE_DOMAIN}" bash "${LOGGING_SCRIPT}" --verify
 run_cmd '인증서 자동 갱신 타이머 활성화' systemctl enable --now certbot.timer
 run_cmd '갱신 후크 디렉터리 생성' install -d -o root -g root -m 755 /etc/letsencrypt/renewal-hooks/deploy
 renewal_hook="${CONFIG_BACKUP}/b7-1-nginx-reload"

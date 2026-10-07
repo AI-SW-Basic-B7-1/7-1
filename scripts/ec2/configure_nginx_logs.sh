@@ -42,6 +42,18 @@ VERIFY_BASE_URL="${VERIFY_BASE_URL%/}"
     printf '%s\n' '검증 주소는 경로가 없는 HTTP 또는 HTTPS 주소여야 합니다.' >&2
     exit 1
 }
+CURL_RESOLVE_ARGS=()
+if [[ "${VERIFY_BASE_URL}" =~ ^(https?)://([a-zA-Z0-9.-]+)(:([0-9]+))?$ ]]; then
+    verify_scheme="${BASH_REMATCH[1]}"
+    verify_host="${BASH_REMATCH[2]}"
+    verify_port="${BASH_REMATCH[4]:-}"
+    if [[ -z "${verify_port}" ]]; then
+        if [[ "${verify_scheme}" == 'https' ]]; then verify_port=443; else verify_port=80; fi
+    fi
+    if [[ "${verify_host}" != '127.0.0.1' && "${verify_host}" != 'localhost' ]]; then
+        CURL_RESOLVE_ARGS=(--resolve "${verify_host}:${verify_port}:127.0.0.1")
+    fi
+fi
 # 경로를 설정에 삽입하므로 특수문자와 디렉터리 심볼릭 링크는 허용하지 않습니다.
 [[ "${LOG_DIR}" =~ ^/[a-zA-Z0-9_./-]+$ && ! -L "${LOG_DIR}" ]] || {
     printf '%s\n' '로그 경로에 지원하지 않는 문자 또는 심볼릭 링크가 있습니다.' >&2
@@ -210,7 +222,7 @@ QUERY_PROBE="b7_1_query_probe_$(openssl rand -hex 16)"
 HEADERS_FILE="${WORK_DIR}/health_headers"
 HEALTH_READY=0
 for ((attempt=1; attempt<=30; attempt++)); do
-    if health_status="$(curl -fsS --max-time 3 -D "${HEADERS_FILE}" -o /dev/null \
+    if health_status="$(curl "${CURL_RESOLVE_ARGS[@]}" -fsS --max-time 3 -D "${HEADERS_FILE}" -o /dev/null \
         -H "Referer: ${VERIFY_BASE_URL}/?ref=${QUERY_PROBE}" -w '%{http_code}' \
         "${VERIFY_BASE_URL}/api/health?probe=${QUERY_PROBE}")" && [[ "${health_status}" == '200' ]]; then
         HEALTH_READY=1
@@ -257,7 +269,7 @@ if [[ "${ACCESS_ENTRY}" == *"${QUERY_PROBE}"* ]]; then
 fi
 
 for blocked_path in /logs /logs/ /logs/app.log /logs/app.log.1 /logs/server.log /logs/nginx_access.log; do
-    blocked_status="$(curl -sS --max-time 5 -o /dev/null -w '%{http_code}' \
+    blocked_status="$(curl "${CURL_RESOLVE_ARGS[@]}" -sS --max-time 5 -o /dev/null -w '%{http_code}' \
         "${VERIFY_BASE_URL}${blocked_path}" || true)"
     [[ "${blocked_status}" == '404' ]] || {
         printf '로그 경로 외부 차단 검증 실패: %s (HTTP %s)\n' \

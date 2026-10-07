@@ -94,7 +94,7 @@ def test_sigterm_runs_remote_rollback_and_restores_service_state(tmp_path, servi
     remote_prefix = generated.split("\ninstall -d -m 755 -o root -g root", 1)[0]
     scenario = (
         "\ncode_updated=1\nprevious_revision=old-revision\nprevious_branch=main\n"
-        "sleep 30 &\ndeployment_pid=$!\nkill -TERM $$\n"
+        "sleep 30 &\ndeployment_pid=$!\nkill -0 \"${deployment_pid}\"\nsleep 0.2\nkill -TERM $$\n"
     )
     environment = dict(
         os.environ,
