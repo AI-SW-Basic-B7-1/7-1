@@ -44,6 +44,28 @@ CONTENT_TYPE_IDS = {
     "음식점": 39,
 }
 
+# 소개정보의 필드명은 관광 유형별로 다릅니다.
+INTRO_FIELDS = {
+    "12": ("infocenter", "usetime", "restdate", "parking", "chkpet"),
+    "14": ("infocenterculture", "usetimeculture", "restdateculture", "parkingculture", "chkpetculture"),
+    "15": ("sponsor1tel", "playtime", "", "", ""),
+    "28": ("infocenterleports", "usetimeleports", "restdateleports", "parkingleports", "chkpetleports"),
+    "32": ("infocenterlodging", "checkintime", "", "parkinglodging", ""),
+    "38": ("infocentershopping", "opentime", "restdateshopping", "parkingshopping", "chkpetshopping"),
+    "39": ("infocenterfood", "opentimefood", "restdatefood", "parkingfood", ""),
+}
+PET_FIELDS = {
+    "acmpyPsblCpam": "동반 가능 동물",
+    "acmpyNeedMtr": "동반 시 필요사항",
+    "etcAcmpyInfo": "기타 동반 정보",
+    "relaAcdntRiskMtr": "관련 사고 대비사항",
+    "relaPosesFclty": "관련 구비 시설",
+    "relaFrnshPrdlst": "관련 비치 품목",
+    "relaPurcPrdlst": "관련 구매 품목",
+    "relaRntlPrdlst": "관련 렌탈 품목",
+    "acmpyTypeCd": "동반유형코드(원문, 의미 추정 금지)",
+}
+
 
 class PetTourAPITimeoutError(Exception):
     """KorPetTourService2 응답이 제한 시간 안에 오지 않은 경우."""
@@ -57,10 +79,10 @@ def _extract_items(data: dict[str, Any]) -> list[dict[str, Any]]:
     """공공데이터 API 응답에서 item 목록을 추출합니다."""
 
     response = data.get("response", {})
-    body = response.get("body", {})
+    body = response.get("body")
 
     if not isinstance(body, dict):
-        return []
+        raise PetTourServiceError("관광정보 응답 본문 형식이 올바르지 않습니다.")
 
     items = body.get("items", {})
 
@@ -69,7 +91,7 @@ def _extract_items(data: dict[str, Any]) -> list[dict[str, Any]]:
         return []
 
     if not isinstance(items, dict):
-        return []
+        raise PetTourServiceError("관광정보 목록 형식이 올바르지 않습니다.")
 
     item = items.get("item", [])
 
@@ -79,15 +101,17 @@ def _extract_items(data: dict[str, Any]) -> list[dict[str, Any]]:
     if isinstance(item, dict):
         return [item]
 
-    if isinstance(item, list):
+    if isinstance(item, list) and all(isinstance(entry, dict) for entry in item):
         return item
 
-    return []
+    raise PetTourServiceError("관광정보 항목 형식이 올바르지 않습니다.")
 
 
 async def _request(
     endpoint: str,
     params: dict[str, Any],
+    *,
+    allow_no_data: bool = False,
 ) -> dict[str, Any]:
     """KorPetTourService2 API를 비동기로 호출합니다."""
 
@@ -139,9 +163,16 @@ async def _request(
             "KorPetTourService2 응답 형식이 올바르지 않습니다."
         ) from exc
 
-    header = data.get("response", {}).get("header", {})
-    result_code = str(header.get("resultCode", "0000"))
+    if not isinstance(data, dict) or not isinstance(data.get("response"), dict):
+        raise PetTourServiceError("관광정보 응답 구조가 올바르지 않습니다.")
+    header = data["response"].get("header")
+    if not isinstance(header, dict) or "resultCode" not in header:
+        raise PetTourServiceError("관광정보 응답 상태가 누락되었습니다.")
+    result_code = str(header["resultCode"])
     result_message = header.get("resultMsg", "")
+
+    if allow_no_data and result_code == "03":
+        return {"response": {"body": {"items": ""}}}
 
     if result_code not in {"0000", "00"}:
         raise PetTourServiceError(
@@ -205,13 +236,32 @@ async def detail_intro(
     return items[0]
 
 
+async def detail_pet_tour(content_id: str) -> dict[str, Any]:
+    """동반 조건을 조회하며 정상적인 정보 부재만 빈 딕셔너리로 반환합니다."""
+    data = await _request(
+        f"{BASE_URL}/detailPetTour2",
+        {"contentId": content_id},
+        allow_no_data=True,
+    )
+    items = _extract_items(data)
+    return items[0] if items else {}
+
+
+async def _get_place_details(
+    content_id: str, content_type: str,
+) -> tuple[dict[str, Any] | None, dict[str, Any]]:
+    """장소별 소개정보와 동반 조건을 조회합니다."""
+    intro = await detail_intro(content_id, content_type)
+    pet = await detail_pet_tour(content_id)
+    return intro, pet
+
+
 async def get_pet_tour_data(
     area_code: int,
     content_type_id: int,
 ) -> list[dict[str, Any]]:
     """
-    areaBasedList2 → detailIntro2 순서로
-    PetTour 데이터를 조회합니다.
+    지역별 목록에 소개정보와 반려동물 상세정보를 연결합니다.
     """
 
     area_items = await area_based_list(
@@ -236,7 +286,7 @@ async def get_pet_tour_data(
         valid_items.append(item)
 
         tasks.append(
-            detail_intro(
+            _get_place_details(
                 str(content_id),
                 str(content_type),
             )
@@ -251,7 +301,7 @@ async def get_pet_tour_data(
 
     results = []
 
-    for base_item, detail_result in zip(
+    for base_item, (detail_result, pet_result) in zip(
         valid_items,
         detail_results,
     ):
@@ -269,6 +319,7 @@ async def get_pet_tour_data(
                 "addr1": base_item.get("addr1"),
                 "addr2": base_item.get("addr2"),
                 "detail": detail_result,
+                "pet_detail": pet_result,
             }
         )
 
@@ -287,6 +338,31 @@ def build_pet_tour_context(
 
     for index, result in enumerate(results, start=1):
         detail = result.get("detail", {})
+        pet = result.get("pet_detail", {})
+        content_type = str(result.get("contenttypeid", ""))
+        fields = INTRO_FIELDS.get(content_type, ("",) * 5)
+        labels = ("문의 및 안내", "입실 시간" if content_type == "32" else "이용 시간", "쉬는 날", "주차 정보", "소개정보의 동반 안내")
+        intro_lines = [
+            f"{label}: {detail[field]}"
+            for label, field in zip(labels, fields)
+            if field and str(detail.get(field) or "").strip()
+        ]
+        if content_type == "12":
+            for field, label in {
+                "opendate": "개장일", "expguide": "체험 안내",
+                "expagerange": "체험 가능 연령", "accomcount": "수용 인원",
+                "useseason": "이용 시기", "chkbabycarriage": "유모차 대여",
+                "chkcreditcard": "신용카드",
+            }.items():
+                if str(detail.get(field) or "").strip():
+                    intro_lines.append(f"{label}: {detail[field]}")
+        pet_lines = [
+            f"{label}: {pet[field]}"
+            for field, label in PET_FIELDS.items()
+            if str(pet.get(field) or "").strip()
+        ]
+        if not pet_lines:
+            pet_lines = ["반려동물 상세 조건: 제공된 정보 없음. 시설에 확인 필요(동반 불가를 뜻하지 않음)."]
 
         lines.append(
             f"""
@@ -296,18 +372,8 @@ def build_pet_tour_context(
 장소명: {result.get("title", "")}
 주소: {result.get("addr1", "")} {result.get("addr2", "")}
 
-문의 및 안내: {detail.get("infocenter", "")}
-개장일: {detail.get("opendate", "")}
-쉬는 날: {detail.get("restdate", "")}
-체험 안내: {detail.get("expguide", "")}
-체험 가능 연령: {detail.get("expagerange", "")}
-수용 인원: {detail.get("accomcount", "")}
-이용 시기: {detail.get("useseason", "")}
-이용 시간: {detail.get("usetime", "")}
-주차 정보: {detail.get("parking", "")}
-유모차 대여: {detail.get("chkbabycarriage", "")}
-반려동물 동반: {detail.get("chkpet", "")}
-신용카드: {detail.get("chkcreditcard", "")}
+{chr(10).join(intro_lines)}
+{chr(10).join(pet_lines)}
 """.strip()
         )
 
