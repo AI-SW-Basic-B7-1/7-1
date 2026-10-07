@@ -7,7 +7,7 @@
 ## 1. 프로젝트 기본 정보
 - **서비스명**: AI Assistant (반려동물 동반 국내여행 웹 AI 챗봇 기획)
 - **과제**: AI/SW 기초 · Term Project · 필수 · 학습시간 120시간. 아래 4일 일정은 초기 내부 MVP 마일스톤이며 과제 학습시간을 대체하지 않습니다.
-- **프로젝트 목표**: 반려동물 보호자의 국내여행 장소·동반 조건 탐색 지원. 기존 웹 UI ↔ 인증 ↔ FastAPI ↔ Gemini ↔ SQLite ↔ EC2 기반을 유지합니다. 관광공사 반려동물 데이터·지역별 관광 자원 수요·Google Maps는 후속 명세이며 아직 미구현입니다.
+- **프로젝트 목표**: 반려동물 보호자의 국내여행 장소·동반 조건 탐색 지원. 기존 웹 UI ↔ 인증 ↔ FastAPI ↔ Gemini ↔ SQLite ↔ EC2 기반을 유지합니다. KorPetTourService2 장소·동반 조건 조회와 Gemini 근거 답변은 구현되어 있으며, 지역 수요·Google Maps·장소 카드는 후속 범위입니다.
 - **기준 문서**: [초기 4일 계획](docs/project_plan.md), [중기 프로젝트 계획](docs/midterm_project_plan.md), [현행 API](docs/api_spec.md), [여행 확장 명세](docs/pet_travel_spec.md), [미션 평가 가이드](docs/evaluation_guide.md). 초기 기록·현재 동작·후속 계획을 구분하고 과거 일정의 체크 표시를 완료 증빙으로 사용하지 않습니다.
 - **개발 환경**: Python 3.10+, FastAPI, SQLite, Vanilla HTML/CSS/JavaScript
 - **AI 연동**: Gemini API (`GEMINI_API_KEY`, `GEMINI_MODEL`) 기반 실제 응답 생성 및 테스트 대역 검증
@@ -22,11 +22,13 @@
 | **고준석**<br>(팀장) | **로그인 & 인증 (Auth)** | • 회원가입 API (POST /api/auth/register) 및 로그인 API (POST /api/auth/login)<br>• 비밀번호 bcrypt 해싱 및 JWT 토큰 발급/검증 유틸리티<br>• 미인증 사용자 401 차단용 FastAPI 의존성(get_current_user) 구현<br>• 전체 일정 관리 및 마일스톤 조율 (PM) |
 | **박범규** | **백엔드 코어 & DB** | • FastAPI 메인 애플리케이션 진입점 및 라우터 통합 (app/main.py)<br>• SQLite DB 연결 및 테이블 스키마 (users, conversations, chat_logs)<br>• 대화 로그 저장 함수 및 내 대화 조회 API (GET /api/me/chats)<br>• 과제 필수 표준 4대 이벤트 로깅 모듈 및 scripts/check_logs.sql 작성 |
 | **이준혁** | **프론트엔드 UI/UX** | • 반응형 단일 페이지 웹 챗봇 인터페이스 (static/index.html, style.css)<br>• 로그인 / 회원가입 모달 UI 및 JWT 로컬 스토리지 보관 처리 (auth.js)<br>• 실시간 질문 입력, 로딩 인디케이터, AI 응답 렌더링 스크립트 (app.js)<br>• 에러 알림 토스트 및 모바일/데스크탑 반응형 레이아웃 구성 |
-| **차종민** | **AI 파이프라인** | • Gemini API 연동 모듈 (app/ai_service.py) 구축<br>• 같은 방의 최근 대화 5쌍을 조합하는 슬라이딩 윈도우 문맥(Context) 유지 전략 구현<br>• 8.0초 타임아웃 예외 핸들링 및 서버 프로세스 다운 방지 로직<br>• Gemini 응답 형식과 오류 처리 검증 |
+| **차종민** | **AI 파이프라인** | • Gemini API 연동 모듈 (app/ai_service.py) 구축<br>• 같은 방의 최근 대화 5쌍을 조합하는 슬라이딩 윈도우 문맥(Context) 유지 전략 구현<br>• 15.0초 타임아웃 예외 처리와 Gemini 응답 형식·오류 검증 |
 
 ---
 
 ## 3. 4일 프로토타입 완성 마일스톤
+
+> 이 절의 8초 타임아웃은 초기 일정의 기록입니다. 현재 Gemini·관광 API 개별 요청 기본값은 각 15.0초이며, EC2 Nginx의 `proxy_read_timeout`은 80초입니다. 현행값은 [API 명세](docs/api_spec.md)와 [EC2 배포 매뉴얼](docs/ec2_deployment_manual.md)을 따릅니다.
 
 - **Day 1 (독립 모듈 세팅 & AI PoC)**:
   - 브랜치 생성 (feat/auth-ko, feat/backend-park, feat/ui-lee, feat/ai-cha)
@@ -99,9 +101,10 @@ ERROR db_save_failed user_id={user_id} error={error_detail}
 
 ## 7. 예외 처리 및 안정성 규칙
 
-1. **AI API 호출 타임아웃**:
-   - `AI_TIMEOUT_SECONDS`(기본 8.0초)를 httpx에 설정하여 네트워크 무한 대기를 방지합니다. 전체 요청의 정확한 8초 마감은 아닙니다.
-   - 타임아웃은 504 Gateway Timeout, 그 외 Gemini API 오류는 502 Bad Gateway로 반환하며 FastAPI 프로세스를 유지합니다.
+1. **외부 API 호출 타임아웃**:
+   - `AI_TIMEOUT_SECONDS`와 `PET_TOUR_API_TIMEOUT_SECONDS`(각 기본 15.0초)를 개별 httpx 요청에 설정합니다. 여러 요청이 이어지는 전체 채팅의 마감시간은 아닙니다.
+   - EC2 Nginx의 `proxy_read_timeout`은 upstream에서 연속된 읽기 사이의 최대 대기시간 80초입니다. 응답 데이터가 도착하기까지 오래 걸리면 Nginx가 먼저 연결을 종료할 수 있습니다.
+   - Gemini 또는 관광 API 타임아웃은 504 Gateway Timeout, 그 밖의 외부 API 오류는 502 Bad Gateway로 반환합니다.
 2. **사용자 입력 검증**:
    - 빈 문자열 또는 공백만 있는 질문 차단 (400 Bad Request).
    - 최대 500자 길이 초과 질문 차단 (422 Unprocessable Entity).
