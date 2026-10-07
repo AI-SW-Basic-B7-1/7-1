@@ -53,6 +53,7 @@ async def test_pet_conditions_reach_context_without_chkpet(api_stub):
     for text in ("소형견", "이동장 필수", "테라스만 이용", "02-000-0000", "10:00~18:00"):
         assert text in context
     assert "제공된 정보 없음" not in context
+    assert all(params["numOfRows"] == "5" for _, params in calls)
     endpoint, params = calls[-1]
     assert endpoint == "detailPetTour2"
     assert params["contentId"] == "123"

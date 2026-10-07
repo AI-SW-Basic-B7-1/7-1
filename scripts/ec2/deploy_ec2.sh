@@ -284,7 +284,7 @@ server {
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto https;
         proxy_connect_timeout 30s;
-        proxy_read_timeout 30s;
+        proxy_read_timeout 80s;
         proxy_send_timeout 30s;
     }
 }

@@ -148,12 +148,16 @@ cp .env.example .env
 | --- | --- |
 | SECRET_KEY | 예시값이 아닌 충분히 긴 무작위 비밀값 |
 | ALGORITHM | 기본값 HS256 |
-| ACCESS_TOKEN_EXPIRE_MINUTES | 토큰 만료 시간(분) |
+| ACCESS_TOKEN_EXPIRE_MINUTES | 토큰 만료 시간(분, 기본 60) |
 | SITE_DOMAIN | EC2 공개 주소로 연결되는 도메인; HTTPS 인증서 발급에 사용 |
 | DATABASE_URL | 기본값 sqlite:///./data/chatbot.db |
 | GEMINI_API_KEY | 실제 Gemini API 키 |
 | GEMINI_MODEL | 사용할 Gemini 모델명 |
-| AI_TIMEOUT_SECONDS | httpx 네트워크 타임아웃(기본 8.0초). 전체 요청의 정확한 마감시간은 아님 |
+| AI_TIMEOUT_SECONDS | Gemini HTTP 요청별 타임아웃(기본 15.0초) |
+| KOR_PET_TOUR_SERVICE_KEY | KorPetTourService2 조회에 필요한 서버 전용 서비스 키 |
+| PET_TOUR_API_TIMEOUT_SECONDS | 관광 API HTTP 요청별 타임아웃(기본 15.0초) |
+
+현재 배포 스크립트가 작성하는 Nginx 설정은 `proxy_read_timeout 80s`를 사용합니다. 이는 upstream에서 연속된 읽기 사이의 최대 대기시간이지 전체 채팅의 절대 마감시간이 아닙니다. Gemini와 관광 API의 요청별 15초 제한은 여러 번 호출될 수 있어, 응답 데이터가 도착하기까지 80초 넘게 걸리면 Nginx가 먼저 연결을 종료할 수 있습니다.
 
 SECRET_KEY는 최소 32바이트의 무작위 값이어야 합니다. 다음 명령으로 생성하고 출력값을 로컬 .env의 SECRET_KEY에 입력합니다. 이 키를 변경하면 기존 JWT가 모두 무효가 됩니다.
 
@@ -163,7 +167,7 @@ openssl rand -hex 32
 
 .env의 전체 내용은 AWS Systems Manager Parameter Store에서 `SecureString` 유형의 파라미터(예: `/b7-1/production/env`)로 등록합니다. 배포 wrapper에는 비밀값 대신 파라미터 이름만 전달합니다. EC2에서 SSM이 값을 가져와 `.env` 임시 파일을 만든 뒤 권한 600으로 설정하고 같은 파일시스템에서 원자적으로 교체합니다. 배포 명령이나 로컬 로그에 파라미터 값이 포함되지 않도록 합니다.
 
-.env와 `.env.*`, SQLite 데이터베이스 및 `-wal`/`-shm` 파일은 Git에서 제외합니다. Parameter Store를 변경할 때는 애플리케이션 필수 키와 `SITE_DOMAIN`이 포함됐는지 확인합니다. 관광공사·지도 설정은 [후속 명세](pet_travel_spec.md)의 후보이며 현재 배포 필수값이 아닙니다.
+.env와 `.env.*`, SQLite 데이터베이스 및 `-wal`/`-shm` 파일은 Git에서 제외합니다. Parameter Store를 변경할 때는 애플리케이션 필수 키와 `SITE_DOMAIN`이 포함됐는지 확인합니다. 반려동물 여행 조회에 필요한 `KOR_PET_TOUR_SERVICE_KEY`도 포함해야 합니다. 지역 수요·지도 설정은 [후속 명세](pet_travel_spec.md)의 후보이며 현재 배포 필수값이 아닙니다.
 
 앱은 DATABASE_URL을 읽지만 현재 deploy_ec2.sh의 DB 권한·무결성 검사 대상은 프로젝트의 `data/chatbot.db`로 고정되어 있습니다. 백업 스크립트도 기본값이 같은 파일이며 별도 DB_PATH를 지원합니다. 배포 매뉴얼에서는 기본 DATABASE_URL을 사용하고, 사용자 지정 DB 경로의 운영/백업 일치는 별도 점검해야 합니다.
 

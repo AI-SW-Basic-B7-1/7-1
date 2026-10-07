@@ -37,7 +37,7 @@ class Settings:
     # [JWT 보안 설정]
     SECRET_KEY: str = os.getenv("SECRET_KEY", "")
     ALGORITHM: str = os.getenv("ALGORITHM", "HS256")
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "1440"))
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "60"))
 
     # [데이터베이스 경로 설정]
     DATABASE_URL: str = os.getenv("DATABASE_URL", "sqlite:///./data/chatbot.db")
@@ -45,7 +45,7 @@ class Settings:
     # [Gemini AI API 설정]
     GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
     GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite")
-    AI_TIMEOUT_SECONDS: float = float(os.getenv("AI_TIMEOUT_SECONDS", "8.0"))
+    AI_TIMEOUT_SECONDS: float = float(os.getenv("AI_TIMEOUT_SECONDS", "15.0"))
 
     # [한국관광공사 반려동물 동반여행 API 설정]
     KOR_PET_TOUR_SERVICE_KEY: str = os.getenv(
@@ -54,7 +54,7 @@ class Settings:
     )
 
     PET_TOUR_API_TIMEOUT_SECONDS: float = float(
-        os.getenv("PET_TOUR_API_TIMEOUT_SECONDS", "8.0")
+        os.getenv("PET_TOUR_API_TIMEOUT_SECONDS", "15.0")
     )
     # [Jev AI 관찰 모드 설정]
     TYPESAFE_API_KEY: str = os.getenv("TYPESAFE_API_KEY", "")

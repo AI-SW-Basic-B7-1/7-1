@@ -122,7 +122,7 @@ async def _request(
 
     request_params = {
         "serviceKey": settings.KOR_PET_TOUR_SERVICE_KEY,
-        "numOfRows": 10,
+        "numOfRows": 5,
         "pageNo": 1,
         "MobileOS": "ETC",
         "MobileApp": "AppTest",
