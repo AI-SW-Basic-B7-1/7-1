@@ -28,6 +28,8 @@
 
 ## 3. 4일 프로토타입 완성 마일스톤
 
+> 이 절의 8초 타임아웃은 초기 일정의 기록입니다. 현재 Gemini·관광 API 개별 요청 기본값은 각 15.0초이며, EC2 Nginx의 `proxy_read_timeout`은 80초입니다. 현행값은 [API 명세](docs/api_spec.md)와 [EC2 배포 매뉴얼](docs/ec2_deployment_manual.md)을 따릅니다.
+
 - **Day 1 (독립 모듈 세팅 & AI PoC)**:
   - 브랜치 생성 (feat/auth-ko, feat/backend-park, feat/ui-lee, feat/ai-cha)
   - [차종민] Gemini API 단독 호출 PoC 스크립트 작성 및 8초 타임아웃 검증

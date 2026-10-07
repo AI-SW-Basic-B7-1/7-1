@@ -3,6 +3,8 @@
 > 문서 성격: 프로젝트 시작 당시의 4일 MVP 계획을 보존한 기록입니다. 현재 구현 상태와 반려동물 여행 확장 계획은 [중기 프로젝트 계획](midterm_project_plan.md)을 따릅니다.
 >
 > 참고: 아래 초기 일정의 코디세이·Mock AI 표기는 계획 당시의 기록입니다. 현재 구현 기준은 Gemini API이며 제품 실행 중 Mock AI fallback은 사용하지 않습니다.
+>
+> 초기 계획의 8초 타임아웃 표기도 당시 기록입니다. 현재 Gemini·관광 API 개별 요청 기본값은 각 15.0초이며, Nginx 대기시간과 다른 현행 설정은 [API 명세](api_spec.md)와 [EC2 배포 매뉴얼](ec2_deployment_manual.md)을 따릅니다.
 
 > **프로젝트명**: AI Assistant (7-1 웹 기반 AI 챗봇 서비스)
 >
