@@ -8,6 +8,7 @@
 from typing import Any, Dict
 import aiosqlite
 from fastapi import APIRouter, Depends, HTTPException, status
+from starlette.concurrency import run_in_threadpool
 
 from app.auth import (
     create_access_token,
@@ -80,14 +81,27 @@ async def register(
         )
 
     # 2. 비밀번호 bcrypt 단방향 솔팅 해싱
-    hashed_password = hash_password(request.password)
+    hashed_password = await run_in_threadpool(hash_password, request.password)
 
     # 3. 데이터베이스에 신규 사용자 저장
-    await db.execute(
-        "INSERT INTO users (username, hashed_password) VALUES (?, ?)",
-        (request.username, hashed_password),
-    )
-    await db.commit()
+    try:
+        await db.execute(
+            "INSERT INTO users (username, hashed_password) VALUES (?, ?)",
+            (request.username, hashed_password),
+        )
+        await db.commit()
+    except aiosqlite.IntegrityError as exc:
+        await db.rollback()
+        cursor = await db.execute(
+            "SELECT user_id FROM users WHERE username = ?",
+            (request.username,),
+        )
+        if await cursor.fetchone() is not None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="이미 존재하는 아이디입니다.",
+            ) from exc
+        raise
 
     return UserRegisterResponse(
         message="회원가입이 완료되었습니다.",
@@ -131,7 +145,12 @@ async def login(
     user_row = await cursor.fetchone()
 
     # 2. 자격 증명 검증 (존재 여부 및 비밀번호 해시 일치 검사)
-    if user_row is None or not verify_password(request.password, user_row["hashed_password"]):
+    password_valid = user_row is not None and await run_in_threadpool(
+        verify_password,
+        request.password,
+        user_row["hashed_password"],
+    )
+    if not password_valid:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="아이디 또는 비밀번호가 올바르지 않습니다.",

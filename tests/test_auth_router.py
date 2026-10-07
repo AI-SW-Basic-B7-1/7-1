@@ -4,15 +4,20 @@
 자격증명 불일치, 만료/위변조 토큰, 미인증 차단)을 체계적으로 검증합니다.
 """
 
+import asyncio
+import threading
 from datetime import timedelta
 from typing import AsyncGenerator
 import aiosqlite
 import pytest
 from httpx import ASGITransport, AsyncClient
+from pydantic import ValidationError
 
 from app.auth import create_access_token
 from app.database import get_db, init_db
 from app.main import app
+from app.routers import auth_router
+from app.schemas import UserRegisterRequest
 
 
 @pytest.fixture
@@ -57,6 +62,38 @@ async def test_register_success(test_client: AsyncClient):
 
 
 @pytest.mark.anyio
+async def test_bcrypt_hash_and_verification_run_outside_event_loop(test_client, monkeypatch):
+    """비밀번호 해싱과 검증은 요청 이벤트 루프 밖의 워커에서 실행합니다."""
+    event_loop_thread = threading.get_ident()
+    worker_threads = {}
+
+    def hash_in_worker(password: str) -> str:
+        worker_threads["hash"] = threading.get_ident()
+        return "test-password-hash"
+
+    def verify_in_worker(password: str, hashed_password: str) -> bool:
+        worker_threads["verify"] = threading.get_ident()
+        return hashed_password == "test-password-hash"
+
+    monkeypatch.setattr(auth_router, "hash_password", hash_in_worker)
+    monkeypatch.setattr(auth_router, "verify_password", verify_in_worker)
+
+    register_response = await test_client.post(
+        "/api/auth/register",
+        json={"username": "worker_user", "password": "pass1234"},
+    )
+    login_response = await test_client.post(
+        "/api/auth/login",
+        json={"username": "worker_user", "password": "pass1234"},
+    )
+
+    assert register_response.status_code == 201
+    assert login_response.status_code == 200
+    assert worker_threads.keys() == {"hash", "verify"}
+    assert all(thread_id != event_loop_thread for thread_id in worker_threads.values())
+
+
+@pytest.mark.anyio
 async def test_register_duplicate_username(test_client: AsyncClient):
     """이미 존재하는 아이디로 가입 시도 시 400 Bad Request 에러를 반환하는지 검증합니다."""
     payload = {
@@ -71,6 +108,18 @@ async def test_register_duplicate_username(test_client: AsyncClient):
     res2 = await test_client.post("/api/auth/register", json=payload)
     assert res2.status_code == 400
     assert res2.json()["detail"] == "이미 존재하는 아이디입니다."
+
+
+@pytest.mark.anyio
+async def test_register_concurrent_duplicate_username(test_client: AsyncClient):
+    """같은 아이디의 동시 회원가입에서 한 건만 생성하고 나머지는 중복 오류로 응답합니다."""
+    payload = {"username": "concurrent_user", "password": "pass1234"}
+    responses = await asyncio.gather(
+        test_client.post("/api/auth/register", json=payload),
+        test_client.post("/api/auth/register", json=payload),
+    )
+
+    assert sorted(response.status_code for response in responses) == [201, 400]
 
 
 @pytest.mark.anyio
@@ -107,6 +156,38 @@ async def test_register_validation_errors(test_client: AsyncClient):
     )
     assert res4.status_code == 422
     assert res4.json() == {"detail": "비밀번호를 입력해 주세요."}
+
+
+@pytest.mark.anyio
+async def test_password_bcrypt_byte_limit_at_api_boundary(test_client: AsyncClient):
+    """72바이트 비밀번호는 허용하고 가입·로그인의 초과 입력은 422로 거부합니다."""
+    register_response = await test_client.post(
+        "/api/auth/register",
+        json={"username": "byte_limit_user", "password": "가" * 24},
+    )
+    assert register_response.status_code == 201
+
+    login_response = await test_client.post(
+        "/api/auth/login",
+        json={"username": "byte_limit_user", "password": "가" * 24},
+    )
+    assert login_response.status_code == 200
+
+    for path, username in (
+        ("/api/auth/register", "too_long_register_user"),
+        ("/api/auth/login", "byte_limit_user"),
+    ):
+        response = await test_client.post(
+            path,
+            json={"username": username, "password": "가" * 25},
+        )
+        assert response.status_code == 422
+        assert response.json()["detail"] == "비밀번호는 UTF-8 기준 72바이트 이하여야 합니다."
+
+def test_password_schema_rejects_unencodable_unicode():
+    """UTF-8로 표현할 수 없는 비밀번호를 검증 오류로 거부합니다."""
+    with pytest.raises(ValidationError):
+        UserRegisterRequest(username="invalid_unicode_user", password="\ud800")
 
 
 @pytest.mark.anyio
