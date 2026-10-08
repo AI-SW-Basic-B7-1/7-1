@@ -161,7 +161,7 @@ cp .env.example .env
 | JEV_MODEL | Jev 관찰 모드에서 사용하는 모델(기본 `jev-1.13.0`) |
 | JEV_TIMEOUT_SECONDS | Jev 호출의 전체 제한 시간(기본 2.0초) |
 
-현재 develop 배포 스크립트가 값 누락으로 중단하는 항목은 `SECRET_KEY`,
+현재 main/develop 배포 스크립트가 값 누락으로 중단하는 항목은 `SECRET_KEY`,
 `GEMINI_API_KEY`, `DATABASE_URL`, `SITE_DOMAIN`입니다.
 `KOR_PET_TOUR_SERVICE_KEY`도 실제 여행 조회에 필요하며, 배포 전 누락·예시값
 검사는 [PR #86](https://github.com/AI-SW-Basic-B7-1/7-1/pull/86) 병합 후 적용됩니다.
@@ -243,13 +243,16 @@ run_ec2_deploy.sh는 다음 작업을 순서대로 수행합니다.
 내부 배포 스크립트는 Nginx·Systemd 설정과 배포 전 서비스 상태를 복원합니다. SQLite 데이터는
 자동으로 되돌리지 않으며, 데이터 복구는 운영자가 별도 백업 절차로 수행해야 합니다.
 
-새 SecureString 값은 배포 시 EC2에 전달됩니다. 앱이 시작된 뒤 아래 명령은 비밀값을
-출력하지 않고 실제 적용된 제한값만 확인합니다.
+새 SecureString 값은 배포 시 EC2에 전달됩니다. 아래 Python 명령은 비밀값을
+출력하지 않고 별도 프로세스가 현재 환경과 `.env`에서 읽은 제한값을 확인합니다.
+실행 중인 서비스가 같은 값을 읽었다는 직접 증빙은 아니므로, 배포 성공 로그와
+서비스 재시작 시각을 함께 확인합니다. `is-active`는 서비스 활성 상태를 확인합니다.
 
 ~~~bash
 cd /home/ubuntu/app/B7-1/7-1
 sudo -u ubuntu ./venv/bin/python -c "from app.config import settings; print('AI_TIMEOUT_SECONDS=', settings.AI_TIMEOUT_SECONDS); print('PET_TOUR_API_TIMEOUT_SECONDS=', settings.PET_TOUR_API_TIMEOUT_SECONDS); print('ACCESS_TOKEN_EXPIRE_MINUTES=', settings.ACCESS_TOKEN_EXPIRE_MINUTES)"
 sudo systemctl is-active chatbot.service
+sudo systemctl show chatbot.service --property=ActiveEnterTimestamp
 ~~~
 
 기본 대기 시간은 900초이며, 테스트를 생략해야 하는 명확한 사유가 있을 때만 다음 옵션을 추가할 수 있습니다.

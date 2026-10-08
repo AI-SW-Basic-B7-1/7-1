@@ -1,6 +1,6 @@
 # AI Assistant REST API 명세
 
-> 작업 대조: 2026-10-08, `origin/develop` `3f9ebab`.
+> 작업 대조: 2026-10-08, `origin/main` `b670cee`와 `origin/develop` `3f9ebab` (파일 내용 동일).
 > Base URL: `/api`. 로컬 [Swagger UI](http://127.0.0.1:8000/docs), [ReDoc](http://127.0.0.1:8000/redoc).
 > 근거: [schemas.py](../app/schemas.py), [인증 라우터](../app/routers/auth_router.py), [채팅 라우터](../app/routers/chat_router.py), [예외 처리](../app/exception_handlers.py), [DB](../app/database.py).
 

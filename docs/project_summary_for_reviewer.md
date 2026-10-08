@@ -1,6 +1,6 @@
 # 반려동물 동반 국내여행 AI 챗봇 검토 요약
 
-**기준: 2026-10-08, `origin/develop` `3f9ebab`**
+**기준: 2026-10-08, `origin/main` `b670cee`와 `origin/develop` `3f9ebab` (파일 내용 동일)**
 
 ## 서비스 목표
 
