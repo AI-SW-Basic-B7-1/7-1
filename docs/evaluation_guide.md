@@ -11,7 +11,8 @@
 - 기준 코드는 `origin/develop` `3f9ebab`입니다. 인증·Gemini 채팅·대화방 이력과 KorPetTourService2 조회 및 답변 근거 연결이 구현되어 있습니다.
 - Gemini와 관광 API의 요청별 기본 타임아웃은 15초, JWT 기본 만료는 60분, EC2 Nginx `proxy_read_timeout`은 80초입니다.
 - `.gitignore`는 `.env.example` 이외의 환경 파일, DB 파일과 보조 파일을 제외합니다. 비밀번호는 UTF-8 72바이트까지 검사하고 앱 시작 시 JWT 키 길이와 알고리즘을 확인합니다.
-- SSM 배포는 Parameter Store SecureString을 EC2의 `.env`로 전달합니다. 배포 스크립트가 필수 관광 API 키를 검증하고, `DATABASE_URL`이 지정한 프로젝트 내부 DB를 점검·백업하며 모든 프론트 JavaScript 모듈의 응답을 확인합니다.
+- SSM 배포는 Parameter Store SecureString을 EC2의 `.env`로 전달합니다. DB 권한·무결성 검사와 예약 백업은 기본 `data/chatbot.db`를 사용하므로 운영 `DATABASE_URL`도 `sqlite:///./data/chatbot.db`로 유지합니다.
+- [PR #86](https://github.com/AI-SW-Basic-B7-1/7-1/pull/86)의 숫자 설정 검증, 관광 API 키 로그 마스킹·배포 전 검사, 전체 JavaScript 모듈 응답 검사와 로그 점검 스크립트 수정은 아직 미병합 상태입니다. 현행 develop 동작과 구분해 평가합니다.
 - 운영 SecureString의 실제 값, 해당 값의 EC2 적용 여부, 실 API 채팅·외부 브라우저·현재 배포 SHA는 이 문서 갱신 과정에서 실행하지 않았습니다.
 
 아래 §1~§8의 테스트 수·HTTP 상태·작업 및 이슈 목록은 별도 표시가 없으면 과거 조사 당시의 자료입니다. 실제 배포와 실 AI 기능은 위 현행 소스 코드 상태와 구분합니다.
@@ -44,7 +45,7 @@
 | 이전 문서 주장/첨부 초안 | 코드·PR 근거 | 반영 |
 |---|---|---|
 | 4일이 전체 과제 기간, 코디세이·내장 Mock | 120시간 미션, #29 Gemini 전환 | 초기 계획 원문을 보존하고 README·중기 계획·AGENTS에서 현재 구현 분리 |
-| `logs/server.log`, 로그 검증 스크립트 사용 가능 | config/logger의 `logs/app.log`, 당시 #17 변수 누락 | 직접 로그 조회를 안내했고, 검증 스크립트는 2026-10-08에 앱 로그 경로와 이벤트 이름 기준으로 수정 |
+| `logs/server.log`, 로그 검증 스크립트 사용 가능 | config/logger의 `logs/app.log`, 당시 #17 변수 누락 | 직접 로그 조회를 안내하며, 앱 로그 경로와 이벤트 이름을 반영한 스크립트 수정은 PR #86 병합 후 적용 |
 | 가입/채팅 422의 필드별 detail | `validation_exception_handler`의 고정 문자열 | API 명세의 오류 예시 수정 |
 | 사용자 이력도 최근 5건 | #37의 방 문맥 LIMIT 5, 전체 이력 쿼리에는 LIMIT 없음 | API·README에 전체 배열 계약 유지; #52는 미병합 종료 |
 | 배포 스크립트 develop 미반영 | #44/#48 병합, scripts/ec2 3개 존재 | 배포 문서의 오래된 전제 수정 |

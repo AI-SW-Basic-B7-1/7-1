@@ -147,10 +147,10 @@ cp .env.example .env
 | 변수 | 설정 기준 |
 | --- | --- |
 | SECRET_KEY | 예시값이 아닌 충분히 긴 무작위 비밀값 |
-| ALGORITHM | 기본값 HS256 |
+| ALGORITHM | `HS256` 사용. 키 생략 시 기본값 적용, 빈 문자열은 앱 시작 실패 |
 | ACCESS_TOKEN_EXPIRE_MINUTES | 토큰 만료 시간(분, 기본 60) |
 | SITE_DOMAIN | EC2 공개 주소로 연결되는 도메인; HTTPS 인증서 발급에 사용 |
-| DATABASE_URL | 기본값 sqlite:///./data/chatbot.db |
+| DATABASE_URL | EC2에서는 sqlite:///./data/chatbot.db 사용 |
 | GEMINI_API_KEY | 실제 Gemini API 키 |
 | GEMINI_MODEL | 사용할 Gemini 모델명 |
 | AI_TIMEOUT_SECONDS | Gemini HTTP 요청별 타임아웃(기본 15.0초) |
@@ -161,10 +161,13 @@ cp .env.example .env
 | JEV_MODEL | Jev 관찰 모드에서 사용하는 모델(기본 `jev-1.13.0`) |
 | JEV_TIMEOUT_SECONDS | Jev 호출의 전체 제한 시간(기본 2.0초) |
 
-배포가 값 누락으로 중단되는 항목은 `SECRET_KEY`, `GEMINI_API_KEY`,
-`KOR_PET_TOUR_SERVICE_KEY`, `DATABASE_URL`, `SITE_DOMAIN`입니다.
-`ALGORITHM`은 비우면 `HS256`을 사용합니다. 나머지 설정은 `.env.example`의
-기본값을 사용하거나 필요에 따라 변경합니다.
+현재 develop 배포 스크립트가 값 누락으로 중단하는 항목은 `SECRET_KEY`,
+`GEMINI_API_KEY`, `DATABASE_URL`, `SITE_DOMAIN`입니다.
+`KOR_PET_TOUR_SERVICE_KEY`도 실제 여행 조회에 필요하며, 배포 전 누락·예시값
+검사는 [PR #86](https://github.com/AI-SW-Basic-B7-1/7-1/pull/86) 병합 후 적용됩니다.
+`ALGORITHM=HS256`을 명시하는 것을 권장합니다. 키 자체를 생략하면 `HS256`을
+사용하지만 `ALGORITHM=""`로 입력하면 앱 시작 검증에서 실패합니다.
+그 밖의 기본값 지원 설정은 키를 생략하면 코드 기본값을 사용합니다.
 
 현재 배포 스크립트가 작성하는 Nginx 설정은 `proxy_read_timeout 80s`를 사용합니다. 이는 upstream에서 연속된 읽기 사이의 최대 대기시간이지 전체 채팅의 절대 마감시간이 아닙니다. Gemini와 관광 API의 요청별 15초 제한은 여러 번 호출될 수 있어, 응답 데이터가 도착하기까지 80초 넘게 걸리면 Nginx가 먼저 연결을 종료할 수 있습니다.
 
@@ -178,7 +181,7 @@ openssl rand -hex 32
 
 .env와 `.env.*`, SQLite 데이터베이스 및 `-wal`/`-shm` 파일은 Git에서 제외합니다. Parameter Store를 변경할 때는 애플리케이션 필수 키와 `SITE_DOMAIN`이 포함됐는지 확인합니다. 반려동물 여행 조회에 필요한 `KOR_PET_TOUR_SERVICE_KEY`도 포함해야 합니다. 지역 수요·지도 설정은 [후속 명세](pet_travel_spec.md)의 후보이며 현재 배포 필수값이 아닙니다.
 
-EC2 배포는 `DATABASE_URL`에 지정된 SQLite 파일이 프로젝트 디렉터리 안에 있는지 확인합니다. 해당 파일의 상위 디렉터리 권한, 배포 후 무결성 검사와 매일 예약 백업에 같은 경로를 사용합니다. 프로젝트 밖의 DB 경로와 SQLite 이외의 URL은 배포 전에 거부됩니다.
+EC2 배포의 DB 권한 설정·무결성 검사와 예약 백업은 프로젝트의 `data/chatbot.db`를 기준으로 합니다. 운영 `DATABASE_URL`은 `sqlite:///./data/chatbot.db`로 유지합니다. 앱의 사용자 지정 `DATABASE_URL`에 맞춰 검사·백업 경로가 자동으로 바뀌지는 않습니다. 백업 스크립트는 수동 실행 시 `DB_PATH`를 지원하지만, 배포가 등록하는 Cron은 기본 DB 경로를 사용합니다.
 
 ## 5. 배포 전 점검 순서
 
@@ -270,7 +273,7 @@ deploy_ec2.sh가 SSM에서 root 권한으로 실행되면 다음 작업을 수�
 - HTTPS Nginx reverse proxy에서 `/static/` 요청도 FastAPI로 전달
 - SQLite, .env, Git, 로그 파일 외부 접근 차단
 - chatbot.service Systemd 서비스 등록 및 재시작
-- 도메인 기반 HTTPS 헬스체크, CSS와 모든 JavaScript 모듈 응답, HTTP 리디렉션 및 DB 파일 차단 점검
+- 도메인 기반 HTTPS 헬스체크, CSS·auth.js·app.js 응답, HTTP 리디렉션 및 DB 파일 차단 점검. 모든 JavaScript 모듈의 응답 검사는 [PR #86](https://github.com/AI-SW-Basic-B7-1/7-1/pull/86) 병합 후 적용
 - SQLite 무결성 검사
 - SQLite 백업 Cron 등록
 

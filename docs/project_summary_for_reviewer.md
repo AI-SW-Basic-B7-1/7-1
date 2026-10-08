@@ -22,7 +22,7 @@
 
 ## 설정과 배포
 
-Gemini와 KorPetTourService2 요청 타임아웃 기본값은 각각 15초이며, JWT 기본 만료 시간은 60분입니다. EC2 Nginx `proxy_read_timeout` 기본값은 80초입니다. 배포는 Parameter Store SecureString에서 환경을 가져오며, `DATABASE_URL`은 프로젝트 내부 SQLite 파일을 지정해야 검사·백업과 일치합니다. 자세한 절차와 변수 목록은 [EC2 배포 매뉴얼](ec2_deployment_manual.md)을 따릅니다.
+Gemini와 KorPetTourService2 요청 타임아웃 기본값은 각각 15초이며, JWT 기본 만료 시간은 60분입니다. EC2 Nginx `proxy_read_timeout` 기본값은 80초입니다. 배포는 Parameter Store SecureString에서 환경을 가져옵니다. DB 검사·예약 백업은 기본 `data/chatbot.db`를 사용하므로 운영 `DATABASE_URL`은 `sqlite:///./data/chatbot.db`로 유지합니다. 자세한 절차와 변수 목록은 [EC2 배포 매뉴얼](ec2_deployment_manual.md)을 따릅니다.
 
 ## 검토 시 주의
 
