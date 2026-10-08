@@ -1,23 +1,58 @@
 name: EC2 자동 배포
 
 on:
+  pull_request:
+    branches:
+      - develop
+      - main
   push:
     branches:
       - main
 
 permissions:
   contents: read
-  id-token: write
-
-concurrency:
-  group: ec2-production
-  cancel-in-progress: false
 
 jobs:
+  test:
+    name: 백엔드·프론트엔드 테스트
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: 저장소 체크아웃
+        uses: actions/checkout@v6
+
+      - name: Python 설정
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.10'
+          cache: pip
+
+      - name: Node.js 설정
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+
+      - name: Python 의존성 설치
+        run: python -m pip install -r requirements.txt
+
+      - name: 백엔드 테스트
+        run: python -m pytest -q
+
+      - name: 프론트엔드 테스트
+        run: node --test tests/frontend/*.test.mjs
+
   deploy:
     name: main 브랜치를 EC2에 배포
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    permissions:
+      contents: read
+      id-token: write
+    concurrency:
+      group: ec2-production
+      cancel-in-progress: false
 
     steps:
       - name: 저장소 체크아웃
@@ -35,10 +70,12 @@ jobs:
           AWS_REGION: ${{ vars.AWS_REGION }}
           INSTANCE_ID: ${{ vars.EC2_INSTANCE_ID }}
           SECRET_PARAMETER: ${{ vars.ENV_PARAMETER_NAME }}
+          DEPLOY_SHA: ${{ github.sha }}
         run: |
           bash scripts/ec2/run_ec2_deploy.sh \
             --instance-id "$INSTANCE_ID" \
             --region "$AWS_REGION" \
             --branch main \
+            --commit-sha "$DEPLOY_SHA" \
             --secret-parameter "$SECRET_PARAMETER" \
             --wait-seconds 900

@@ -207,6 +207,41 @@ openssl rand -hex 32
    git remote -v
    ~~~
 
+## GitHub Actions 자동 배포 설정
+
+`.github/workflows/deploy-ec2.yml`은 `develop`·`main` 대상 PR에서 테스트를 실행하고, `main` push에서는 백엔드·프론트엔드 테스트가 모두 성공한 경우에만 EC2를 배포합니다. PR 테스트에는 AWS 인증이 필요하지 않습니다. `develop`에 이 PR을 병합한 뒤 배포하려면 별도의 PR로 `main`에도 반영해야 합니다.
+
+저장소의 **Settings → Secrets and variables → Actions → Variables**에서 다음 저장소 변수를 등록하거나 기존 값을 확인합니다. 이 워크플로는 `vars`를 사용하므로 동일 이름의 Secret만 등록하면 값을 읽지 못합니다.
+
+| 변수 | 값 |
+|---|---|
+| `AWS_DEPLOY_ROLE_ARN` | GitHub OIDC가 사용할 AWS IAM 역할의 ARN |
+| `AWS_REGION` | 대상 EC2 리전, 예: `ap-northeast-2` |
+| `EC2_INSTANCE_ID` | SSM에 등록된 배포 대상 인스턴스 ID |
+| `ENV_PARAMETER_NAME` | 운영 `.env`를 담은 SecureString의 이름, 예: `/b7-1/production/env` |
+
+키와 `.env` 내용은 변수에 등록하지 않습니다. 비밀값은 Parameter Store에 유지합니다. 저장소 **Settings → Actions → General**에서 워크플로와 사용하는 Actions의 실행이 허용되어 있는지도 확인합니다.
+
+첫 운영 실행 전 AWS IAM에서 OIDC 제공자 `https://token.actions.githubusercontent.com`과 역할 신뢰 정책을 확인합니다. `aud`는 `sts.amazonaws.com`이며, `sub`는 저장소가 실제 사용하는 OIDC 주체 형식에 맞춰 이 저장소의 `main`으로 제한합니다. 기존 이름 형식은 `repo:AI-SW-Basic-B7-1/7-1:ref:refs/heads/main`이고, 불변 ID 형식을 사용하는 저장소에서는 `repo:AI-SW-Basic-B7-1@329089035/7-1@1369859491:ref:refs/heads/main`입니다. [GitHub의 AWS OIDC 설정 문서](https://docs.github.com/en/actions/how-tos/secure-your-work/security-harden-deployments/oidc-in-aws)를 참고해 적용된 형식을 확인합니다. GitHub 역할에는 대상 EC2에 필요한 SSM 명령 전송·조회·취소 권한과 인스턴스 상태 조회 권한이 필요합니다. SecureString 조회·복호화 권한은 EC2 인스턴스 역할에서 확인합니다.
+
+AWS Systems Manager의 Session Manager에서 현재 애플리케이션 폴더로 이동한 뒤 아래 읽기 전용 명령으로 기존 배포 SHA와 서비스를 확인합니다.
+
+~~~bash
+git rev-parse HEAD
+systemctl is-active chatbot.service
+~~~
+
+자동 배포는 `${{ github.sha }}`를 `--commit-sha`로 전달합니다. 원격 배포 브랜치에 해당 커밋이 포함되는지 확인한 뒤 그 커밋으로 체크아웃하므로, 대기 중 `main`이 진행되어도 테스트한 커밋을 유지합니다. 배포 전후 SHA가 일치해야 성공하며, 성공한 SHA는 배포 출력·Actions 실행 요약·EC2의 `logs/deployed_revision.txt`에 기록합니다. 기존 설치에서 SHA 검증을 포함한 배포가 실패하면 기존 코드와 `.env`를 복원합니다.
+
+첫 배포 후 Actions 실행 요약의 트리거 SHA와 검증된 배포 SHA를 대조하고, EC2에서 다음 기록을 확인합니다.
+
+~~~bash
+cat logs/deployed_revision.txt
+git rev-parse HEAD
+~~~
+
+그 다음 실제 HTTPS 접속 → 회원가입·로그인 → AI 응답 → 대화 이력 조회와 DB 저장을 검증합니다. 로컬 테스트와 Actions 테스트는 실제 운영 E2E 검증을 대체하지 않습니다.
+
 ## 6. 배포 실행
 
 모든 전제조건을 확인한 뒤 프로젝트 루트에서 다음 명령을 실행합니다.
@@ -214,6 +249,8 @@ openssl rand -hex 32
 ~~~bash
 bash scripts/ec2/run_ec2_deploy.sh --instance-id <INSTANCE_ID> --region ap-northeast-2 --branch develop --secret-parameter /b7-1/production/env
 ~~~
+
+수동 배포에서도 특정 버전을 고정하려면 `--commit-sha <40자리_SHA>`를 추가합니다. 생략하면 기존과 같이 지정 브랜치의 최신 커밋을 배포합니다.
 
 run_ec2_deploy.sh는 다음 작업을 순서대로 수행합니다.
 
