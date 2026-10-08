@@ -7,8 +7,9 @@ from typing import Any
 import httpx
 
 from app.config import settings
+from app.logger import chat_logger
 
-from app.pet_service import AREA_CODES, CONTENT_TYPE_IDS
+from app.pet_service import AREA_CODES, CONTENT_TYPE_IDS, matches_region_name
 
 class AITimeoutError(Exception):
     """AI API가 제한 시간 안에 응답하지 못한 경우의 예외."""
@@ -22,13 +23,14 @@ PARAMETER_SYSTEM_INSTRUCTION = """
 너는 반려동물 동반여행 검색 조건을 분석하는 역할이다.
 
 사용자의 현재 질문과 이전 대화 기록을 보고
-KorPetTourService2 API 검색에 필요한 두 값을 추출한다.
+KorPetTourService2 API 검색에 필요한 목적지 조건을 추출한다.
 
 반드시 아래 JSON 형식으로만 응답한다.
 
 {
   "areaCode": 숫자 또는 null,
-  "contentTypeId": 숫자 또는 null
+  "contentTypeId": 숫자 또는 null,
+  "sigunguName": 목적지 시군구 이름 문자열 또는 null
 }
 
 [지역 코드]
@@ -62,6 +64,16 @@ KorPetTourService2 API 검색에 필요한 두 값을 추출한다.
 사용자가 강릉, 춘천처럼 특정 시/군을 말하면
 해당 광역 지역으로 판단한다.
 예: 강릉 → 강원도 → 32
+
+출발지와 목적지를 구분하고 검색 지역에는 목적지만 사용한다.
+예: 서울에서 강릉 식당 추천 → areaCode=32, contentTypeId=39, sigunguName="강릉"
+목적지 시군구가 명확하면 sigunguName에 그 이름을 넣는다.
+현재 질문이나 이전 사용자 질문에 명시된 목적지 시군구만 사용하고 장소명에서 시군구를 추정하지 않는다.
+광역 지역만 지정되거나 시군구가 여러 개이면 sigunguName은 null이다.
+현재 질문에 광역 지역이 새로 명시되면 이전 시군구를 재사용하지 않는다.
+"다른 식당 추천"처럼 같은 여행의 후속 질문일 때만 이전 목적지 시군구를 이어서 사용한다.
+출발지만 확인되고 목적지가 불명확하면 areaCode와 sigunguName은 null이다.
+현재 목적지가 확인되면 이전 대화의 지역으로 덮어쓰지 않는다.
 
 현재 질문에 지역이나 관광 타입이 직접 나오지 않더라도
 이전 대화에서 명확하게 확인할 수 있다면 그 값을 사용한다.
@@ -127,6 +139,7 @@ DATA_SYSTEM_INSTRUCTION = """
 11. 동반유형코드의 의미를 추측하지 않는다. 시설이나 비치 품목만으로 동반 가능을 확정하지 않는다.
 12. 소개정보와 반려동물 상세 조건이 상충하면 상충 사실을 알리고 시설 확인을 권한다.
 13. 기존 항목 형식과 답변 내용은 유지하고, 굵게 표시하는 Markdown 장식은 사용하지 않는다.
+14. 사용자가 지정한 지역·동반 조건과 다르거나 확인되지 않은 장소를 그 조건에 맞는 것으로 단정하지 않는다.
 """.strip()
 
 
@@ -204,6 +217,22 @@ async def _generate_gemini_text(
         raise AIServiceError(
             "Gemini 응답이 비어 있습니다."
         )
+
+    usage = data.get("usageMetadata", {})
+    if isinstance(usage, dict):
+        counts = [usage.get(name, 0) for name in (
+            "promptTokenCount", "candidatesTokenCount", "thoughtsTokenCount",
+        )]
+        if (
+            "promptTokenCount" in usage and "candidatesTokenCount" in usage
+            and all(type(value) is int and value >= 0 for value in counts)
+        ):
+            chat_logger.info(
+                "ai_token_usage model=%s phase=%s prompt_tokens=%s output_tokens=%s thoughts_tokens=%s",
+                settings.GEMINI_MODEL,
+                "parameters" if system_instruction == PARAMETER_SYSTEM_INSTRUCTION else "answer",
+                *counts,
+            )
 
     return answer.strip()
 
@@ -286,13 +315,14 @@ async def generate_chat_response(
 async def extract_pet_tour_parameters(
     question: str,
     history: list,
-) -> dict[str, int | None]:
+) -> dict[str, int | str | None]:
     """
-    Gemini 1차 호출.
+    현재 질문의 명확한 지역·유형은 직접 판별하고 나머지는 Gemini에 맡깁니다.
+    """
 
-    사용자 질문 및 최근 대화에서
-    areaCode와 contentTypeId를 추출합니다.
-    """
+    local_parameters = _extract_local_parameters(question)
+    if local_parameters is not None:
+        return local_parameters
 
     contents = _build_history_contents(history)
 
@@ -385,7 +415,42 @@ async def extract_pet_tour_parameters(
             f"{content_type_id}"
         )
 
-    return {
+    parameters: dict[str, int | str | None] = {
         "areaCode": area_code,
         "contentTypeId": content_type_id,
     }
+    sigungu_name = result.get("sigunguName")
+    if sigungu_name is not None:
+        if (
+            not isinstance(sigungu_name, str)
+            or not 2 <= len(sigungu_name.strip()) <= 20
+            or not re.fullmatch(r"[가-힣]+(?: [가-힣]+)?", sigungu_name.strip())
+        ):
+            raise AIServiceError("Gemini가 반환한 시군구 이름 형식이 올바르지 않습니다.")
+        if area_code is None:
+            raise AIServiceError("시군구 검색에는 목적지 지역 코드가 필요합니다.")
+        parameters["sigunguName"] = sigungu_name.strip()
+    return parameters
+
+
+def _extract_local_parameters(question: str) -> dict[str, int] | None:
+    """광역 지역과 단일 관광 유형이 모두 명시된 경우에만 AI 분석을 생략합니다."""
+    regions = {code for name, code in AREA_CODES.items() if matches_region_name(question, name)}
+    aliases = {**CONTENT_TYPE_IDS, "식당": 39, "카페": 39, "숙소": 32, "호텔": 32}
+    types = {code for name, code in aliases.items() if matches_region_name(question, name)}
+    # 모르는 지명이나 이동 표현이 있으면 출발지를 목적지로 추측하지 않습니다.
+    simple_words = (
+        *AREA_CODES, *aliases,
+        "에서", "에", "의", "으로", "로", "과", "와", "은", "는", "을", "를",
+        "추천해주세요", "추천해줘", "추천", "알려주세요", "알려줘", "찾아줘", "찾아주세요",
+        "좀", "부탁해", "갈", "만한", "좋은", "곳", "장소",
+        "반려동물", "반려견", "강아지", "함께", "동반", "가능한",
+    )
+    simple_question = re.fullmatch(
+        r"(?:\s|[?,.!]|" + "|".join(re.escape(word) for word in simple_words) + r")+",
+        question,
+    )
+    mentioned_regions = {code for name, code in AREA_CODES.items() if name in question}
+    if simple_question and len(regions) == 1 and regions == mentioned_regions and len(types) == 1:
+        return {"areaCode": regions.pop(), "contentTypeId": types.pop()}
+    return None

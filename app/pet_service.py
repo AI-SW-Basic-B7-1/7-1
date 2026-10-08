@@ -1,16 +1,30 @@
 """한국관광공사 KorPetTourService2 연동 모듈."""
 
 import asyncio
+from collections import OrderedDict
+from copy import deepcopy
+from hashlib import sha256
+import json
+import random
+import re
+from time import monotonic
 from typing import Any
 
 import httpx
 
 from app.config import settings
+from app.logger import chat_logger
 
 
 BASE_URL = (
     "https://apis.data.go.kr/B551011/KorPetTourService2"
 )
+
+CANDIDATE_LIMIT = 20
+RECOMMENDATION_LIMIT = 5
+CACHE_TTL_SECONDS = 300
+CACHE_MAX_ENTRIES = 256
+_response_cache: OrderedDict[str, tuple[float, dict[str, Any]]] = OrderedDict()
 
 AREA_CODES = {
     "서울": 1,
@@ -75,6 +89,32 @@ class PetTourServiceError(Exception):
     """KorPetTourService2 호출에 실패한 경우."""
 
 
+def matches_region_name(text: str, name: str) -> bool:
+    """장소명 일부를 지역으로 오인하지 않도록 단어 경계와 조사를 확인합니다."""
+    return bool(re.search(
+        rf"(?<![가-힣]){re.escape(name)}(?=$|[^가-힣]|에서|에|의|으로|로|과|와|은|는|을|를)",
+        text,
+    ))
+
+
+def _cache_key(endpoint: str, params: dict[str, Any], allow_no_data: bool) -> str:
+    """인증키가 달라지면 캐시를 재사용하지 않고 키 원문도 보관하지 않습니다."""
+    identity = json.dumps(
+        [endpoint, params, allow_no_data, settings.KOR_PET_TOUR_SERVICE_KEY],
+        sort_keys=True,
+    )
+    return sha256(identity.encode()).hexdigest()
+
+
+def _remember_response(key: str, data: dict[str, Any]) -> dict[str, Any]:
+    """검증된 공개 데이터만 제한된 시간과 개수로 보관합니다."""
+    _response_cache[key] = (monotonic() + CACHE_TTL_SECONDS, deepcopy(data))
+    _response_cache.move_to_end(key)
+    while len(_response_cache) > CACHE_MAX_ENTRIES:
+        _response_cache.popitem(last=False)
+    return data
+
+
 def _extract_items(data: dict[str, Any]) -> list[dict[str, Any]]:
     """공공데이터 API 응답에서 item 목록을 추출합니다."""
 
@@ -119,6 +159,15 @@ async def _request(
         raise PetTourServiceError(
             "KOR_PET_TOUR_SERVICE_KEY가 설정되지 않았습니다."
         )
+
+    cache_key = _cache_key(endpoint, params, allow_no_data)
+    cached = _response_cache.get(cache_key)
+    if cached is not None:
+        expires_at, cached_data = cached
+        if monotonic() < expires_at:
+            _response_cache.move_to_end(cache_key)
+            return deepcopy(cached_data)
+        del _response_cache[cache_key]
 
     request_params = {
         "serviceKey": settings.KOR_PET_TOUR_SERVICE_KEY,
@@ -172,7 +221,9 @@ async def _request(
     result_message = header.get("resultMsg", "")
 
     if allow_no_data and result_code == "03":
-        return {"response": {"body": {"items": ""}}}
+        return _remember_response(
+            cache_key, {"response": {"body": {"items": ""}}},
+        )
 
     if result_code not in {"0000", "00"}:
         raise PetTourServiceError(
@@ -180,23 +231,21 @@ async def _request(
             f"{result_code} {result_message}"
         )
 
-    return data
+    _extract_items(data)
+    return _remember_response(cache_key, data)
 
 
 async def area_based_list(
     area_code: int,
     content_type_id: int,
+    *,
+    sigungu_code: int | None = None,
 ) -> list[dict[str, Any]]:
     """지역 및 관광타입 기준으로 관광정보를 조회합니다."""
 
-    if area_code not in AREA_CODES.values():
-        raise ValueError(f"지원하지 않는 areaCode입니다: {area_code}")
-
-    if content_type_id not in CONTENT_TYPE_IDS.values():
-        raise ValueError(
-            "지원하지 않는 contentTypeId입니다: "
-            f"{content_type_id}"
-        )
+    _validate_search_codes(area_code, content_type_id)
+    if sigungu_code is not None and (type(sigungu_code) is not int or sigungu_code <= 0):
+        raise ValueError("sigunguCode는 양의 정수여야 합니다.")
 
     endpoint = f"{BASE_URL}/areaBasedList2"
 
@@ -204,12 +253,101 @@ async def area_based_list(
         endpoint,
         {
             "arrange": "C",
+            "numOfRows": CANDIDATE_LIMIT,
             "areaCode": area_code,
             "contentTypeId": content_type_id,
+            **({"sigunguCode": sigungu_code} if sigungu_code is not None else {}),
         },
     )
 
     return _extract_items(data)
+
+
+def _validate_search_codes(area_code: int, content_type_id: int) -> None:
+    """허용된 지역·유형 코드만 외부 API 조회에 사용합니다."""
+    if type(area_code) is not int or area_code not in AREA_CODES.values():
+        raise ValueError(f"지원하지 않는 areaCode입니다: {area_code}")
+    if type(content_type_id) is not int or content_type_id not in CONTENT_TYPE_IDS.values():
+        raise ValueError(f"지원하지 않는 contentTypeId입니다: {content_type_id}")
+
+
+def _normalized_sigungu_name(name: str) -> str:
+    """시군구 접미사만 제거해 강릉과 강릉시를 같은 이름으로 비교합니다."""
+    return re.sub(r"(?<=[가-힣])[시군구]$", "", name) if len(name) > 2 else name
+
+
+async def _resolve_sigungu_code(area_code: int, sigungu_name: str | None) -> int | None:
+    """명시된 목적지 시군구만 조회하고 실패하면 주소 필터로 처리합니다."""
+    if not sigungu_name:
+        return None
+    endpoint = f"{BASE_URL}/areaCode2"
+    params = {"areaCode": area_code, "numOfRows": 100}
+    try:
+        data = await _request(endpoint, params)
+        codes = set()
+        for district in _extract_items(data):
+            name = str(district.get("name") or "")
+            if _normalized_sigungu_name(name) != _normalized_sigungu_name(sigungu_name):
+                continue
+            try:
+                if type(district.get("code")) not in (str, int):
+                    raise ValueError
+                code = int(district["code"])
+                if code <= 0:
+                    raise ValueError
+            except (KeyError, TypeError, ValueError):
+                raise PetTourServiceError("시군구 코드 형식이 올바르지 않습니다.") from None
+            codes.add(code)
+        return next(iter(codes)) if len(codes) == 1 else None
+    except (PetTourAPITimeoutError, PetTourServiceError) as exc:
+        _response_cache.pop(_cache_key(endpoint, params, False), None)
+        chat_logger.warning(
+            "pet_sigungu_lookup_failed area_code=%s error_type=%s",
+            area_code, "timeout" if isinstance(exc, PetTourAPITimeoutError) else "service_error",
+        )
+        return None
+
+
+def _address_matches_sigungu(address: str, sigungu_name: str) -> bool:
+    """코드 조회 실패 시에도 요청한 시군구의 주소가 확인된 후보만 허용합니다."""
+    name = _normalized_sigungu_name(sigungu_name)
+    return bool(re.search(
+        rf"(?<![가-힣]){re.escape(name)}(?:시|군|구)(?=$|[^가-힣])", address,
+    ))
+
+
+def _mentions_title(text: str, item: dict[str, Any]) -> bool:
+    """이름의 일부나 숫자 접두사가 다른 장소와 일치하는 경우를 제외합니다."""
+    title = str(item.get("title") or "")
+    return bool(title and re.search(
+        rf"(?<![가-힣A-Za-z0-9]){re.escape(title)}(?=$|[^가-힣A-Za-z0-9]|에서|에|의|은|는|을|를|과|와)",
+        text,
+    ))
+
+
+def select_pet_tour_candidates(items: list[dict[str, Any]], question: str, history: list) -> list[dict[str, Any]]:
+    """후보를 중복 없이 골라 추가 추천에서는 최근 장소를 우선 제외합니다."""
+    unique = {}
+    for item in items[:CANDIDATE_LIMIT]:
+        if item.get("contentid") and item.get("contenttypeid"):
+            unique.setdefault(str(item["contentid"]), item)
+    candidates = random.sample(list(unique.values()), k=len(unique))
+    recent_text = "\n".join(chat["response"] for chat in history)
+    alternative = bool(re.search(
+        r"(다른|더|추가|새로운)\s*(장소|곳|추천|음식점|식당|숙소|관광지)|또\s*추천",
+        question,
+    ))
+    if alternative:
+        unseen = [item for item in candidates if not _mentions_title(recent_text, item)]
+        candidates = unseen or candidates
+    else:
+        # 후속 조건 질문은 방금 안내한 장소를 우선 유지합니다.
+        latest_answer = history[-1]["response"] if history else ""
+        candidates.sort(key=lambda item: (
+            not _mentions_title(question, item),
+            not _mentions_title(latest_answer, item),
+        ))
+    return candidates[:RECOMMENDATION_LIMIT]
 
 
 async def detail_intro(
@@ -259,15 +397,28 @@ async def _get_place_details(
 async def get_pet_tour_data(
     area_code: int,
     content_type_id: int,
+    *,
+    question: str = "",
+    history: list | None = None,
+    sigungu_name: str | None = None,
 ) -> list[dict[str, Any]]:
     """
     지역별 목록에 소개정보와 반려동물 상세정보를 연결합니다.
     """
 
+    _validate_search_codes(area_code, content_type_id)
+    history = history or []
+    sigungu_code = await _resolve_sigungu_code(area_code, sigungu_name)
     area_items = await area_based_list(
         area_code,
         content_type_id,
+        sigungu_code=sigungu_code,
     )
+    if sigungu_name and sigungu_code is None:
+        area_items = [
+            item for item in area_items
+            if _address_matches_sigungu(str(item.get("addr1") or ""), sigungu_name)
+        ]
 
     if not area_items:
         return []
@@ -276,7 +427,7 @@ async def get_pet_tour_data(
 
     valid_items = []
 
-    for item in area_items:
+    for item in select_pet_tour_candidates(area_items, question, history):
         content_id = item.get("contentid")
         content_type = item.get("contenttypeid")
 

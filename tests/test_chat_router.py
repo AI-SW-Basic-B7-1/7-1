@@ -2,8 +2,10 @@
 
 from typing import AsyncGenerator
 from unittest.mock import Mock
+import json
 
 import aiosqlite
+import httpx
 import pytest
 from httpx import ASGITransport, AsyncClient
 
@@ -13,6 +15,129 @@ from app.database import ConversationAccessError, get_db, get_db_connection, ini
 from app.jev_service import JevDecision, JevServiceError
 from app.main import app
 from app.routers import chat_router
+
+
+@pytest.mark.anyio
+async def test_pet_pipeline_preserves_contract_and_conversation_isolation(chat_client, monkeypatch):
+    """실제 서비스 경로를 대역 통신으로 통합해 답변 다양화와 사용자 격리를 확인합니다."""
+    from app import ai_service, pet_service
+
+    pet_service._response_cache.clear()
+    monkeypatch.setattr(chat_router, "extract_pet_tour_parameters", ai_service.extract_pet_tour_parameters)
+    monkeypatch.setattr(chat_router, "generate_chat_response", ai_service.generate_chat_response)
+    monkeypatch.setattr(pet_service.random, "sample", lambda population, k: population[:k])
+    monkeypatch.setattr(pet_service.settings, "KOR_PET_TOUR_SERVICE_KEY", "test-only-tour-key")
+    monkeypatch.setattr(ai_service.settings, "GEMINI_API_KEY", "test-only-gemini-key")
+    calls = []
+
+    def handler(request):
+        """공식 응답 대역으로 관광 데이터와 Gemini 최종 답변을 제공합니다."""
+        endpoint = request.url.path.rsplit("/", 1)[-1]
+        calls.append(endpoint)
+        if endpoint.endswith(":generateContent"):
+            body = json.loads(request.content)
+            if body.get("systemInstruction", {}).get("parts", [{}])[0].get("text") == ai_service.PARAMETER_SYSTEM_INSTRUCTION:
+                answer = '{"areaCode": 1, "contentTypeId": 39}'
+            else:
+                context = body["contents"][-2]["parts"][0]["text"]
+                assert context.count("[관광정보 ") == 5
+                assert "이동장 필수" in context
+                answer = "\n".join(line for line in context.splitlines() if line.startswith("장소명:"))
+            return httpx.Response(200, json={"candidates": [{"content": {"parts": [{"text": answer}]}}]})
+        items = {
+            "areaCode2": [{"name": "종로구", "code": "23"}],
+            "areaBasedList2": [{"contentid": str(index), "contenttypeid": "39", "title": f"식당{index}"} for index in range(1, 21)],
+            "detailIntro2": [{"opentimefood": "10:00~18:00"}],
+            "detailPetTour2": [{"acmpyPsblCpam": "소형견", "acmpyNeedMtr": "이동장 필수"}],
+        }[endpoint]
+        return httpx.Response(200, json={"response": {"header": {"resultCode": "0000"}, "body": {"items": {"item": items}}}})
+
+    original_client = httpx.AsyncClient
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **kwargs: original_client(transport=httpx.MockTransport(handler), **kwargs))
+    first = await chat_client.post("/api/chat", json={"question": "서울 음식점 추천"}, headers=authorization_header("user_one"))
+    assert first.status_code == 200
+    assert set(first.json()) == {"answer", "conversation_id", "latency_ms"}
+    assert sum(endpoint.endswith(":generateContent") for endpoint in calls) == 1
+    assert len(calls) == 12
+    assert "areaCode2" not in calls
+    conversation_id = first.json()["conversation_id"]
+    second = await chat_client.post("/api/chat", json={"question": "다른 식당 추천", "conversation_id": conversation_id}, headers=authorization_header("user_one"))
+    assert second.status_code == 200
+    assert second.json()["answer"] != first.json()["answer"]
+    before = len(calls)
+    forbidden = await chat_client.post("/api/chat", json={"question": "서울 식당 추천", "conversation_id": conversation_id}, headers=authorization_header("user_two"))
+    assert forbidden.status_code == 404
+    assert len(calls) == before
+    saved = await chat_client.get("/api/me/chats", headers=authorization_header("user_one"))
+    assert len(saved.json()) == 2
+    assert all(row["conversation_id"] == conversation_id for row in saved.json())
+    other = await chat_client.get("/api/me/chats", headers=authorization_header("user_two"))
+    assert other.json() == []
+
+
+@pytest.mark.parametrize("district_status", ["success", "timeout", "service_error", "no_matching_address"])
+@pytest.mark.anyio
+async def test_destination_pipeline_survives_optional_district_failure(chat_client, monkeypatch, district_status):
+    """출발지 서울 대신 목적지 강릉을 조회하고 시군구 장애 시에도 지역 범위를 지킵니다."""
+    from app import ai_service, pet_service
+
+    pet_service._response_cache.clear()
+    monkeypatch.setattr(chat_router, "extract_pet_tour_parameters", ai_service.extract_pet_tour_parameters)
+    monkeypatch.setattr(chat_router, "generate_chat_response", ai_service.generate_chat_response)
+    monkeypatch.setattr(pet_service.settings, "KOR_PET_TOUR_SERVICE_KEY", "test-only-tour-key")
+    monkeypatch.setattr(ai_service.settings, "GEMINI_API_KEY", "test-only-gemini-key")
+    calls = []
+
+    def handler(request):
+        """시군구 응답만 실패시키고 필수 관광 조회와 답변 계약을 검증합니다."""
+        endpoint = request.url.path.rsplit("/", 1)[-1]
+        calls.append(endpoint)
+        if endpoint.endswith(":generateContent"):
+            body = json.loads(request.content)
+            instruction = body["systemInstruction"]["parts"][0]["text"]
+            if instruction == ai_service.PARAMETER_SYSTEM_INSTRUCTION:
+                assert body["contents"][-1]["parts"][0]["text"] == "서울에서 강릉 식당 추천"
+                answer = '{"areaCode": 32, "contentTypeId": 39, "sigunguName": "강릉"}'
+            else:
+                context = body["contents"][-2]["parts"][0]["text"]
+                assert "춘천 식당" not in context
+                if district_status == "no_matching_address":
+                    assert instruction == ai_service.NO_RESULT_SYSTEM_INSTRUCTION
+                    answer = "조회 후보에서 강릉 주소를 확인하지 못했습니다."
+                else:
+                    assert "강릉 식당" in context
+                    answer = "강릉 식당: 강원특별자치도 강릉시 중앙로 1, 이동장 필수"
+            return httpx.Response(200, json={"candidates": [{"content": {"parts": [{"text": answer}]}}]})
+        if endpoint == "areaCode2":
+            assert request.url.params["areaCode"] == "32"
+            if district_status in ("timeout", "no_matching_address"):
+                raise httpx.ReadTimeout("지역 코드 시간 초과")
+            if district_status == "service_error":
+                return httpx.Response(200, json={"response": {"header": {"resultCode": "30"}}})
+            items = [{"name": "강릉시", "code": "1"}]
+        elif endpoint == "areaBasedList2":
+            assert request.url.params["areaCode"] == "32"
+            assert request.url.params.get("sigunguCode") == ("1" if district_status == "success" else None)
+            items = [{"contentid": "2", "contenttypeid": "39", "title": "춘천 식당", "addr1": "강원특별자치도 춘천시 중앙로 1"}]
+            if district_status != "no_matching_address":
+                items = [{"contentid": "1", "contenttypeid": "39", "title": "강릉 식당", "addr1": "강원특별자치도 강릉시 중앙로 1"}]
+                if district_status != "success":
+                    items.append({"contentid": "2", "contenttypeid": "39", "title": "춘천 식당", "addr1": "강원특별자치도 춘천시 중앙로 1"})
+        else:
+            assert request.url.params["contentId"] == "1"
+            items = [{"opentimefood": "10:00~18:00"}] if endpoint == "detailIntro2" else [{"acmpyNeedMtr": "이동장 필수"}]
+        return httpx.Response(200, json={"response": {"header": {"resultCode": "0000"}, "body": {"items": {"item": items}}}})
+
+    original_client = httpx.AsyncClient
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **kwargs: original_client(transport=httpx.MockTransport(handler), **kwargs))
+    response = await chat_client.post("/api/chat", json={"question": "서울에서 강릉 식당 추천"}, headers=authorization_header("user_one"))
+    assert response.status_code == 200
+    assert set(response.json()) == {"answer", "conversation_id", "latency_ms"}
+    assert "춘천" not in response.json()["answer"]
+    assert sum(endpoint.endswith(":generateContent") for endpoint in calls) == 2
+    assert len(calls) == (4 if district_status == "no_matching_address" else 6)
+    history = await chat_client.get("/api/me/chats", headers=authorization_header("user_one"))
+    assert history.json()[0]["response"] == response.json()["answer"]
 
 
 @pytest.mark.anyio
