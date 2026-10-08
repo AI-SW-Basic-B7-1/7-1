@@ -15,6 +15,9 @@ def test_cost_model_keeps_answer_budget_and_reduces_only_parameter_calls():
     assert result["improved"]["gemini_calls"] == 120
     assert result["improved"]["tour_calls_same_pool_upper_bound"] == 42
     assert result["improved"]["input_tokens"] == 100 * 3400 + 20 * 2200
+    assert result["improved"]["tour_calls_all_cold_upper_bound"] == 1120
+    assert result["improved"]["tour_calls_without_sigungu_per_cold_request_upper_bound"] == 11
+    assert result["improved"]["tour_calls_without_sigungu_same_pool_upper_bound"] == 41
 
 
 @pytest.mark.parametrize("requests,local_hits,price", [

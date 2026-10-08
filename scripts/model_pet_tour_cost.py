@@ -44,14 +44,19 @@ def model_cost(
     return {
         "assumption": (
             f"동일 검색 조건·후보 {CANDIDATE_LIMIT}건·단일 프로세스·순차 실행·"
-            f"모든 요청이 {CACHE_TTL_SECONDS}초 캐시 안에서 처리됨·캐시 퇴출 없음"
+            f"모든 요청이 {CACHE_TTL_SECONDS}초 캐시 안에서 처리됨·캐시 퇴출 없음·시군구 조회 장애 없음"
         ),
         "baseline": {**scenario(requests), "tour_calls_upper_bound": 11 * requests},
         "improved": {
             **scenario(requests - local_hits),
             "tour_calls_per_cold_request_upper_bound": 2 + 2 * RECOMMENDATION_LIMIT,
+            "tour_calls_all_cold_upper_bound": (1 + 2 * RECOMMENDATION_LIMIT) * requests + requests - local_hits,
+            "tour_calls_without_sigungu_per_cold_request_upper_bound": 1 + 2 * RECOMMENDATION_LIMIT,
             "tour_calls_same_pool_upper_bound": min(
                 (2 + 2 * RECOMMENDATION_LIMIT) * requests, 2 + 2 * CANDIDATE_LIMIT,
+            ) if requests else 0,
+            "tour_calls_without_sigungu_same_pool_upper_bound": min(
+                (1 + 2 * RECOMMENDATION_LIMIT) * requests, 1 + 2 * CANDIDATE_LIMIT,
             ) if requests else 0,
             "tour_calls_fully_warm": 0,
         },
