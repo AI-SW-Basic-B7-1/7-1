@@ -1,8 +1,11 @@
 """애플리케이션 환경 설정의 기본값과 범위를 검증합니다."""
 
+import runpy
+from pathlib import Path
+
 import pytest
 
-from app.config import Settings, _positive_integer, _positive_timeout_seconds
+from app.config import _positive_integer, _positive_timeout_seconds
 
 
 def test_settings_defaults_match_current_runtime_contract(monkeypatch):
@@ -14,7 +17,9 @@ def test_settings_defaults_match_current_runtime_contract(monkeypatch):
     ):
         monkeypatch.delenv(name, raising=False)
 
-    settings = Settings()
+    monkeypatch.setattr("dotenv.load_dotenv", lambda **kwargs: False)
+    config_path = Path(__file__).resolve().parents[1] / "app/config.py"
+    settings = runpy.run_path(str(config_path))["settings"]
 
     assert settings.AI_TIMEOUT_SECONDS == 15.0
     assert settings.PET_TOUR_API_TIMEOUT_SECONDS == 15.0
