@@ -17,6 +17,7 @@
 | `static/js/keyboard.js` | Enter·Shift+Enter·IME 전송 판정 |
 | `static/js/chat-content.js` | 챗봇 이름, 여행 질문 예시, 사용자 표시 문구 |
 | `static/js/shell.js` | 데스크톱 접기와 모바일 사이드바 열기·닫기 |
+| `static/js/password-validation.js` | 가입·로그인 비밀번호의 UTF-8 바이트 길이 검사 |
 
 프론트 코드는 Python 모듈, 서버 템플릿, `.env`, 개인 DB 경로를 import하거나 읽지 않습니다. `fetch`는 `api.js` 한 곳에만 있고 동일 origin 상대 경로만 사용합니다.
 
@@ -31,6 +32,7 @@
 - `GET /static/js/keyboard.js`
 - `GET /static/js/chat-content.js`
 - `GET /static/js/shell.js`
+- `GET /static/js/password-validation.js`
 
 JavaScript는 ES module로 제공되어야 하며 올바른 JavaScript MIME type이 필요합니다. HTML을 `file://`로 직접 열지 않습니다. 팀 FastAPI 서버는 정적 파일을 `/static`에 마운트하고 `GET /`에서 `static/index.html`을 반환해야 합니다.
 
