@@ -204,14 +204,14 @@ EC2 배포는 [배포 매뉴얼](docs/ec2_deployment_manual.md)의 SSM·Nginx·S
 
 `서울에서 강아지와 함께 갈 수 있는 관광지 추천해줘`
 
-1. 최근 대화 이력과 현재 질문을 Gemini에 전달합니다.
-2. Gemini가 `areaCode=1`, `contentTypeId=12`와 같이 검색 조건을 추출합니다.
-3. `pet_service.py`가 KorPetTourService2 `areaBasedList2`에서 최대 5개 장소를 조회합니다.
-4. 각 장소의 `contentid`, `contenttypeid`로 `detailIntro2`와 `detailPetTour2`를 조회합니다.
+1. 최근 대화 이력과 현재 질문을 확인합니다.
+2. 현재 질문의 명확한 지역·유형은 서버가 직접 판별하고, 나머지는 Gemini가 `areaCode`, `contentTypeId`를 추출합니다.
+3. `pet_service.py`가 공식 시군구 코드를 확인하고 `areaBasedList2`에서 최대 20개 후보를 조회합니다.
+4. 선택한 최대 5개 장소의 `contentid`, `contenttypeid`로 `detailIntro2`와 `detailPetTour2`를 조회합니다.
 5. 장소 기본정보와 두 상세 응답을 하나의 context로 구성합니다.
 6. Gemini가 해당 context만 근거로 최종 답변을 생성합니다.
 7. 최종 질문·답변을 기존 SQLite 대화 로그에 저장합니다.
 
-목록 1회와 장소별 상세 조회 2회로 관광 API 호출은 요청당 최대 11회입니다. 목록은 `numOfRows=5`로 제한하며 페이지를 추가 조회하지 않습니다. Gemini 1차 분석에서 지역 또는 관광 유형을 확인할 수 없는 경우에는 KorPetTourService2를 호출하지 않고 필요한 정보를 다시 질문합니다.
+관광 목록 후보는 첫 페이지 최대 20건이며, 선택한 최대 5건에만 상세 조회 2회를 수행합니다. 공식 시군구 코드 조회를 포함해 캐시가 비어 있는 채팅의 관광 API 호출은 최대 12회이며, 공개 관광 응답만 5분간 메모리에 캐시합니다. 추가 추천은 최근 장소를 우선 제외합니다. 현재 질문의 광역 지역·유형이 명확하면 Gemini 조건 분석을 생략하고, 그 외에는 기존 분석 경로를 사용합니다. 지역 또는 관광 유형을 확인할 수 없는 경우에는 관광 API를 호출하지 않고 필요한 정보를 다시 질문합니다. [조회 동작과 제한](docs/pet_tour_data.md), [토큰·호출 비용 모델](docs/pet_tour_cost_model.md)을 참조하세요.
 
 KorPetTourService2 조회 결과가 없는 경우에는 장소를 임의로 생성하지 않고 데이터가 없음을 안내합니다.
