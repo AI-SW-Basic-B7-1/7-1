@@ -151,14 +151,14 @@ async def test_sigungu_filter_and_other_places_keep_call_budget(api_stub, monkey
         for index in range(1, 21)
     ]
     monkeypatch.setattr(pet_service.random, "sample", lambda population, k: population[:k])
-    first = await pet_service.get_pet_tour_data(32, 39, question="강릉에서 식당 추천")
+    first = await pet_service.get_pet_tour_data(32, 39, question="강릉에서 식당 추천", sigungu_name="강릉")
     assert len(calls) == 12
     assert calls[1][1]["sigunguCode"] == "1"
     history = [{"question": "강릉에서 식당 추천", "response": pet_service.build_pet_tour_context(first)}]
-    second = await pet_service.get_pet_tour_data(32, 39, question="다른 식당 추천", history=history)
+    second = await pet_service.get_pet_tour_data(32, 39, question="다른 식당 추천", history=history, sigungu_name="강릉")
     assert {item["contentid"] for item in first}.isdisjoint(item["contentid"] for item in second)
     assert len(calls) == 22
-    await pet_service.get_pet_tour_data(32, 39, question="춘천에서 식당 추천", history=history)
+    await pet_service.get_pet_tour_data(32, 39, question="춘천에서 식당 추천", history=history, sigungu_name="춘천")
     assert next(params for endpoint, params in reversed(calls) if endpoint == "areaBasedList2")["sigunguCode"] == "13"
 
 
@@ -195,17 +195,16 @@ async def test_cache_separates_searches_and_bounds_storage(api_stub, monkeypatch
     assert len(calls) == 4
 
 
-@pytest.mark.parametrize("question,expected", [
-    ("강릉에서 추천", 1), ("강릉시의 식당", 1), ("춘천 추천", 13),
-    ("강릉과 춘천 추천", None), ("강원도 식당 추천", None),
+@pytest.mark.parametrize("name,expected", [
+    ("강릉", 1), ("강릉시", 1), ("춘천", 13), ("없는시군구", None), (None, None),
 ])
 @pytest.mark.anyio
-async def test_current_region_takes_priority_over_history(api_stub, question, expected):
-    """현재 지역을 우선하고 광역 또는 복수 지역 질문에 이전 시군구를 강제하지 않습니다."""
-    responses, _ = api_stub
+async def test_only_explicit_destination_district_is_resolved(api_stub, name, expected):
+    """분석된 목적지 시군구만 공식 코드와 비교하고 누락되면 조회하지 않습니다."""
+    responses, calls = api_stub
     responses["areaCode2"] = [{"name": "강릉시", "code": "1"}, {"name": "춘천시", "code": "13"}]
-    history = [{"question": "강릉 추천", "response": "강릉 답변"}]
-    assert await pet_service._resolve_sigungu_code(32, question, history) == expected
+    assert await pet_service._resolve_sigungu_code(32, name) == expected
+    assert len(calls) == (1 if name else 0)
 
 
 def test_selection_preserves_followup_and_deduplicates(monkeypatch):
@@ -266,6 +265,84 @@ async def test_same_pool_tour_calls_match_cost_model(api_stub, monkeypatch):
     monkeypatch.setattr(pet_service.random, "sample", lambda population, k: population[:k])
     history = []
     for _ in range(10):
-        result = await pet_service.get_pet_tour_data(32, 39, question="강릉 다른 식당 추천", history=history[-5:])
+        result = await pet_service.get_pet_tour_data(32, 39, question="강릉 다른 식당 추천", history=history[-5:], sigungu_name="강릉")
         history.append({"question": "강릉 다른 식당 추천", "response": pet_service.build_pet_tour_context(result)})
     assert len(calls) == 42
+
+
+@pytest.mark.anyio
+async def test_province_only_skips_unavailable_district_api(api_stub):
+    """시군구 없는 현재 질문은 이전 시군구나 지역 코드 API 장애에 영향받지 않습니다."""
+    responses, calls = api_stub
+    responses["areaCode2"] = httpx.ReadTimeout("지역 코드 장애")
+    result = await pet_service.get_pet_tour_data(
+        1, 39, question="서울 식당 추천",
+        history=[{"question": "강릉 식당 추천", "response": "이전 식당"}],
+    )
+    assert len(result) == 1
+    assert "areaCode2" not in [endpoint for endpoint, _ in calls]
+
+
+@pytest.mark.parametrize("value", [
+    httpx.ReadTimeout("지역 코드 시간 초과"), httpx.ConnectError("지역 코드 연결 실패"),
+    {"response": {"header": {"resultCode": "30"}}}, {"unexpected": "잘못된 응답"},
+    [{"name": "강릉시", "code": True}], [],
+])
+@pytest.mark.anyio
+async def test_district_failure_uses_only_destination_addresses(api_stub, value):
+    """시군구 조회 실패·미확인 시 다른 도시나 주소 없는 장소를 추천하지 않습니다."""
+    responses, calls = api_stub
+    responses["areaCode2"] = value
+    responses["areaBasedList2"] = [
+        {"contentid": "1", "contenttypeid": "39", "title": "강릉 식당", "addr1": "강원특별자치도 강릉시 중앙로 1"},
+        {"contentid": "2", "contenttypeid": "39", "title": "춘천 식당", "addr1": "강원특별자치도 춘천시 중앙로 1"},
+        {"contentid": "3", "contenttypeid": "39", "title": "강릉 이름의 식당", "addr1": ""},
+        {"contentid": "4", "contenttypeid": "39", "title": "강릉로 식당", "addr1": "강원특별자치도 춘천시 강릉로 1"},
+    ]
+    result = await pet_service.get_pet_tour_data(32, 39, question="서울에서 강릉 식당 추천", sigungu_name="강릉")
+    assert [item["contentid"] for item in result] == ["1"]
+    assert len(calls) == 4
+    assert "sigunguCode" not in calls[1][1]
+    assert all(params["contentId"] == "1" for endpoint, params in calls if endpoint.startswith("detail"))
+
+
+@pytest.mark.anyio
+async def test_failed_district_lookup_is_retried_and_can_recover(api_stub):
+    """실패는 캐시하지 않고 다음 요청의 정상 코드 조회를 사용할 수 있습니다."""
+    responses, calls = api_stub
+    responses["areaCode2"] = httpx.ReadTimeout("일시 장애")
+    responses["areaBasedList2"] = [{"contentid": "1", "contenttypeid": "39", "title": "주소 불명 식당"}]
+    assert await pet_service.get_pet_tour_data(32, 39, sigungu_name="강릉") == []
+    assert len(calls) == 2
+    responses["areaCode2"] = [{"name": "강릉시", "code": "1"}]
+    result = await pet_service.get_pet_tour_data(32, 39, sigungu_name="강릉")
+    assert len(result) == 1
+    assert [endpoint for endpoint, _ in calls].count("areaCode2") == 2
+    assert calls[3][1]["sigunguCode"] == "1"
+
+
+@pytest.mark.parametrize("value,error", [
+    (httpx.ReadTimeout("필수 조회 시간 초과"), pet_service.PetTourAPITimeoutError),
+    (httpx.ConnectError("필수 조회 실패"), pet_service.PetTourServiceError),
+])
+@pytest.mark.parametrize("endpoint", ["areaBasedList2", "detailPetTour2"])
+@pytest.mark.anyio
+async def test_primary_api_failures_are_not_hidden_by_district_fallback(api_stub, value, error, endpoint):
+    """시군구 대체 경로에서도 장소 목록·상세 조회 오류는 기존 예외로 전달합니다."""
+    responses, _ = api_stub
+    responses["areaCode2"] = httpx.ReadTimeout("시군구 시간 초과")
+    responses["areaBasedList2"] = [{"contentid": "1", "contenttypeid": "39", "title": "강릉 식당", "addr1": "강원특별자치도 강릉시 중앙로 1"}]
+    responses[endpoint] = value
+    with pytest.raises(error):
+        await pet_service.get_pet_tour_data(32, 39, sigungu_name="강릉")
+
+
+@pytest.mark.parametrize("address,name,expected", [
+    ("강원특별자치도 양구군 중앙로 1", "양구", True),
+    ("강원특별자치도 강릉시 중앙로 1", "강릉시", True),
+    ("강원특별자치도 춘천시 강릉로 1", "강릉", False),
+    ("경기도 광주시 중앙로 1", "광주", True),
+])
+def test_fallback_address_requires_an_administrative_name(address, name, expected):
+    """접미사가 이름의 일부인 양구와 다른 도시의 유사 도로명을 구분합니다."""
+    assert pet_service._address_matches_sigungu(address, name) is expected

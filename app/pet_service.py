@@ -13,6 +13,7 @@ from typing import Any
 import httpx
 
 from app.config import settings
+from app.logger import chat_logger
 
 
 BASE_URL = (
@@ -270,36 +271,49 @@ def _validate_search_codes(area_code: int, content_type_id: int) -> None:
         raise ValueError(f"지원하지 않는 contentTypeId입니다: {content_type_id}")
 
 
-async def _resolve_sigungu_code(area_code: int, question: str, history: list) -> int | None:
-    """공식 지역 코드의 이름을 현재 질문과 최근 사용자 질문에서 찾습니다."""
-    if not question:
+def _normalized_sigungu_name(name: str) -> str:
+    """시군구 접미사만 제거해 강릉과 강릉시를 같은 이름으로 비교합니다."""
+    return re.sub(r"(?<=[가-힣])[시군구]$", "", name) if len(name) > 2 else name
+
+
+async def _resolve_sigungu_code(area_code: int, sigungu_name: str | None) -> int | None:
+    """명시된 목적지 시군구만 조회하고 실패하면 주소 필터로 처리합니다."""
+    if not sigungu_name:
         return None
-    data = await _request(
-        f"{BASE_URL}/areaCode2", {"areaCode": area_code, "numOfRows": 100},
-    )
-    districts = _extract_items(data)
-    for text in [question, *(chat["question"] for chat in reversed(history))]:
-        matches = set()
-        for district in districts:
+    endpoint = f"{BASE_URL}/areaCode2"
+    params = {"areaCode": area_code, "numOfRows": 100}
+    try:
+        data = await _request(endpoint, params)
+        codes = set()
+        for district in _extract_items(data):
             name = str(district.get("name") or "")
-            if not name or not matches_region_name(text, name):
-                # 강릉시와 강릉처럼 행정구역 접미사를 생략한 표기도 지원합니다.
-                if len(name) < 3 or name[-1] not in "시군구" or not matches_region_name(text, name[:-1]):
-                    continue
+            if _normalized_sigungu_name(name) != _normalized_sigungu_name(sigungu_name):
+                continue
             try:
                 if type(district.get("code")) not in (str, int):
                     raise ValueError
                 code = int(district["code"])
+                if code <= 0:
+                    raise ValueError
             except (KeyError, TypeError, ValueError):
                 raise PetTourServiceError("시군구 코드 형식이 올바르지 않습니다.") from None
-            if code <= 0:
-                raise PetTourServiceError("시군구 코드 형식이 올바르지 않습니다.")
-            matches.add(code)
-        if matches:
-            return next(iter(matches)) if len(matches) == 1 else None
-        if any(matches_region_name(text, name) for name in AREA_CODES):
-            return None
-    return None
+            codes.add(code)
+        return next(iter(codes)) if len(codes) == 1 else None
+    except (PetTourAPITimeoutError, PetTourServiceError) as exc:
+        _response_cache.pop(_cache_key(endpoint, params, False), None)
+        chat_logger.warning(
+            "pet_sigungu_lookup_failed area_code=%s error_type=%s",
+            area_code, "timeout" if isinstance(exc, PetTourAPITimeoutError) else "service_error",
+        )
+        return None
+
+
+def _address_matches_sigungu(address: str, sigungu_name: str) -> bool:
+    """코드 조회 실패 시에도 요청한 시군구의 주소가 확인된 후보만 허용합니다."""
+    name = _normalized_sigungu_name(sigungu_name)
+    return bool(re.search(
+        rf"(?<![가-힣]){re.escape(name)}(?:시|군|구)(?=$|[^가-힣])", address,
+    ))
 
 
 def _mentions_title(text: str, item: dict[str, Any]) -> bool:
@@ -386,6 +400,7 @@ async def get_pet_tour_data(
     *,
     question: str = "",
     history: list | None = None,
+    sigungu_name: str | None = None,
 ) -> list[dict[str, Any]]:
     """
     지역별 목록에 소개정보와 반려동물 상세정보를 연결합니다.
@@ -393,12 +408,17 @@ async def get_pet_tour_data(
 
     _validate_search_codes(area_code, content_type_id)
     history = history or []
-    sigungu_code = await _resolve_sigungu_code(area_code, question, history)
+    sigungu_code = await _resolve_sigungu_code(area_code, sigungu_name)
     area_items = await area_based_list(
         area_code,
         content_type_id,
         sigungu_code=sigungu_code,
     )
+    if sigungu_name and sigungu_code is None:
+        area_items = [
+            item for item in area_items
+            if _address_matches_sigungu(str(item.get("addr1") or ""), sigungu_name)
+        ]
 
     if not area_items:
         return []

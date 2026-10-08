@@ -181,6 +181,13 @@ async def test_service_error_boundaries(monkeypatch, kind):
     ("서울 부산 식당 추천", None), ("서울 숙소와 음식점 추천", None),
     ("서울숲 추천", None), ("강릉에서 식당 추천", None),
     ("다른 곳 추천", None),
+    ("서울에서 강릉 식당 추천", None),
+    ("서울에서강릉 식당 추천", None),
+    ("서울 출발 강릉 도착 식당 추천", None),
+    ("강릉에서 서울 식당 추천", None),
+    ("서울에서부산 식당 추천", None),
+    ("서울에서 맛있는 강릉 식당 추천", None),
+    ("서울에서 강남구 식당 추천", None),
 ])
 def test_local_parameters_only_accept_explicit_unambiguous_question(question, expected):
     """명확한 현재 조건만 직접 추출하고 누락·복수·장소명은 AI 분석에 남깁니다."""
@@ -218,3 +225,34 @@ async def test_usage_log_contains_counts_without_question_or_key(monkeypatch):
     assert logs[0][2] == "answer"
     assert logs[0][3:] == (120, 80, 10)
     assert "비공개" not in str(logs)
+
+
+@pytest.mark.anyio
+async def test_departure_and_destination_use_gemini_without_stale_history(monkeypatch):
+    """출발지를 로컬 목적지로 확정하지 않고 현재 목적지와 시군구를 분석합니다."""
+    calls = []
+    async def generate(contents, system_instruction):
+        """분석 입력과 목적지 지침을 확인하고 현재 강릉 조건을 반환합니다."""
+        calls.append(contents)
+        assert "출발지와 목적지를 구분" in system_instruction
+        assert "검색 지역에는 목적지만 사용" in system_instruction
+        return '{"areaCode": 32, "contentTypeId": 39, "sigunguName": "강릉"}'
+    monkeypatch.setattr(ai_service, "_generate_gemini_text", generate)
+    history = [{"question": "부산 숙소 추천", "response": "부산 숙소"}]
+    result = await ai_service.extract_pet_tour_parameters("서울에서 강릉 식당 추천", history)
+    assert result == {"areaCode": 32, "contentTypeId": 39, "sigunguName": "강릉"}
+    assert len(calls) == 1
+    assert calls[0][:-1] == ai_service._build_history_contents(history)
+
+
+@pytest.mark.parametrize("name", [True, 123, "", "강릉/춘천", "강릉<script>"])
+@pytest.mark.anyio
+async def test_invalid_destination_name_is_not_sent_to_tour_api(monkeypatch, name):
+    """내부 시군구 조건도 타입과 이름 형식을 검증합니다."""
+    async def generate(**kwargs):
+        """잘못된 시군구 분석 응답을 재현합니다."""
+        import json
+        return json.dumps({"areaCode": 32, "contentTypeId": 39, "sigunguName": name})
+    monkeypatch.setattr(ai_service, "_generate_gemini_text", generate)
+    with pytest.raises(AIServiceError, match="시군구 이름"):
+        await ai_service.extract_pet_tour_parameters("강릉 식당 추천", [])

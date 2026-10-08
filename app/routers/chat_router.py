@@ -283,6 +283,7 @@ async def send_chat_message(
                 content_type_id,
                 question=question,
                 history=history,
+                sigungu_name=parameters.get("sigunguName"),
             )
 
         except PetTourAPITimeoutError as exc:
