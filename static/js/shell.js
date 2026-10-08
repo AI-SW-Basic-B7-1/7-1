@@ -30,7 +30,6 @@ const copy = {
   "#trip-step-schedule-help": CHAT_CONTENT.tripStepScheduleHelp,
   "#trip-step-pet": CHAT_CONTENT.tripStepPet,
   "#trip-step-pet-help": CHAT_CONTENT.tripStepPetHelp,
-  "#travel-data-notice": CHAT_CONTENT.travelDataNotice,
   "#composer-hint": CHAT_CONTENT.composerHint,
 };
 
