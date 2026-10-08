@@ -12,6 +12,26 @@ import pytest
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
+def _usable_bash():
+    """현재 실행 환경에서 실제 셸 명령을 처리할 수 있는 Bash를 찾습니다."""
+    bash = shutil.which("bash")
+    if not bash:
+        return None
+    try:
+        subprocess.run(
+            [bash],
+            input="true\n",
+            text=True,
+            encoding="utf-8",
+            capture_output=True,
+            check=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        return None
+    return bash
+
+
 def test_acme_webroot_is_created_before_certificate_request():
     """Certbot 실행 전 웹루트 소유권과 접근 권한을 설정합니다."""
     source = (PROJECT_ROOT / "scripts/ec2/deploy_ec2.sh").read_text(encoding="utf-8")
@@ -24,18 +44,11 @@ def test_acme_webroot_is_created_before_certificate_request():
 @pytest.mark.parametrize("service_was_active", [False, True])
 def test_sigterm_runs_remote_rollback_and_restores_service_state(tmp_path, service_was_active):
     """생성된 원격 명령이 TERM을 받은 배포를 정리하고 서비스 상태를 복원합니다."""
-    bash = shutil.which("bash")
+    bash = _usable_bash()
     if not bash:
-        pytest.skip("Bash가 필요한 원격 명령 생성 테스트입니다.")
-    try:
-        subprocess.run(
-            [bash, "--version"],
-            capture_output=True,
-            check=True,
-            timeout=5,
-        )
-    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
-        pytest.skip("현재 실행 환경에서 Bash를 시작할 수 없습니다.")
+        pytest.skip("실행 가능한 Bash가 필요한 원격 명령 생성 테스트입니다.")
+    if os.name == "nt" and Path(bash).parent.name.lower() == "windowsapps":
+        pytest.skip("WindowsApps Bash가 Windows 임시 경로를 접근할 수 없습니다.")
 
     source = (PROJECT_ROOT / "scripts/ec2/run_ec2_deploy.sh").read_text(encoding="utf-8")
     marker = 'remote_command="$(\n'
@@ -66,6 +79,7 @@ def test_sigterm_runs_remote_rollback_and_restores_service_state(tmp_path, servi
             + "\nprintf '%s\\n' \"$remote_command\"\n"
         ),
         text=True,
+        encoding="utf-8",
         capture_output=True,
     )
     assert generation_result.returncode == 0, generation_result.stderr
@@ -106,6 +120,7 @@ def test_sigterm_runs_remote_rollback_and_restores_service_state(tmp_path, servi
         [bash],
         input=remote_prefix + scenario,
         text=True,
+        encoding="utf-8",
         capture_output=True,
         env=environment,
         timeout=10,

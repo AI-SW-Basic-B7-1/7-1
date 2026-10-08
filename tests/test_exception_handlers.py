@@ -59,6 +59,7 @@ def test_formatter_redacts_message_and_chained_traceback(monkeypatch):
     """콘솔·파일 포맷에서 비밀값을 가리고 예외 종류와 호출 경로는 유지합니다."""
     monkeypatch.setattr(settings, "SECRET_KEY", "test-signing-secret")
     monkeypatch.setattr(settings, "GEMINI_API_KEY", "test-provider-secret")
+    monkeypatch.setattr(settings, "KOR_PET_TOUR_SERVICE_KEY", "test-tour-service-secret")
     monkeypatch.setattr(settings, "TYPESAFE_API_KEY", "test-jev-secret")
     output = io.StringIO()
     handler = logging.StreamHandler(output)
@@ -67,7 +68,7 @@ def test_formatter_redacts_message_and_chained_traceback(monkeypatch):
     logger.addHandler(handler)
     try:
         try:
-            raise ValueError("test-provider-secret test-jev-secret Bearer private-token password='private password'")
+            raise ValueError("test-provider-secret test-tour-service-secret test-jev-secret Bearer private-token password='private password' serviceKey=query-tour-secret")
         except ValueError as exc:
             raise RuntimeError('test-signing-secret {"access_token": "private-access"}') from exc
     except RuntimeError:
@@ -76,8 +77,9 @@ def test_formatter_redacts_message_and_chained_traceback(monkeypatch):
         handler.close()
     text = output.getvalue()
     for secret in (
-        "test-signing-secret", "test-provider-secret", "test-jev-secret", "private-token",
-        "private password", "private-access", "private-key",
+        "test-signing-secret", "test-provider-secret", "test-tour-service-secret",
+        "test-jev-secret", "private-token", "private password", "private-access",
+        "private-key", "query-tour-secret",
     ):
         assert secret not in text
     assert "Traceback" in text

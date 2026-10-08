@@ -22,7 +22,7 @@ test("EC2 Nginx는 정적 파일을 FastAPI로 전달하고 배포 중 응답을
   assert.doesNotMatch(staticLocation, /\balias\s/);
   assert.match(
     deployScript,
-    /for static_path in \/static\/css\/style\.css \/static\/js\/auth\.js \/static\/js\/app\.js/,
+    /for static_path in \/static\/css\/style\.css \/static\/js\/api\.js \/static\/js\/auth\.js \/static\/js\/app\.js \/static\/js\/chat-content\.js \/static\/js\/history\.js \/static\/js\/keyboard\.js \/static\/js\/password-validation\.js \/static\/js\/shell\.js/,
   );
   assert.match(deployScript, /timedatectl set-timezone Asia\/Seoul/);
   assert.match(
