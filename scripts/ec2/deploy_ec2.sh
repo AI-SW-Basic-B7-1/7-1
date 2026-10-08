@@ -99,6 +99,7 @@ algorithm="$(env_value ALGORITHM)"
 gemini_api_key="$(env_value GEMINI_API_KEY)"
 database_url="$(env_value DATABASE_URL)"
 SITE_DOMAIN="$(env_value SITE_DOMAIN)"
+pet_tour_service_key="$(env_value KOR_PET_TOUR_SERVICE_KEY)"
 [[ -n "${algorithm}" ]] || algorithm='HS256'
 [[ -n "${secret_key}" ]] || fail 'SECRET_KEY가 비어 있습니다.'
 secret_key_bytes="$(printf '%s' "${secret_key}" | wc -c)"
@@ -106,10 +107,12 @@ secret_key_bytes="$(printf '%s' "${secret_key}" | wc -c)"
 [[ "${algorithm}" == 'HS256' ]] || fail 'ALGORITHM은 HS256이어야 합니다.'
 [[ -n "${gemini_api_key}" ]] || fail 'GEMINI_API_KEY가 비어 있습니다.'
 [[ -n "${database_url}" ]] || fail 'DATABASE_URL이 비어 있습니다.'
+[[ -n "${pet_tour_service_key}" ]] || fail 'KOR_PET_TOUR_SERVICE_KEY가 비어 있습니다.'
+[[ "${pet_tour_service_key}" != *'여기에_공공데이터포털_서비스키'* ]] || fail 'KOR_PET_TOUR_SERVICE_KEY에 예시값이 남아 있습니다.'
 [[ -n "${SITE_DOMAIN}" && "${SITE_DOMAIN}" =~ ^[A-Za-z0-9.-]+$ && "${SITE_DOMAIN}" != .* && "${SITE_DOMAIN}" != *. ]] || fail 'SITE_DOMAIN에 HTTPS용 도메인을 설정해야 합니다.'
 [[ "${secret_key,,}" != *'your_super_secret_jwt_key_here'* ]] || fail 'SECRET_KEY에 예시값이 남아 있습니다.'
 [[ "${gemini_api_key}" != *'여기에_본인의_Gemini_API_Key'* ]] || fail 'GEMINI_API_KEY에 예시값이 남아 있습니다.'
-unset secret_key secret_key_bytes algorithm gemini_api_key database_url
+unset secret_key secret_key_bytes algorithm gemini_api_key database_url pet_tour_service_key
 
 run_cmd 'EC2 시간대 설정' timedatectl set-timezone Asia/Seoul
 configured_timezone="$(timedatectl show --property=Timezone --value)"
@@ -426,7 +429,7 @@ done
     fail "HTTPS 헬스체크에 실패했습니다: https://${SITE_DOMAIN}/api/health"
 }
 
-for static_path in /static/css/style.css /static/js/auth.js /static/js/app.js; do
+for static_path in /static/css/style.css /static/js/api.js /static/js/auth.js /static/js/app.js /static/js/chat-content.js /static/js/history.js /static/js/keyboard.js /static/js/password-validation.js /static/js/shell.js; do
     if ! curl --resolve "${SITE_DOMAIN}:443:127.0.0.1" -fsS --max-time 5 "https://${SITE_DOMAIN}${static_path}" -o /dev/null; then
         fail "Nginx 정적 파일 점검에 실패했습니다: ${static_path}"
     fi

@@ -40,11 +40,32 @@ def generate_remote_command(bash, project_dir, repo_url, expected_sha="", deploy
             + source[start:end]
         ),
         text=True,
+        encoding="utf-8",
         capture_output=True,
         check=True,
         env=dict(os.environ, LC_ALL="C"),
     )
     return result.stdout
+
+
+def _usable_bash():
+    """현재 실행 환경에서 실제 셸 명령을 처리할 수 있는 Bash를 찾습니다."""
+    bash = shutil.which("bash")
+    if not bash:
+        return None
+    try:
+        subprocess.run(
+            [bash],
+            input="true\n",
+            text=True,
+            encoding="utf-8",
+            capture_output=True,
+            check=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        return None
+    return bash
 
 
 def test_acme_webroot_is_created_before_certificate_request():
@@ -59,18 +80,11 @@ def test_acme_webroot_is_created_before_certificate_request():
 @pytest.mark.parametrize("service_was_active", [False, True])
 def test_sigterm_runs_remote_rollback_and_restores_service_state(tmp_path, service_was_active):
     """생성된 원격 명령이 TERM을 받은 배포를 정리하고 서비스 상태를 복원합니다."""
-    bash = shutil.which("bash")
+    bash = _usable_bash()
     if not bash:
-        pytest.skip("Bash가 필요한 원격 명령 생성 테스트입니다.")
-    try:
-        subprocess.run(
-            [bash, "--version"],
-            capture_output=True,
-            check=True,
-            timeout=5,
-        )
-    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
-        pytest.skip("현재 실행 환경에서 Bash를 시작할 수 없습니다.")
+        pytest.skip("실행 가능한 Bash가 필요한 원격 명령 생성 테스트입니다.")
+    if os.name == "nt" and Path(bash).parent.name.lower() == "windowsapps":
+        pytest.skip("WindowsApps Bash가 Windows 임시 경로를 접근할 수 없습니다.")
 
     generated = generate_remote_command(
         bash, tmp_path, "https://example.invalid/repository.git"
@@ -111,6 +125,7 @@ def test_sigterm_runs_remote_rollback_and_restores_service_state(tmp_path, servi
         [bash],
         input=remote_prefix + scenario,
         text=True,
+        encoding="utf-8",
         capture_output=True,
         env=environment,
         timeout=10,
@@ -134,10 +149,12 @@ def test_sigterm_runs_remote_rollback_and_restores_service_state(tmp_path, servi
 @pytest.fixture
 def revision_deployment(tmp_path):
     """실제 Git 이력과 외부 서비스의 테스트 대역을 준비합니다."""
-    bash = shutil.which("bash")
+    bash = _usable_bash()
     git = shutil.which("git")
     if not bash or not git:
         pytest.skip("Bash와 Git이 필요한 테스트입니다.")
+    if os.name == "nt" and Path(bash).parent.name.lower() == "windowsapps":
+        pytest.skip("WindowsApps Bash가 Windows 임시 경로를 접근할 수 없습니다.")
     origin = tmp_path / "origin"
     origin.mkdir()
 
@@ -256,7 +273,7 @@ def test_revision_change_during_deployment_rolls_back(revision_deployment):
 @pytest.mark.parametrize("sha", ["main", "a" * 39, "A" * 40, "a" * 40 + ";echo invalid"])
 def test_invalid_revision_is_rejected_before_aws(sha, tmp_path):
     """불완전하거나 명령을 포함한 SHA를 AWS 호출 전에 차단합니다."""
-    bash = shutil.which("bash")
+    bash = _usable_bash()
     if not bash:
         pytest.skip("Bash가 필요한 테스트입니다.")
     result = subprocess.run(

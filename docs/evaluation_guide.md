@@ -1,10 +1,23 @@
 # Term Project 평가·검증 가이드
 
 > 과제: AI/SW 기초 · Term Project · 필수 · 120시간 · 웹 기반 AI 챗봇 서비스(FastAPI)
-> 조사 기준: 2026-09-23, `develop` = `755e7e2d4bface034b4c1ed318505a0c32ca1818`.
+> 과거 조사 기준: 2026-09-23, `develop` = `755e7e2d4bface034b4c1ed318505a0c32ca1818`.
 > **문서 정비와 기존 구현의 검증 기록입니다. 미션 전체 합격·실 AI 시연·관광/지도 구현 완료를 뜻하지 않습니다.**
 
-## 1. 요구사항 추적
+> 아래 조사 결과와 공개 주소 점검은 모두 2026-09-23 당시의 기록입니다. 이를 현재 검증 결과로 사용하지 않습니다.
+
+## 현행 코드 상태 (2026-10-08)
+
+- 기준 코드는 `origin/main` `b670cee`와 `origin/develop` `3f9ebab` (파일 내용 동일)입니다. 인증·Gemini 채팅·대화방 이력과 KorPetTourService2 조회 및 답변 근거 연결이 구현되어 있습니다.
+- Gemini와 관광 API의 요청별 기본 타임아웃은 15초, JWT 기본 만료는 60분, EC2 Nginx `proxy_read_timeout`은 80초입니다.
+- `.gitignore`는 `.env.example` 이외의 환경 파일, DB 파일과 보조 파일을 제외합니다. 비밀번호는 UTF-8 72바이트까지 검사하고 앱 시작 시 JWT 키 길이와 알고리즘을 확인합니다.
+- SSM 배포는 Parameter Store SecureString을 EC2의 `.env`로 전달합니다. DB 권한·무결성 검사와 예약 백업은 기본 `data/chatbot.db`를 사용하므로 운영 `DATABASE_URL`도 `sqlite:///./data/chatbot.db`로 유지합니다.
+- [PR #86](https://github.com/AI-SW-Basic-B7-1/7-1/pull/86)의 숫자 설정 검증, 관광 API 키 로그 마스킹·배포 전 검사, 전체 JavaScript 모듈 응답 검사와 로그 점검 스크립트 수정은 아직 미병합 상태입니다. 현행 main/develop 동작과 구분해 평가합니다.
+- 운영 SecureString의 실제 값, 해당 값의 EC2 적용 여부, 실 API 채팅·외부 브라우저·현재 배포 SHA는 이 문서 갱신 과정에서 실행하지 않았습니다.
+
+아래 §1~§8의 테스트 수·HTTP 상태·작업 및 이슈 목록은 별도 표시가 없으면 과거 조사 당시의 자료입니다. 실제 배포와 실 AI 기능은 위 현행 소스 코드 상태와 구분합니다.
+
+## 1. 2026-09-23 당시 요구사항 추적
 
 | 미션 요구사항 | 현재 근거 | 이번 확인 범위 | 남은 확인 |
 |---|---|---|---|
@@ -19,25 +32,25 @@
 | AI 실패·타임아웃·오류 안내·서버 유지 | `AITimeoutError`, 공통 예외 처리 | 대역 502/504, DB 500 및 이후 health 성공 | 실패 후 정상 채팅까지 연속 검증 #16/#19 |
 | 입력 검증 | `app/schemas.py`, 채팅 라우터 | 빈/공백 400, 500자 초과 422 테스트 | 브라우저 입력/오류 안내 시연 |
 | 외부 접속 가능 URL | `http://15.164.49.77/` | 아래 시각에 페이지·자원·health 200, 무토큰 이력 401 | 평가 직전 재확인·실 배포 SHA |
-| 실행/환경 변수/민감정보 | `.env.example`, `.gitignore`, README | 실제 설정 키 7개 대조 | 기본 JWT 키·ignore 누락 보강, HTTPS 검토 |
+| 실행/환경 변수/민감정보 | 당시 `.env.example`, `.gitignore`, README | 실제 설정 키 7개 대조 | 해당 조사 뒤 코드·ignore·HTTPS 상태가 갱신됨. 운영 SecureString은 별도 확인 |
 | 브랜치·기능 작업·PR 병합 | main/develop 및 기능 브랜치, 병합 PR | 전체 PR 목록과 대표 변경·Git 이력 확인 | 팀 최종 제출 기준 확인 |
 | 팀원별 유의미한 커밋 10회 이상 | 아래 author별 비머지 집계 | 종민 author 4개, 전원 달성 확인 불가 | 추가 실질 기여·별도 author 여부 확인 |
 | 역할·개인별 요약 | README·중기 프로젝트 계획과 대표 PR | 실제 파일·병합 기록 대응 | 개인별 설명 및 최종 역할 확인 |
 | 개요·아키텍처·API·DB·배포·DB 확인 패키지 | README에서 관련 문서 연결 | 문서·상대 링크·JSON/API 계약 점검 | 실 AI·외부 시연 증빙 추가 |
 
-반려동물 데이터·지역 수요·Google Maps는 팀 주제의 추가 기능입니다. 미션의 공통 필수 API인 것처럼 취급하지 않으며 세 기능 모두 현재 미구현입니다.
+이 과거 조사 시점에는 반려동물 데이터·지역 수요·Google Maps가 미구현이었습니다. 현재는 KorPetTourService2 조회와 채팅 답변 연결이 구현되어 있고, 지역 수요·Google Maps는 후속 범위입니다.
 
 ## 2. 코드와 문서 불일치 처리
 
 | 이전 문서 주장/첨부 초안 | 코드·PR 근거 | 반영 |
 |---|---|---|
 | 4일이 전체 과제 기간, 코디세이·내장 Mock | 120시간 미션, #29 Gemini 전환 | 초기 계획 원문을 보존하고 README·중기 계획·AGENTS에서 현재 구현 분리 |
-| `logs/server.log`, 로그 검증 스크립트 사용 가능 | config/logger의 `logs/app.log`, #17 변수 누락 | README·배포·평가 가이드에 직접 로그 조회 |
+| `logs/server.log`, 로그 검증 스크립트 사용 가능 | config/logger의 `logs/app.log`, 당시 #17 변수 누락 | 직접 로그 조회를 안내하며, 앱 로그 경로와 이벤트 이름을 반영한 스크립트 수정은 PR #86 병합 후 적용 |
 | 가입/채팅 422의 필드별 detail | `validation_exception_handler`의 고정 문자열 | API 명세의 오류 예시 수정 |
 | 사용자 이력도 최근 5건 | #37의 방 문맥 LIMIT 5, 전체 이력 쿼리에는 LIMIT 없음 | API·README에 전체 배열 계약 유지; #52는 미병합 종료 |
 | 배포 스크립트 develop 미반영 | #44/#48 병합, scripts/ec2 3개 존재 | 배포 문서의 오래된 전제 수정 |
 | 첨부 초안의 배포 기본값 develop | `run_ec2_deploy.sh`의 `DEPLOY_BRANCH` 기본값 main | 기존 코드를 우선, `--branch develop` 명시 안내 |
-| 여행·지도 기능처럼 보일 수 있는 기획 | 관련 런타임 모듈·설정·테스트 없음 | 후속 명세 및 미구현 상태로 표시 |
+| 여행·지도 기능처럼 보일 수 있는 기획 | 2026-09-23 당시 여행 조회 런타임 없음 | 당시 상태 기록. 이후 KorPetTourService2 조회가 구현됐으며 수요·지도는 후속 범위 |
 | 팀원별 10회 달성 표현 | 비머지 author 집계 | 요구사항과 실제 확인값 구분 |
 
 ## 3. 이번 실행 결과
@@ -178,22 +191,26 @@ git log --all --no-merges --author=jongmin --format='%h %an %s'
 
 조사 시 열린 PR은 0개였습니다. #37/#41/#44/#46/#48/#51/#53/#54는 병합됐으며 #52는 병합 없이 닫혔습니다. 이슈 #40이 열려 있어도 #41의 예외 처리 코드가 미구현인 것은 아닙니다. #42의 전체 이력 LIMIT 5 제안은 현행 UI 전체 복원 계약과 충돌하므로 별도 설계 검토가 필요합니다.
 
-## 8. 남은 작업과 이슈
+## 8. 2026-09-23 조사 당시 남은 작업과 이슈
+
+다음 표는 과거 평가 자료의 추적 목록입니다. 이슈의 현재 상태나 아래 항목의
+현재 구현 여부를 나타내지 않습니다. 2026-10-08 소스 코드의 상태는 앞의
+현행 코드 상태 절을 기준으로 확인합니다.
 
 | 항목 | 추적·현재 상태 |
 |---|---|
 | 문서 정비 | [#56](https://github.com/AI-SW-Basic-B7-1/7-1/issues/56), 이번 PR 범위. 기능 이슈는 이 PR로 종료하지 않음 |
-| 반려동물 조회·근거 결합 | [#57](https://github.com/AI-SW-Basic-B7-1/7-1/issues/57), 미구현 |
+| 반려동물 조회·근거 결합 | 당시 [#57](https://github.com/AI-SW-Basic-B7-1/7-1/issues/57), 이후 develop에 조회·답변 연결 구현 |
 | 지역 수요 PoC·지역/기간 매핑 | [#58](https://github.com/AI-SW-Basic-B7-1/7-1/issues/58), 미구현 |
 | Google Maps·좌표/복원 계약 | [#59](https://github.com/AI-SW-Basic-B7-1/7-1/issues/59), 미구현 |
-| JWT 기본값·ignore 누락·비밀번호 바이트 검증 | [#60](https://github.com/AI-SW-Basic-B7-1/7-1/issues/60). SECRET_KEY를 반드시 직접 설정하며 인증 가드레일 보강은 후속 작업 |
-| 로그 스크립트 | [#17](https://github.com/AI-SW-Basic-B7-1/7-1/issues/17), 이번에는 실행 코드 수정 없음 |
+| JWT 기본값·ignore 누락·비밀번호 바이트 검증 | 당시 [#60](https://github.com/AI-SW-Basic-B7-1/7-1/issues/60). 현재 develop은 시작 시 JWT 설정과 72바이트 제한을 검증하고 관련 파일을 ignore |
+| 로그 스크립트 | 당시 [#17](https://github.com/AI-SW-Basic-B7-1/7-1/issues/17). Linux·PowerShell 스크립트의 앱 로그 경로·이벤트명 수정은 [PR #86](https://github.com/AI-SW-Basic-B7-1/7-1/pull/86)에 포함된 미병합 변경이며, 현행 main/develop에는 반영되지 않음 |
 | DB SQL/최종 평가 증빙 | [#18](https://github.com/AI-SW-Basic-B7-1/7-1/issues/18), 임시 DB 검증과 운영 확인을 구분 |
 | 전체 실 AI·브라우저·외부 배포 검증 | [#19](https://github.com/AI-SW-Basic-B7-1/7-1/issues/19), [#26](https://github.com/AI-SW-Basic-B7-1/7-1/issues/26) |
 | 예외·실패 이후 정상 요청 | [#16](https://github.com/AI-SW-Basic-B7-1/7-1/issues/16), [#40](https://github.com/AI-SW-Basic-B7-1/7-1/issues/40), #41 구현과 잔여 검증 구분 |
 | 만료 토큰 검증 | [#55](https://github.com/AI-SW-Basic-B7-1/7-1/issues/55): 실제 존재 사용자로 만료만의 효과 검증 필요 |
 | 이력 성능 | [#42](https://github.com/AI-SW-Basic-B7-1/7-1/issues/42), 전체 이력과 AI 문맥의 책임 구분 필요 |
 
-추가 관찰: 가입의 문자 수 제한과 bcrypt 72바이트 제한이 달라 긴 비밀번호가 500으로 이어질 수 있습니다. [#60](https://github.com/AI-SW-Basic-B7-1/7-1/issues/60)에서 바이트 경계·다국어·사용자 안내를 보강해야 합니다. HTTP 주소·localStorage 토큰·서버 로그아웃 폐기 부재는 현재 교육용 MVP의 운영 한계입니다. EC2의 고정 DB 검사/백업 경로와 사용자 지정 DATABASE_URL의 일치 여부도 #26의 운영 점검 대상으로 남깁니다.
+당시 관찰한 bcrypt 바이트 경계는 현재 main/develop의 UTF-8 72바이트 입력 검증으로 보완했습니다. EC2 배포의 DB 권한·무결성 검사와 예약 백업은 여전히 기본 `data/chatbot.db`를 사용하며, 사용자 지정 `DATABASE_URL`에 맞춰 자동 변경되지 않습니다. 운영에서는 `DATABASE_URL=sqlite:///./data/chatbot.db`를 유지합니다. 배포 스크립트는 HTTPS를 설정하지만 브라우저의 `localStorage` 토큰 보관과 서버 측 즉시 토큰 폐기 부재는 남은 운영 한계입니다. 실제 EC2 설정이 최신인지 확인하려면 배포 SHA와 SecureString 적용 여부를 별도 확인해야 합니다.
 
-PR 준비 직전 원격을 다시 fetch했으며 develop은 기준 SHA 그대로이고 열린 다른 PR은 0개였습니다. 기존 계약은 보존하며 #42의 전체 이력 제한 제안은 이번 문서에 적용하지 않았습니다. 최종 병합 가능 상태는 GitHub PR에서 확인합니다.
+2026-09-23의 PR 준비 직전 원격을 다시 fetch했으며, 당시 develop은 조사 기준 SHA 그대로이고 열린 다른 PR은 0개였습니다. 기존 계약은 보존하며 #42의 전체 이력 제한 제안은 이번 문서에 적용하지 않았습니다. 최종 병합 가능 상태는 GitHub PR에서 확인합니다.
