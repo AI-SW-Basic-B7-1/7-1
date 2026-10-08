@@ -281,6 +281,8 @@ async def send_chat_message(
             pet_results = await get_pet_tour_data(
                 area_code,
                 content_type_id,
+                question=question,
+                history=history,
             )
 
         except PetTourAPITimeoutError as exc:

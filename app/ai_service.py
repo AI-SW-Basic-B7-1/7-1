@@ -7,8 +7,9 @@ from typing import Any
 import httpx
 
 from app.config import settings
+from app.logger import chat_logger
 
-from app.pet_service import AREA_CODES, CONTENT_TYPE_IDS
+from app.pet_service import AREA_CODES, CONTENT_TYPE_IDS, matches_region_name
 
 class AITimeoutError(Exception):
     """AI API가 제한 시간 안에 응답하지 못한 경우의 예외."""
@@ -127,6 +128,7 @@ DATA_SYSTEM_INSTRUCTION = """
 11. 동반유형코드의 의미를 추측하지 않는다. 시설이나 비치 품목만으로 동반 가능을 확정하지 않는다.
 12. 소개정보와 반려동물 상세 조건이 상충하면 상충 사실을 알리고 시설 확인을 권한다.
 13. 기존 항목 형식과 답변 내용은 유지하고, 굵게 표시하는 Markdown 장식은 사용하지 않는다.
+14. 사용자가 지정한 지역·동반 조건과 다르거나 확인되지 않은 장소를 그 조건에 맞는 것으로 단정하지 않는다.
 """.strip()
 
 
@@ -204,6 +206,22 @@ async def _generate_gemini_text(
         raise AIServiceError(
             "Gemini 응답이 비어 있습니다."
         )
+
+    usage = data.get("usageMetadata", {})
+    if isinstance(usage, dict):
+        counts = [usage.get(name, 0) for name in (
+            "promptTokenCount", "candidatesTokenCount", "thoughtsTokenCount",
+        )]
+        if (
+            "promptTokenCount" in usage and "candidatesTokenCount" in usage
+            and all(type(value) is int and value >= 0 for value in counts)
+        ):
+            chat_logger.info(
+                "ai_token_usage model=%s phase=%s prompt_tokens=%s output_tokens=%s thoughts_tokens=%s",
+                settings.GEMINI_MODEL,
+                "parameters" if system_instruction == PARAMETER_SYSTEM_INSTRUCTION else "answer",
+                *counts,
+            )
 
     return answer.strip()
 
@@ -288,11 +306,12 @@ async def extract_pet_tour_parameters(
     history: list,
 ) -> dict[str, int | None]:
     """
-    Gemini 1차 호출.
-
-    사용자 질문 및 최근 대화에서
-    areaCode와 contentTypeId를 추출합니다.
+    현재 질문의 명확한 지역·유형은 직접 판별하고 나머지는 Gemini에 맡깁니다.
     """
+
+    local_parameters = _extract_local_parameters(question)
+    if local_parameters is not None:
+        return local_parameters
 
     contents = _build_history_contents(history)
 
@@ -389,3 +408,13 @@ async def extract_pet_tour_parameters(
         "areaCode": area_code,
         "contentTypeId": content_type_id,
     }
+
+
+def _extract_local_parameters(question: str) -> dict[str, int] | None:
+    """광역 지역과 단일 관광 유형이 모두 명시된 경우에만 AI 분석을 생략합니다."""
+    regions = {code for name, code in AREA_CODES.items() if matches_region_name(question, name)}
+    aliases = {**CONTENT_TYPE_IDS, "식당": 39, "카페": 39, "숙소": 32, "호텔": 32}
+    types = {code for name, code in aliases.items() if matches_region_name(question, name)}
+    if len(regions) == 1 and len(types) == 1:
+        return {"areaCode": regions.pop(), "contentTypeId": types.pop()}
+    return None
