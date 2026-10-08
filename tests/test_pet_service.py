@@ -16,6 +16,7 @@ def anyio_backend():
 def api_stub(monkeypatch):
     """공식 응답 구조의 대역을 제공하고 호출 경로를 수집합니다."""
     calls = []
+    pet_service._response_cache.clear()
     responses = {
         "areaBasedList2": [{"contentid": "123", "contenttypeid": "39", "title": "테스트 음식점"}],
         "detailIntro2": [{"infocenterfood": "02-000-0000", "opentimefood": "10:00~18:00"}],
@@ -53,7 +54,8 @@ async def test_pet_conditions_reach_context_without_chkpet(api_stub):
     for text in ("소형견", "이동장 필수", "테라스만 이용", "02-000-0000", "10:00~18:00"):
         assert text in context
     assert "제공된 정보 없음" not in context
-    assert all(params["numOfRows"] == "5" for _, params in calls)
+    assert calls[0][1]["numOfRows"] == "20"
+    assert all(params["numOfRows"] == "5" for _, params in calls[1:])
     endpoint, params = calls[-1]
     assert endpoint == "detailPetTour2"
     assert params["contentId"] == "123"
@@ -117,3 +119,153 @@ def test_lodging_contact_and_checkin():
     }])
     assert "문의 및 안내: 숙소 문의" in context
     assert "입실 시간: 15:00" in context
+
+
+@pytest.mark.anyio
+async def test_wider_pool_limits_details_and_reuses_public_data(api_stub, monkeypatch):
+    """20개 후보를 조회해도 상세 호출과 전달은 5개이며 캐시를 재사용합니다."""
+    responses, calls = api_stub
+    responses["areaBasedList2"] = [
+        {"contentid": str(index), "contenttypeid": "39", "title": f"음식점{index}"}
+        for index in range(1, 21)
+    ]
+    monkeypatch.setattr(pet_service.random, "sample", lambda population, k: population[:k])
+    first = await pet_service.get_pet_tour_data(1, 39)
+    assert len(first) == 5
+    assert len(calls) == 11
+    second = await pet_service.get_pet_tour_data(1, 39)
+    assert second == first
+    assert len(calls) == 11
+    second[0]["pet_detail"]["acmpyNeedMtr"] = "오염된 값"
+    third = await pet_service.get_pet_tour_data(1, 39)
+    assert third[0]["pet_detail"]["acmpyNeedMtr"] == "이동장 필수"
+
+
+@pytest.mark.anyio
+async def test_sigungu_filter_and_other_places_keep_call_budget(api_stub, monkeypatch):
+    """강릉·춘천을 공식 코드로 구분하고 추가 추천에서 최근 장소를 제외합니다."""
+    responses, calls = api_stub
+    responses["areaCode2"] = [{"name": "강릉시", "code": "1"}, {"name": "춘천시", "code": "13"}]
+    responses["areaBasedList2"] = [
+        {"contentid": str(index), "contenttypeid": "39", "title": f"음식점{index}"}
+        for index in range(1, 21)
+    ]
+    monkeypatch.setattr(pet_service.random, "sample", lambda population, k: population[:k])
+    first = await pet_service.get_pet_tour_data(32, 39, question="강릉에서 식당 추천")
+    assert len(calls) == 12
+    assert calls[1][1]["sigunguCode"] == "1"
+    history = [{"question": "강릉에서 식당 추천", "response": pet_service.build_pet_tour_context(first)}]
+    second = await pet_service.get_pet_tour_data(32, 39, question="다른 식당 추천", history=history)
+    assert {item["contentid"] for item in first}.isdisjoint(item["contentid"] for item in second)
+    assert len(calls) == 22
+    await pet_service.get_pet_tour_data(32, 39, question="춘천에서 식당 추천", history=history)
+    assert next(params for endpoint, params in reversed(calls) if endpoint == "areaBasedList2")["sigunguCode"] == "13"
+
+
+@pytest.mark.anyio
+async def test_cache_expiry_and_key_change_do_not_hide_errors(api_stub, monkeypatch):
+    """기한 만료와 인증키 변경 후에는 재조회하고 외부 오류는 캐시하지 않습니다."""
+    responses, calls = api_stub
+    clock = [0]
+    monkeypatch.setattr(pet_service, "monotonic", lambda: clock[0])
+    await pet_service.get_pet_tour_data(1, 39)
+    assert len(calls) == 3
+    clock[0] = pet_service.CACHE_TTL_SECONDS
+    await pet_service.get_pet_tour_data(1, 39)
+    assert len(calls) == 6
+    monkeypatch.setattr(pet_service.settings, "KOR_PET_TOUR_SERVICE_KEY", "changed-test-key")
+    responses["areaBasedList2"] = {"response": {"header": {"resultCode": "30"}}}
+    for _ in range(2):
+        with pytest.raises(pet_service.PetTourServiceError):
+            await pet_service.get_pet_tour_data(1, 39)
+    assert len(calls) == 8
+
+
+@pytest.mark.anyio
+async def test_cache_separates_searches_and_bounds_storage(api_stub, monkeypatch):
+    """지역·유형별 캐시를 분리하고 최대 저장 개수를 초과하지 않습니다."""
+    _, calls = api_stub
+    monkeypatch.setattr(pet_service, "CACHE_MAX_ENTRIES", 2)
+    await pet_service.area_based_list(1, 39)
+    await pet_service.area_based_list(6, 39)
+    await pet_service.area_based_list(6, 12)
+    assert len(calls) == 3
+    assert len(pet_service._response_cache) == 2
+    await pet_service.area_based_list(1, 39)
+    assert len(calls) == 4
+
+
+@pytest.mark.parametrize("question,expected", [
+    ("강릉에서 추천", 1), ("강릉시의 식당", 1), ("춘천 추천", 13),
+    ("강릉과 춘천 추천", None), ("강원도 식당 추천", None),
+])
+@pytest.mark.anyio
+async def test_current_region_takes_priority_over_history(api_stub, question, expected):
+    """현재 지역을 우선하고 광역 또는 복수 지역 질문에 이전 시군구를 강제하지 않습니다."""
+    responses, _ = api_stub
+    responses["areaCode2"] = [{"name": "강릉시", "code": "1"}, {"name": "춘천시", "code": "13"}]
+    history = [{"question": "강릉 추천", "response": "강릉 답변"}]
+    assert await pet_service._resolve_sigungu_code(32, question, history) == expected
+
+
+def test_selection_preserves_followup_and_deduplicates(monkeypatch):
+    """상세 조건 후속 질문은 기존 장소를 우선하며 중복·누락 ID를 제거합니다."""
+    items = [{"contentid": str(index), "contenttypeid": "39", "title": f"장소{index}"} for index in range(1, 21)]
+    items[1] = dict(items[0])
+    items[2] = {"title": "잘못된 항목"}
+    monkeypatch.setattr(pet_service.random, "sample", lambda population, k: population[:k])
+    history = [{"question": "지역 추천", "response": "장소16, 장소17, 장소18, 장소19, 장소20"}]
+    selected = pet_service.select_pet_tour_candidates(items, "그중 동반 조건을 알려줘", history)
+    assert {item["contentid"] for item in selected} == {str(index) for index in range(16, 21)}
+
+
+@pytest.mark.anyio
+async def test_invalid_response_and_missing_key_never_use_cache(api_stub, monkeypatch):
+    """잘못된 본문은 캐시하지 않으며 인증키가 제거되면 기존 캐시도 사용하지 않습니다."""
+    responses, calls = api_stub
+    responses["areaBasedList2"] = {"response": {"header": {"resultCode": "0000"}, "body": {"items": {"item": [42]}}}}
+    for _ in range(2):
+        with pytest.raises(pet_service.PetTourServiceError):
+            await pet_service.area_based_list(1, 39)
+    assert len(calls) == 2
+    responses["areaBasedList2"] = []
+    await pet_service.area_based_list(1, 39)
+    monkeypatch.setattr(pet_service.settings, "KOR_PET_TOUR_SERVICE_KEY", "")
+    with pytest.raises(pet_service.PetTourServiceError, match="설정되지"):
+        await pet_service.area_based_list(1, 39)
+
+
+def test_alternatives_with_exhausted_pool_remain_source_backed():
+    """후보를 모두 본 경우에도 새로운 장소를 만들어내지 않습니다."""
+    items = [{"contentid": "1", "contenttypeid": "39", "title": "유일한 식당"}]
+    history = [{"question": "추천", "response": "유일한 식당"}]
+    assert pet_service.select_pet_tour_candidates(items, "다른 식당 추천", history) == items
+
+
+@pytest.mark.anyio
+async def test_invalid_codes_are_rejected_before_network(api_stub):
+    """형식이 잘못된 검색 코드는 외부 요청 전에 거부합니다."""
+    _, calls = api_stub
+    for area_code, content_type in ((999, 39), (True, 39), (1, 999)):
+        with pytest.raises(ValueError):
+            await pet_service.get_pet_tour_data(area_code, content_type, question="식당 추천")
+    with pytest.raises(ValueError):
+        await pet_service.area_based_list(1, 39, sigungu_code=-1)
+    assert calls == []
+
+
+@pytest.mark.anyio
+async def test_same_pool_tour_calls_match_cost_model(api_stub, monkeypatch):
+    """같은 후보군을 모두 순환해도 실제 대역 호출이 모델 상한 42회를 넘지 않습니다."""
+    responses, calls = api_stub
+    responses["areaCode2"] = [{"name": "강릉시", "code": "1"}]
+    responses["areaBasedList2"] = [
+        {"contentid": str(index), "contenttypeid": "39", "title": f"식당{index}"}
+        for index in range(1, 21)
+    ]
+    monkeypatch.setattr(pet_service.random, "sample", lambda population, k: population[:k])
+    history = []
+    for _ in range(10):
+        result = await pet_service.get_pet_tour_data(32, 39, question="강릉 다른 식당 추천", history=history[-5:])
+        history.append({"question": "강릉 다른 식당 추천", "response": pet_service.build_pet_tour_context(result)})
+    assert len(calls) == 42

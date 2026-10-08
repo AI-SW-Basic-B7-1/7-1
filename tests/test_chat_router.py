@@ -2,8 +2,10 @@
 
 from typing import AsyncGenerator
 from unittest.mock import Mock
+import json
 
 import aiosqlite
+import httpx
 import pytest
 from httpx import ASGITransport, AsyncClient
 
@@ -13,6 +15,63 @@ from app.database import ConversationAccessError, get_db, get_db_connection, ini
 from app.jev_service import JevDecision, JevServiceError
 from app.main import app
 from app.routers import chat_router
+
+
+@pytest.mark.anyio
+async def test_pet_pipeline_preserves_contract_and_conversation_isolation(chat_client, monkeypatch):
+    """실제 서비스 경로를 대역 통신으로 통합해 답변 다양화와 사용자 격리를 확인합니다."""
+    from app import ai_service, pet_service
+
+    pet_service._response_cache.clear()
+    monkeypatch.setattr(chat_router, "extract_pet_tour_parameters", ai_service.extract_pet_tour_parameters)
+    monkeypatch.setattr(chat_router, "generate_chat_response", ai_service.generate_chat_response)
+    monkeypatch.setattr(pet_service.random, "sample", lambda population, k: population[:k])
+    monkeypatch.setattr(pet_service.settings, "KOR_PET_TOUR_SERVICE_KEY", "test-only-tour-key")
+    monkeypatch.setattr(ai_service.settings, "GEMINI_API_KEY", "test-only-gemini-key")
+    calls = []
+
+    def handler(request):
+        """공식 응답 대역으로 관광 데이터와 Gemini 최종 답변을 제공합니다."""
+        endpoint = request.url.path.rsplit("/", 1)[-1]
+        calls.append(endpoint)
+        if endpoint.endswith(":generateContent"):
+            body = json.loads(request.content)
+            if body.get("systemInstruction", {}).get("parts", [{}])[0].get("text") == ai_service.PARAMETER_SYSTEM_INSTRUCTION:
+                answer = '{"areaCode": 1, "contentTypeId": 39}'
+            else:
+                context = body["contents"][-2]["parts"][0]["text"]
+                assert context.count("[관광정보 ") == 5
+                assert "이동장 필수" in context
+                answer = "\n".join(line for line in context.splitlines() if line.startswith("장소명:"))
+            return httpx.Response(200, json={"candidates": [{"content": {"parts": [{"text": answer}]}}]})
+        items = {
+            "areaCode2": [{"name": "종로구", "code": "23"}],
+            "areaBasedList2": [{"contentid": str(index), "contenttypeid": "39", "title": f"식당{index}"} for index in range(1, 21)],
+            "detailIntro2": [{"opentimefood": "10:00~18:00"}],
+            "detailPetTour2": [{"acmpyPsblCpam": "소형견", "acmpyNeedMtr": "이동장 필수"}],
+        }[endpoint]
+        return httpx.Response(200, json={"response": {"header": {"resultCode": "0000"}, "body": {"items": {"item": items}}}})
+
+    original_client = httpx.AsyncClient
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **kwargs: original_client(transport=httpx.MockTransport(handler), **kwargs))
+    first = await chat_client.post("/api/chat", json={"question": "서울 음식점 추천"}, headers=authorization_header("user_one"))
+    assert first.status_code == 200
+    assert set(first.json()) == {"answer", "conversation_id", "latency_ms"}
+    assert sum(endpoint.endswith(":generateContent") for endpoint in calls) == 1
+    assert len(calls) == 13
+    conversation_id = first.json()["conversation_id"]
+    second = await chat_client.post("/api/chat", json={"question": "다른 식당 추천", "conversation_id": conversation_id}, headers=authorization_header("user_one"))
+    assert second.status_code == 200
+    assert second.json()["answer"] != first.json()["answer"]
+    before = len(calls)
+    forbidden = await chat_client.post("/api/chat", json={"question": "서울 식당 추천", "conversation_id": conversation_id}, headers=authorization_header("user_two"))
+    assert forbidden.status_code == 404
+    assert len(calls) == before
+    saved = await chat_client.get("/api/me/chats", headers=authorization_header("user_one"))
+    assert len(saved.json()) == 2
+    assert all(row["conversation_id"] == conversation_id for row in saved.json())
+    other = await chat_client.get("/api/me/chats", headers=authorization_header("user_two"))
+    assert other.json() == []
 
 
 @pytest.mark.anyio

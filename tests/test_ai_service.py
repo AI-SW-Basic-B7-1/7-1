@@ -172,3 +172,49 @@ async def test_service_error_boundaries(monkeypatch, kind):
     monkeypatch.setattr(ai_service.httpx, "AsyncClient", lambda **kwargs: client)
     with pytest.raises(RuntimeError if kind == "internal" else AIServiceError):
         await generate_chat_response("질문", [])
+
+
+@pytest.mark.parametrize("question,expected", [
+    ("서울 음식점 추천", {"areaCode": 1, "contentTypeId": 39}),
+    ("부산에서 숙소 추천", {"areaCode": 6, "contentTypeId": 32}),
+    ("서울 식당과 카페 추천", {"areaCode": 1, "contentTypeId": 39}),
+    ("서울 부산 식당 추천", None), ("서울 숙소와 음식점 추천", None),
+    ("서울숲 추천", None), ("강릉에서 식당 추천", None),
+    ("다른 곳 추천", None),
+])
+def test_local_parameters_only_accept_explicit_unambiguous_question(question, expected):
+    """명확한 현재 조건만 직접 추출하고 누락·복수·장소명은 AI 분석에 남깁니다."""
+    assert ai_service._extract_local_parameters(question) == expected
+
+
+@pytest.mark.anyio
+async def test_explicit_parameters_skip_gemini_but_followups_fall_back(monkeypatch):
+    """명확한 질문은 AI 호출 없이 처리하고 문맥이 필요한 질문은 기존 이력을 보존합니다."""
+    calls = []
+    async def generate(contents, system_instruction):
+        """분석 호출의 입력을 기록합니다."""
+        calls.append(contents)
+        return '{"areaCode": 1, "contentTypeId": 39}'
+    monkeypatch.setattr(ai_service, "_generate_gemini_text", generate)
+    assert await ai_service.extract_pet_tour_parameters("서울 식당 추천", []) == {"areaCode": 1, "contentTypeId": 39}
+    assert calls == []
+    history = [{"question": "서울 식당 추천", "response": "앞선 답변"}]
+    assert await ai_service.extract_pet_tour_parameters("다른 식당 추천", history) == {"areaCode": 1, "contentTypeId": 39}
+    assert calls[0][:-1] == ai_service._build_history_contents(history)
+
+
+@pytest.mark.anyio
+async def test_usage_log_contains_counts_without_question_or_key(monkeypatch):
+    """비용 계측 로그는 토큰 수만 기록하고 질문·답변·키를 포함하지 않습니다."""
+    client = FakeAsyncClient(response=FakeResponse({
+        "candidates": [{"content": {"parts": [{"text": "비공개 답변"}]}}],
+        "usageMetadata": {"promptTokenCount": 120, "candidatesTokenCount": 80, "thoughtsTokenCount": 10},
+    }))
+    monkeypatch.setattr(ai_service.httpx, "AsyncClient", lambda **kwargs: client)
+    logs = []
+    monkeypatch.setattr(ai_service.chat_logger, "info", lambda *args: logs.append(args))
+    await generate_chat_response("비공개 질문", [])
+    assert len(logs) == 1
+    assert logs[0][2] == "answer"
+    assert logs[0][3:] == (120, 80, 10)
+    assert "비공개" not in str(logs)
