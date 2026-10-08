@@ -21,7 +21,6 @@ export const CHAT_CONTENT = Object.freeze({
   tripStepScheduleHelp: "언제, 얼마나 머무나요?",
   tripStepPet: "반려동물 조건",
   tripStepPetHelp: "종류와 크기, 필요한 배려를 알려주세요.",
-  travelDataNotice: "현재 관광공사 여행 데이터는 연결되지 않았습니다. 답변은 일반 AI 지식에 기반하며, 장소별 동반 조건은 방문 전 확인해 주세요.",
   composerHint: "Enter로 전송 · Shift+Enter로 줄바꿈",
   userName: "나",
   emptyTitle: "어떤 여행을 꿈꾸고 있나요?",
