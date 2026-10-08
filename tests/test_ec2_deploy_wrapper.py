@@ -12,6 +12,66 @@ import pytest
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
+def _usable_bash():
+    """현재 실행 환경에서 실제 셸 명령을 처리할 수 있는 Bash를 찾습니다."""
+    bash = shutil.which("bash")
+    if not bash:
+        return None
+    try:
+        subprocess.run(
+            [bash],
+            input="true\n",
+            text=True,
+            encoding="utf-8",
+            capture_output=True,
+            check=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        return None
+    return bash
+
+
+def test_resolve_database_path_accepts_only_project_local_sqlite_files():
+    """배포 경로 검증이 사용자 SQLite 경로와 프로젝트 경계를 동일하게 적용합니다."""
+    bash = _usable_bash()
+    if not bash:
+        pytest.skip("실행 가능한 Bash가 필요한 SQLite 경로 검증입니다.")
+
+    source = (PROJECT_ROOT / "scripts/ec2/deploy_ec2.sh").read_text(encoding="utf-8")
+    start = source.index("resolve_database_path() {")
+    end = source.index("\n}\n\nlog_step '운영 환경변수", start) + 2
+    function = source[start:end]
+    project = "/tmp/project"
+    script = (
+        f"PROJECT_DIR={shlex.quote(project)}\n"
+        "fail() { printf '%s\\n' \"$1\" >&2; exit 1; }\n"
+        f"{function}\n"
+    )
+
+    def resolve(database_url):
+        command = script + f"resolve_database_path {shlex.quote(database_url)}\n"
+        return subprocess.run(
+            [bash],
+            input=command,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+
+    relative = resolve("sqlite:///./data/custom.db")
+    assert relative.returncode == 0, relative.stderr
+    assert Path(relative.stdout).name == "custom.db"
+    assert Path(relative.stdout).parent.name == "data"
+
+    absolute = resolve("sqlite:////tmp/project/data/absolute.db")
+    assert absolute.returncode == 0, absolute.stderr
+    assert Path(absolute.stdout).name == "absolute.db"
+
+    assert resolve("sqlite:////tmp/outside.db").returncode != 0
+    assert resolve("postgresql://database").returncode != 0
+
+
 def test_acme_webroot_is_created_before_certificate_request():
     """Certbot 실행 전 웹루트 소유권과 접근 권한을 설정합니다."""
     source = (PROJECT_ROOT / "scripts/ec2/deploy_ec2.sh").read_text(encoding="utf-8")
@@ -24,18 +84,11 @@ def test_acme_webroot_is_created_before_certificate_request():
 @pytest.mark.parametrize("service_was_active", [False, True])
 def test_sigterm_runs_remote_rollback_and_restores_service_state(tmp_path, service_was_active):
     """생성된 원격 명령이 TERM을 받은 배포를 정리하고 서비스 상태를 복원합니다."""
-    bash = shutil.which("bash")
+    bash = _usable_bash()
     if not bash:
-        pytest.skip("Bash가 필요한 원격 명령 생성 테스트입니다.")
-    try:
-        subprocess.run(
-            [bash, "--version"],
-            capture_output=True,
-            check=True,
-            timeout=5,
-        )
-    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
-        pytest.skip("현재 실행 환경에서 Bash를 시작할 수 없습니다.")
+        pytest.skip("실행 가능한 Bash가 필요한 원격 명령 생성 테스트입니다.")
+    if os.name == "nt" and Path(bash).parent.name.lower() == "windowsapps":
+        pytest.skip("WindowsApps Bash가 Windows 임시 경로를 접근할 수 없습니다.")
 
     source = (PROJECT_ROOT / "scripts/ec2/run_ec2_deploy.sh").read_text(encoding="utf-8")
     marker = 'remote_command="$(\n'
@@ -66,6 +119,7 @@ def test_sigterm_runs_remote_rollback_and_restores_service_state(tmp_path, servi
             + "\nprintf '%s\\n' \"$remote_command\"\n"
         ),
         text=True,
+        encoding="utf-8",
         capture_output=True,
     )
     assert generation_result.returncode == 0, generation_result.stderr
@@ -106,6 +160,7 @@ def test_sigterm_runs_remote_rollback_and_restores_service_state(tmp_path, servi
         [bash],
         input=remote_prefix + scenario,
         text=True,
+        encoding="utf-8",
         capture_output=True,
         env=environment,
         timeout=10,
