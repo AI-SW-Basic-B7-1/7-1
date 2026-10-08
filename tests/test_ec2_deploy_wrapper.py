@@ -32,46 +32,6 @@ def _usable_bash():
     return bash
 
 
-def test_resolve_database_path_accepts_only_project_local_sqlite_files():
-    """배포 경로 검증이 사용자 SQLite 경로와 프로젝트 경계를 동일하게 적용합니다."""
-    bash = _usable_bash()
-    if not bash:
-        pytest.skip("실행 가능한 Bash가 필요한 SQLite 경로 검증입니다.")
-
-    source = (PROJECT_ROOT / "scripts/ec2/deploy_ec2.sh").read_text(encoding="utf-8")
-    start = source.index("resolve_database_path() {")
-    end = source.index("\n}\n\nlog_step '운영 환경변수", start) + 2
-    function = source[start:end]
-    project = "/tmp/project"
-    script = (
-        f"PROJECT_DIR={shlex.quote(project)}\n"
-        "fail() { printf '%s\\n' \"$1\" >&2; exit 1; }\n"
-        f"{function}\n"
-    )
-
-    def resolve(database_url):
-        command = script + f"resolve_database_path {shlex.quote(database_url)}\n"
-        return subprocess.run(
-            [bash],
-            input=command,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-        )
-
-    relative = resolve("sqlite:///./data/custom.db")
-    assert relative.returncode == 0, relative.stderr
-    assert Path(relative.stdout).name == "custom.db"
-    assert Path(relative.stdout).parent.name == "data"
-
-    absolute = resolve("sqlite:////tmp/project/data/absolute.db")
-    assert absolute.returncode == 0, absolute.stderr
-    assert Path(absolute.stdout).name == "absolute.db"
-
-    assert resolve("sqlite:////tmp/outside.db").returncode != 0
-    assert resolve("postgresql://database").returncode != 0
-
-
 def test_acme_webroot_is_created_before_certificate_request():
     """Certbot 실행 전 웹루트 소유권과 접근 권한을 설정합니다."""
     source = (PROJECT_ROOT / "scripts/ec2/deploy_ec2.sh").read_text(encoding="utf-8")

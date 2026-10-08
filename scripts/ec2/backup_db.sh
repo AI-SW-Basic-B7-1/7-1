@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # B7-1 SQLite 온라인 백업 스크립트
-# DB_PATH가 지정되면 그 파일을, 아니면 프로젝트 기본 DB를 백업합니다.
+# 실행 위치와 무관하게 현재 프로젝트의 data/chatbot.db를 백업합니다.
 
 set -Eeuo pipefail
 umask 077

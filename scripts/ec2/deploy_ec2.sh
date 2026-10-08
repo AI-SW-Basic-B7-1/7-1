@@ -16,7 +16,7 @@ RUN_TESTS="${RUN_TESTS:-1}"
 BACKUP_DIR="${BACKUP_DIR:-/home/${APP_USER}/db_backups}"
 RETENTION_DAYS="${RETENTION_DAYS:-7}"
 ENV_FILE="${PROJECT_DIR}/.env"
-DB_PATH=""
+DB_PATH="${PROJECT_DIR}/data/chatbot.db"
 
 fail() {
     printf '[실패] %s\n' "$*" >&2
@@ -93,26 +93,6 @@ env_value() {
     printf '%s' "${raw}"
 }
 
-resolve_database_path() {
-    local database_url="$1"
-    local database_path
-    local database_file
-    local project_root
-
-    [[ "${database_url}" == sqlite:///* && "${database_url}" != *'?'* && "${database_url}" != *'#'* ]] || fail 'DATABASE_URL은 경로만 포함하는 SQLite URL이어야 합니다.'
-    database_path="${database_url#sqlite:///}"
-    [[ -n "${database_path}" && "${database_path}" =~ ^[A-Za-z0-9_./-]+$ ]] || fail 'DATABASE_URL의 SQLite 경로 형식이 올바르지 않습니다.'
-
-    if [[ "${database_path}" == /* ]]; then
-        database_file="$(realpath -m -- "${database_path}")"
-    else
-        database_file="$(realpath -m -- "${PROJECT_DIR}/${database_path}")"
-    fi
-    project_root="$(realpath -m -- "${PROJECT_DIR}")"
-    [[ "${database_file}" == "${project_root}/"* && ! -d "${database_file}" ]] || fail 'SQLite 데이터베이스는 프로젝트 디렉터리 안의 파일이어야 합니다.'
-    printf '%s' "${database_file}"
-}
-
 log_step '운영 환경변수 필수 항목 확인'
 secret_key="$(env_value SECRET_KEY)"
 algorithm="$(env_value ALGORITHM)"
@@ -132,7 +112,6 @@ secret_key_bytes="$(printf '%s' "${secret_key}" | wc -c)"
 [[ -n "${SITE_DOMAIN}" && "${SITE_DOMAIN}" =~ ^[A-Za-z0-9.-]+$ && "${SITE_DOMAIN}" != .* && "${SITE_DOMAIN}" != *. ]] || fail 'SITE_DOMAIN에 HTTPS용 도메인을 설정해야 합니다.'
 [[ "${secret_key,,}" != *'your_super_secret_jwt_key_here'* ]] || fail 'SECRET_KEY에 예시값이 남아 있습니다.'
 [[ "${gemini_api_key}" != *'여기에_본인의_Gemini_API_Key'* ]] || fail 'GEMINI_API_KEY에 예시값이 남아 있습니다.'
-DB_PATH="$(resolve_database_path "${database_url}")"
 unset secret_key secret_key_bytes algorithm gemini_api_key database_url pet_tour_service_key
 
 run_cmd 'EC2 시간대 설정' timedatectl set-timezone Asia/Seoul
@@ -163,7 +142,7 @@ fi
 run_cmd '메모리 및 Swap 상태 기록' free -h
 
 run_cmd '프로젝트 소유권 정리' chown -R "${APP_USER}:${APP_USER}" "${PROJECT_DIR}"
-run_cmd 'SQLite 데이터 디렉터리 권한 설정' install -d -o "${APP_USER}" -g "${APP_USER}" -m 700 "${DB_PATH%/*}"
+run_cmd 'SQLite 데이터 디렉터리 권한 설정' install -d -o "${APP_USER}" -g "${APP_USER}" -m 700 "${PROJECT_DIR}/data"
 run_cmd '애플리케이션 로그 디렉터리 생성' install -d -o "${APP_USER}" -g "${APP_USER}" -m 750 "${PROJECT_DIR}/logs"
 run_cmd 'Nginx 로그 경로 탐색 ACL 설정' setfacl -m u:www-data:--x "${APP_HOME}" "${PROJECT_DIR}/logs"
 run_cmd '운영 환경변수 파일 권한 설정' chmod 600 "${ENV_FILE}"
@@ -407,8 +386,8 @@ chmod 600 "${BACKUP_DIR}/backup.log"
 
 CRON_FILE='/etc/cron.d/b7-1-chatbot-backup'
 cron_temp_file="$(mktemp)"
-printf 'SHELL=/bin/bash\nPATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\n0 4 * * * %s DB_PATH=%s BACKUP_DIR=%s RETENTION_DAYS=%s %s >> %s 2>&1\n' \
-    "${APP_USER}" "${DB_PATH}" "${BACKUP_DIR}" "${RETENTION_DAYS}" "${BACKUP_SCRIPT}" "${BACKUP_DIR}/backup.log" > "${cron_temp_file}"
+printf 'SHELL=/bin/bash\nPATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\n0 4 * * * %s BACKUP_DIR=%s RETENTION_DAYS=%s %s >> %s 2>&1\n' \
+    "${APP_USER}" "${BACKUP_DIR}" "${RETENTION_DAYS}" "${BACKUP_SCRIPT}" "${BACKUP_DIR}/backup.log" > "${cron_temp_file}"
 run_cmd 'SQLite 일일 백업 예약 설치' install -o root -g root -m 644 "${cron_temp_file}" "${CRON_FILE}"
 rm -f "${cron_temp_file}"
 run_cmd 'Cron 부팅 자동 시작 설정' systemctl enable cron
