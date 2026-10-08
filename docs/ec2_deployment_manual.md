@@ -156,6 +156,15 @@ cp .env.example .env
 | AI_TIMEOUT_SECONDS | Gemini HTTP 요청별 타임아웃(기본 15.0초) |
 | KOR_PET_TOUR_SERVICE_KEY | KorPetTourService2 조회에 필요한 서버 전용 서비스 키 |
 | PET_TOUR_API_TIMEOUT_SECONDS | 관광 API HTTP 요청별 타임아웃(기본 15.0초) |
+| TYPESAFE_API_KEY | 선택 설정. Jev 관찰 모드를 사용할 때 서버에만 입력 |
+| JEV_MODE | 기본 `off`; `shadow`일 때만 Jev를 백그라운드 호출 |
+| JEV_MODEL | Jev 관찰 모드에서 사용하는 모델(기본 `jev-1.13.0`) |
+| JEV_TIMEOUT_SECONDS | Jev 호출의 전체 제한 시간(기본 2.0초) |
+
+배포가 값 누락으로 중단되는 항목은 `SECRET_KEY`, `GEMINI_API_KEY`,
+`KOR_PET_TOUR_SERVICE_KEY`, `DATABASE_URL`, `SITE_DOMAIN`입니다.
+`ALGORITHM`은 비우면 `HS256`을 사용합니다. 나머지 설정은 `.env.example`의
+기본값을 사용하거나 필요에 따라 변경합니다.
 
 현재 배포 스크립트가 작성하는 Nginx 설정은 `proxy_read_timeout 80s`를 사용합니다. 이는 upstream에서 연속된 읽기 사이의 최대 대기시간이지 전체 채팅의 절대 마감시간이 아닙니다. Gemini와 관광 API의 요청별 15초 제한은 여러 번 호출될 수 있어, 응답 데이터가 도착하기까지 80초 넘게 걸리면 Nginx가 먼저 연결을 종료할 수 있습니다.
 
@@ -169,7 +178,7 @@ openssl rand -hex 32
 
 .env와 `.env.*`, SQLite 데이터베이스 및 `-wal`/`-shm` 파일은 Git에서 제외합니다. Parameter Store를 변경할 때는 애플리케이션 필수 키와 `SITE_DOMAIN`이 포함됐는지 확인합니다. 반려동물 여행 조회에 필요한 `KOR_PET_TOUR_SERVICE_KEY`도 포함해야 합니다. 지역 수요·지도 설정은 [후속 명세](pet_travel_spec.md)의 후보이며 현재 배포 필수값이 아닙니다.
 
-앱은 DATABASE_URL을 읽지만 현재 deploy_ec2.sh의 DB 권한·무결성 검사 대상은 프로젝트의 `data/chatbot.db`로 고정되어 있습니다. 백업 스크립트도 기본값이 같은 파일이며 별도 DB_PATH를 지원합니다. 배포 매뉴얼에서는 기본 DATABASE_URL을 사용하고, 사용자 지정 DB 경로의 운영/백업 일치는 별도 점검해야 합니다.
+EC2 배포는 `DATABASE_URL`에 지정된 SQLite 파일이 프로젝트 디렉터리 안에 있는지 확인합니다. 해당 파일의 상위 디렉터리 권한, 배포 후 무결성 검사와 매일 예약 백업에 같은 경로를 사용합니다. 프로젝트 밖의 DB 경로와 SQLite 이외의 URL은 배포 전에 거부됩니다.
 
 ## 5. 배포 전 점검 순서
 
@@ -187,10 +196,10 @@ openssl rand -hex 32
    aws ssm describe-instance-information --region ap-northeast-2 --filters "Key=InstanceIds,Values=<INSTANCE_ID>" --query "InstanceInformationList[0].PingStatus" --output text
    ~~~
 
-3. 지정할 Parameter Store 파라미터가 `SecureString`인지, 필요한 환경 키와 실제 `SITE_DOMAIN` 값을 포함하는지 확인합니다. 값은 화면이나 터미널에 출력하지 않습니다.
+3. 지정할 Parameter Store 파라미터가 `SecureString`인지 확인합니다. 배포 필수값과 앱에서 선택적으로 기본값을 쓰는 항목을 위 표에서 대조합니다. Jev 키는 관찰 모드를 쓸 때만 필요합니다. 값은 화면이나 터미널에 출력하지 않습니다.
 
    ~~~bash
-   aws ssm describe-parameters --region ap-northeast-2 --parameter-filters "Key=Name,Option=Equals,Values=/b7-1/production/env" --query 'Parameters[0].{Name:Name,Type:Type}'
+   aws ssm describe-parameters --region ap-northeast-2 --parameter-filters "Key=Name,Option=Equals,Values=/b7-1/production/env" --query 'Parameters[0].{Name:Name,Type:Type,Version:Version,LastModifiedDate:LastModifiedDate}'
    ~~~
 
 4. `SITE_DOMAIN` DNS가 대상 EC2 공개 IPv4를 가리키고, 보안 그룹에서 HTTP(80)와 HTTPS(443)를 허용하는지 확인합니다. SSH(22)는 팀원 IP만 허용하고 애플리케이션 포트 8000은 외부에 열지 않습니다.
@@ -231,6 +240,15 @@ run_ec2_deploy.sh는 다음 작업을 순서대로 수행합니다.
 내부 배포 스크립트는 Nginx·Systemd 설정과 배포 전 서비스 상태를 복원합니다. SQLite 데이터는
 자동으로 되돌리지 않으며, 데이터 복구는 운영자가 별도 백업 절차로 수행해야 합니다.
 
+새 SecureString 값은 배포 시 EC2에 전달됩니다. 앱이 시작된 뒤 아래 명령은 비밀값을
+출력하지 않고 실제 적용된 제한값만 확인합니다.
+
+~~~bash
+cd /home/ubuntu/app/B7-1/7-1
+sudo -u ubuntu ./venv/bin/python -c "from app.config import settings; print('AI_TIMEOUT_SECONDS=', settings.AI_TIMEOUT_SECONDS); print('PET_TOUR_API_TIMEOUT_SECONDS=', settings.PET_TOUR_API_TIMEOUT_SECONDS); print('ACCESS_TOKEN_EXPIRE_MINUTES=', settings.ACCESS_TOKEN_EXPIRE_MINUTES)"
+sudo systemctl is-active chatbot.service
+~~~
+
 기본 대기 시간은 900초이며, 테스트를 생략해야 하는 명확한 사유가 있을 때만 다음 옵션을 추가할 수 있습니다.
 
 ~~~text
@@ -252,7 +270,7 @@ deploy_ec2.sh가 SSM에서 root 권한으로 실행되면 다음 작업을 수�
 - HTTPS Nginx reverse proxy에서 `/static/` 요청도 FastAPI로 전달
 - SQLite, .env, Git, 로그 파일 외부 접근 차단
 - chatbot.service Systemd 서비스 등록 및 재시작
-- 도메인 기반 HTTPS 헬스체크, CSS·JavaScript 응답, HTTP 리디렉션 및 DB 파일 차단 점검
+- 도메인 기반 HTTPS 헬스체크, CSS와 모든 JavaScript 모듈 응답, HTTP 리디렉션 및 DB 파일 차단 점검
 - SQLite 무결성 검사
 - SQLite 백업 Cron 등록
 
